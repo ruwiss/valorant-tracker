@@ -1,1 +1,17 @@
-{}
+{
+  "telegram": {
+    "username": "@omergundgr",
+    "url": "https://t.me/omergundgr",
+    "icon": "telegram"
+  },
+  "r10": {
+    "username": "omergundogar",
+    "url": "https://www.r10.net/profil/118273-omergundogar.html",
+    "icon": "r10"
+  },
+  "email": {
+    "address": "hqnetcontact@gmail.com",
+    "url": "mailto:hqnetcontact@gmail.com",
+    "icon": "mail"
+  }
+}
