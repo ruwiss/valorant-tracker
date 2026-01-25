@@ -27,6 +27,23 @@
 - **Mesaj Geçmişi**: Arkadaşlarınızla olan tüm yazışmalarınızın geçmişini tek bir yerden takip edin.
 
 
+
+### Fiyatlandırma ve Satın Alım
+
+- **Fiyat**: 250₺
+- **Deneme**: 1 günlük ücretsiz deneme süresi için lütfen iletişime geçin.
+
+### İletişim
+
+Sorularınız veya satın alım işlemleri için aşağıdaki kanallardan ulaşabilirsiniz:
+
+| Platform | Bilgi / Link |
+| :--- | :--- |
+| **Telegram** | [@omergundgr](https://t.me/omergundgr) |
+| **Discord** | `ruwis.db` |
+| **R10.net** | [omergundogar](https://www.r10.net/profil/118273-omergundogar.html) |
+| **E-posta** | [hqnetcontact@gmail.com](mailto:hqnetcontact@gmail.com) |
+
 <p align="center">
   <img src="images/vtracker2.png" alt="Arayüz" width="800">
 </p>
