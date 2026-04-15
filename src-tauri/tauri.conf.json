@@ -1,0 +1,59 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "VALORANT Tracker",
+    "version": "1.6.5",
+    "identifier": "com.omerg.valorant-tracker",
+    "build": {
+        "beforeDevCommand": "pnpm dev",
+        "devUrl": "http://localhost:1420",
+        "beforeBuildCommand": "pnpm build",
+        "frontendDist": "../dist"
+    },
+    "app": {
+        "windows": [
+            {
+                "label": "main",
+                "title": "VALORANT Tracker",
+                "width": 380,
+                "height": 800,
+                "resizable": false,
+                "decorations": false,
+                "transparent": true,
+                "alwaysOnTop": true,
+                "skipTaskbar": false,
+                "visible": true,
+                "shadow": false,
+                "dragDropEnabled": false
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "createUpdaterArtifacts": true,
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ],
+        "windows": {
+            "nsis": {
+                "installerIcon": "icons/icon.ico",
+                "installMode": "currentUser"
+            }
+        }
+    },
+    "plugins": {
+        "updater": {
+            "endpoints": [
+                "https://github.com/ruwiss/valorant-tracker/releases/latest/download/latest.json"
+            ],
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU5OUEwMzAyRkE2RjYxRTUKUldUbFlXLzZBZ09hV2FIUW9Dc21BRHl2blY1RjJpNWxxSStXTjhXd0hIT2dNRnBlUHFocnJGN0EK"
+        }
+    }
+}

@@ -1,0 +1,45 @@
+{
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "default",
+    "description": "Capability for the main window",
+    "windows": [
+        "main"
+    ],
+    "permissions": [
+        "core:default",
+        "core:window:default",
+        "core:window:allow-show",
+        "core:window:allow-hide",
+        "core:window:allow-is-visible",
+        "core:window:allow-set-focus",
+        "core:window:allow-close",
+        "core:window:allow-start-dragging",
+        "core:window:allow-set-position",
+        "core:window:allow-outer-position",
+        "core:window:allow-set-size",
+        "core:event:default",
+        "core:event:allow-listen",
+        "opener:default",
+        "global-shortcut:default",
+        "global-shortcut:allow-register",
+        "global-shortcut:allow-unregister",
+        "shell:allow-open",
+        "updater:default",
+        "updater:allow-check",
+        "updater:allow-download-and-install",
+        "process:allow-restart",
+        "process:allow-exit",
+        "fs:default",
+        {
+            "identifier": "fs:scope",
+            "allow": [
+                { "path": "$APPCACHE" },
+                { "path": "$APPCACHE/**" },
+                { "path": "$APPDATA" },
+                { "path": "$APPDATA/**" }
+            ]
+        },
+        "dialog:default",
+        "dialog:allow-open"
+    ]
+}

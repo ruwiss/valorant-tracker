@@ -1,0 +1,38 @@
+
+# Common build directories
+**/node_modules/
+**/dist/
+**/target/
+**/gen/
+**/out/
+release_output/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+*.local
+
+# Signing keys
+*.key
+*.key.pub
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+.agent/
+.gemini/
+.vscode/
+.roo/

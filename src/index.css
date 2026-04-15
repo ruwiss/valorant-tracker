@@ -1,0 +1,264 @@
+@import "tailwindcss";
+
+@theme {
+    --color-dark: #0f1923;
+    --color-card: #1a242d;
+    --color-card-hover: #232f3b;
+    --color-accent-red: #ff4655;
+    --color-accent-cyan: #00d4aa;
+    --color-accent-gold: #ecb22e;
+    --color-primary: #ece8e1;
+    --color-secondary: #768079;
+    --color-dim: #4a5568;
+    --color-border: #2d3a47;
+    --color-success: #00d4aa;
+    --color-warning: #ecb22e;
+    --color-error: #ff4655;
+    --color-party-1: #ff4655;
+    --color-party-2: #00d4aa;
+    --color-party-3: #ecb22e;
+    --color-accent-purple: #bd3fff;
+    --color-accent-green: #3fffbd;
+    --animate-slide-in: slide-in 0.2s ease-out;
+    --animate-smooth-appear: smooth-appear 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes smooth-appear {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.98);
+        filter: blur(4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+@layer base {
+
+    html,
+    body,
+    #root {
+        height: 100%;
+        background: transparent;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: var(--color-primary);
+        overflow: hidden;
+        user-select: none;
+    }
+
+    ::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--color-dim);
+    }
+}
+
+@keyframes panel-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.98);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* ... existing weapon-enter ... */
+/* ... */
+
+.animate-slide-in {
+    opacity: 0;
+    animation: panel-appear 0.4s ease-out forwards;
+    animation-delay: 0.2s;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes weapon-enter {
+    0% {
+        opacity: 0;
+        transform: scale(0.8) translateY(20px);
+        filter: blur(10px);
+    }
+
+    50% {
+        filter: blur(2px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        filter: blur(0);
+    }
+}
+
+@keyframes glitch-shift {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    20% {
+        transform: translateX(-3px);
+    }
+
+    40% {
+        transform: translateX(3px);
+    }
+
+    60% {
+        transform: translateX(-2px);
+    }
+
+    80% {
+        transform: translateX(2px);
+    }
+}
+
+@keyframes glitch-skew {
+
+    0%,
+    100% {
+        transform: skewX(0deg);
+    }
+
+    20% {
+        transform: skewX(-2deg);
+    }
+
+    40% {
+        transform: skewX(2deg);
+    }
+
+    60% {
+        transform: skewX(-1deg);
+    }
+
+    80% {
+        transform: skewX(1deg);
+    }
+}
+
+@keyframes scan-line {
+    0% {
+        transform: translateY(-100%);
+    }
+
+    100% {
+        transform: translateY(100%);
+    }
+}
+
+.animate-fade-in {
+    animation: fade-in 0.15s ease-out forwards;
+}
+
+.animate-weapon-enter {
+    animation: weapon-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Glitch text effect */
+.glitch-text {
+    position: relative;
+    animation: glitch-skew 0.5s ease-in-out;
+}
+
+.glitch-text-heavy {
+    position: relative;
+    animation: glitch-skew 0.3s ease-in-out;
+}
+
+.glitch-shift-r {
+    animation: glitch-shift 0.4s ease-in-out;
+}
+
+.glitch-shift-l {
+    animation: glitch-shift 0.4s ease-in-out reverse;
+}
+
+/* Glitch image effect */
+.glitch-image {
+    animation: glitch-skew 0.3s ease-in-out;
+}
+
+.glitch-container {
+    animation: glitch-shift 0.15s ease-in-out;
+}
+
+@keyframes glitch-flash {
+    0% {
+        opacity: 0.8;
+    }
+
+    50% {
+        opacity: 0.2;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes scan-fast {
+    0% {
+        transform: translateY(-100%);
+    }
+
+    100% {
+        transform: translateY(100%);
+    }
+}
+
+/* Scan lines overlay */
+.scan-lines {
+    background: repeating-linear-gradient(0deg,
+            transparent,
+            transparent 2px,
+            rgba(0, 212, 170, 0.03) 2px,
+            rgba(0, 212, 170, 0.03) 4px);
+    animation: scan-line 3s linear infinite;
+}
+
+@keyframes slide-enter-right {
+    from {
+        opacity: 0;
+        transform: translateX(20px) scale(0.98);
+        filter: blur(4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+.animate-slide-enter-right {
+    animation: slide-enter-right 0.35s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
