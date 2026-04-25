@@ -4,8 +4,8 @@ use crate::state::AppState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::State;
 use tauri::Manager;
+use tauri::State;
 
 #[tauri::command]
 pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
@@ -17,7 +17,11 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
     });
 
     if let Ok(ref status) = result {
-        tracing::info!("[Command] initialize() success: connected={}, region={}", status.connected, status.region);
+        tracing::info!(
+            "[Command] initialize() success: connected={}, region={}",
+            status.connected,
+            status.region
+        );
     }
 
     // Start autolock worker if not already running
@@ -34,13 +38,16 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
                 // Check connection first
-                if !*api.connected.read() { continue; }
+                if !*api.connected.read() {
+                    continue;
+                }
 
                 // Check pregame
                 if let Some(match_id) = api.get_pregame_match_id().await {
                     if let Some(match_data) = api.get_pregame_match(&match_id).await {
                         // Determine map name
-                        let map_name = MAP_NAMES.get(match_data.map_id.as_str())
+                        let map_name = MAP_NAMES
+                            .get(match_data.map_id.as_str())
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| "Unknown".into());
 
@@ -62,16 +69,28 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
                             if let Some(agent_id) = AGENTS.get(agent_name.to_lowercase().as_str()) {
                                 // Check if already locked to avoid spamming
                                 let my_puuid = api.puuid.read().clone();
-                                let is_locked = match_data.ally_team.as_ref().and_then(|team| {
-                                    team.players.iter().find(|p| p.subject == my_puuid)
-                                        .map(|p| p.character_selection_state == "locked")
-                                }).unwrap_or(false);
+                                let is_locked = match_data
+                                    .ally_team
+                                    .as_ref()
+                                    .and_then(|team| {
+                                        team.players
+                                            .iter()
+                                            .find(|p| p.subject == my_puuid)
+                                            .map(|p| p.character_selection_state == "locked")
+                                    })
+                                    .unwrap_or(false);
 
                                 if !is_locked {
-                                    tracing::info!("[Worker] Attempting autolock for {} on match {} (Map: {})", agent_name, match_id, map_name);
+                                    tracing::info!(
+                                        "[Worker] Attempting autolock for {} on match {} (Map: {})",
+                                        agent_name,
+                                        match_id,
+                                        map_name
+                                    );
                                     api.select_agent(&match_id, agent_id).await;
                                     // 1 SECOND DELAY BEFORE LOCKING (Requested by user)
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(1000))
+                                        .await;
                                     api.lock_agent(&match_id, agent_id).await;
                                 }
                             }
@@ -146,51 +165,82 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
     REINIT_WARNED.store(false, Ordering::Relaxed);
 
     // --- RECENT ENCOUNTER TRACKING LOGIC ---
-    let current_id = match api.get_coregame_match_id().await.or(api.get_pregame_match_id().await) {
-        Some(id) => id,
-        None => "idle".to_string(),
+    let coregame_match_id = api.get_coregame_match_id().await;
+    let pregame_match_id = if coregame_match_id.is_none() {
+        api.get_pregame_match_id().await
+    } else {
+        None
     };
+    let current_is_ingame = coregame_match_id.is_some();
+    let current_id = coregame_match_id
+        .or(pregame_match_id)
+        .unwrap_or_else(|| "idle".to_string());
 
     {
         let mut last_id_guard = state.current_match_id.write();
         if let Some(ref last_id) = *last_id_guard {
             if last_id != &current_id && current_id != "idle" {
-                // Match changed! Push previous match players to history
-                let players = state.current_match_players.read().clone();
-                if !players.is_empty() {
-                    let mut history = state.match_history.write();
-                    history.push_front(players);
-                    if history.len() > 2 {
-                        history.pop_back();
+                let was_real_match = *state.current_match_seen_ingame.read();
+
+                if was_real_match {
+                    // Match changed after reaching coregame. Push previous match players to history.
+                    let players = state.current_match_players.read().clone();
+                    if !players.is_empty() {
+                        let mut history = state.match_history.write();
+                        history.push_front(players);
+                        if history.len() > 2 {
+                            history.pop_back();
+                        }
+                        tracing::info!(
+                            "[Encounter] Pushed match {} to history. History size: {}",
+                            last_id,
+                            history.len()
+                        );
                     }
-                    tracing::info!("[Encounter] Pushed match {} to history. History size: {}", last_id, history.len());
+                } else {
+                    tracing::debug!(
+                        "[Encounter] Ignored pregame-only match id change from {} to {}",
+                        last_id,
+                        current_id
+                    );
                 }
+
                 state.current_match_players.write().clear();
                 *last_id_guard = Some(current_id.clone());
+                *state.current_match_seen_ingame.write() = current_is_ingame;
             }
         } else if current_id != "idle" {
             *last_id_guard = Some(current_id.clone());
+            *state.current_match_seen_ingame.write() = current_is_ingame;
+        } else if current_is_ingame {
+            *state.current_match_seen_ingame.write() = true;
+        }
+
+        if current_is_ingame {
+            *state.current_match_seen_ingame.write() = true;
         }
     }
 
-    let get_encounter_indicator = |puuid: &str| -> Option<u32> {
+    let get_encounter_data = |puuid: &str| -> (Option<u32>, Option<String>) {
         let history = state.match_history.read();
-        for (i, set) in history.iter().enumerate() {
-            if set.contains(puuid) {
-                return Some((i + 1) as u32);
+        for (i, players) in history.iter().enumerate() {
+            if let Some(agent) = players.get(puuid) {
+                return (Some((i + 1) as u32), Some(agent.clone()));
             }
         }
-        None
+        (None, None)
     };
     // ---------------------------------------
 
     // Check pregame
     if let Some(match_id) = api.get_pregame_match_id().await {
         if let Some(match_data) = api.get_pregame_match(&match_id).await {
-            let map_name = MAP_NAMES.get(match_data.map_id.as_str())
+            let map_name = MAP_NAMES
+                .get(match_data.map_id.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".into());
-            let mode_name = QUEUE_NAMES.get(match_data.queue_id.as_str())
+            let mode_name = QUEUE_NAMES
+                .get(match_data.queue_id.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| match_data.queue_id.clone());
 
@@ -198,18 +248,12 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
             let my_puuid = api.puuid.read().clone();
 
             if let Some(team) = match_data.ally_team {
-                let side = if team.team_id == "Red" { "SALDIRAN" } else { "SAVUNAN" };
+                let side = if team.team_id == "Red" {
+                    "SALDIRAN"
+                } else {
+                    "SAVUNAN"
+                };
                 let puuids: Vec<String> = team.players.iter().map(|p| p.subject.clone()).collect();
-                
-                // Track current players
-                {
-                    let mut current_players = state.current_match_players.write();
-                    for puuid in &puuids {
-                        if puuid != &my_puuid {
-                            current_players.insert(puuid.clone());
-                        }
-                    }
-                }
 
                 let names = api.get_player_names(&puuids).await;
 
@@ -218,7 +262,9 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
 
                 // Check if I'm already locked
                 let my_player = team.players.iter().find(|p| p.subject == my_puuid);
-                let im_locked = my_player.map(|p| p.character_selection_state == "locked").unwrap_or(false);
+                let im_locked = my_player
+                    .map(|p| p.character_selection_state == "locked")
+                    .unwrap_or(false);
 
                 // Auto-lock: keep trying until locked
                 if !im_locked {
@@ -234,8 +280,20 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
 
                 for p in team.players {
                     let agent_name = get_agent_name(&p.character_id);
+                    if p.subject != my_puuid && !agent_name.is_empty() {
+                        state
+                            .current_match_players
+                            .write()
+                            .insert(p.subject.clone(), agent_name.clone());
+                    }
+
+                    let (previous_encounter, previous_encounter_agent) =
+                        get_encounter_data(&p.subject);
                     let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
-                    let party = parties.get(&p.subject).cloned().unwrap_or_else(|| "Solo".into());
+                    let party = parties
+                        .get(&p.subject)
+                        .cloned()
+                        .unwrap_or_else(|| "Solo".into());
 
                     // Use agent name (capitalized) for hidden players
                     let player_name = names.get(&p.subject).cloned().unwrap_or_default();
@@ -255,7 +313,8 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
                         rank_tier: p.competitive_tier,
                         rank_rr: 0,
                         level,
-                        previous_encounter: get_encounter_indicator(&p.subject),
+                        previous_encounter,
+                        previous_encounter_agent,
                     });
                 }
 
@@ -279,29 +338,26 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
     // Check coregame
     if let Some(match_id) = api.get_coregame_match_id().await {
         if let Some(match_data) = api.get_coregame_match(&match_id).await {
-            let map_name = MAP_NAMES.get(match_data.map_id.as_str())
+            let map_name = MAP_NAMES
+                .get(match_data.map_id.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".into());
 
             let my_puuid = api.puuid.read().clone();
-            let puuids: Vec<String> = match_data.players.iter().map(|p| p.subject.clone()).collect();
-            
-            // Track current players
-            {
-                let mut current_players = state.current_match_players.write();
-                for puuid in &puuids {
-                    if puuid != &my_puuid {
-                        current_players.insert(puuid.clone());
-                    }
-                }
-            }
+            let puuids: Vec<String> = match_data
+                .players
+                .iter()
+                .map(|p| p.subject.clone())
+                .collect();
 
             let names = api.get_player_names(&puuids).await;
 
             // Get parties with caching
             let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
 
-            let my_team = match_data.players.iter()
+            let my_team = match_data
+                .players
+                .iter()
                 .find(|p| p.subject == my_puuid)
                 .map(|p| p.team_id.clone())
                 .unwrap_or_default();
@@ -311,9 +367,20 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
 
             for p in match_data.players {
                 let agent_name = get_agent_name(&p.character_id);
+                if p.subject != my_puuid && !agent_name.is_empty() {
+                    state
+                        .current_match_players
+                        .write()
+                        .insert(p.subject.clone(), agent_name.clone());
+                }
+
+                let (previous_encounter, previous_encounter_agent) = get_encounter_data(&p.subject);
                 let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
                 let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
-                let party = parties.get(&p.subject).cloned().unwrap_or_else(|| "Solo".into());
+                let party = parties
+                    .get(&p.subject)
+                    .cloned()
+                    .unwrap_or_else(|| "Solo".into());
 
                 // Use agent name (capitalized) for hidden players
                 let player_name = names.get(&p.subject).cloned().unwrap_or_default();
@@ -333,7 +400,8 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
                     rank_tier: rank,
                     rank_rr: 0,
                     level,
-                    previous_encounter: get_encounter_indicator(&p.subject),
+                    previous_encounter,
+                    previous_encounter_agent,
                 };
 
                 if p.team_id == my_team {
@@ -342,7 +410,6 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
                     enemies.push(player);
                 }
             }
-
 
             // Reset idle counter and update last known state on successful ingame
             *state.consecutive_idle_count.write() = 0;
@@ -393,7 +460,9 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
         if *idle_count < IDLE_DEBOUNCE_THRESHOLD {
             tracing::debug!(
                 "[get_game_state] Idle debounce: {} (was {}), waiting for {} more confirmations",
-                *idle_count, last_state, IDLE_DEBOUNCE_THRESHOLD - *idle_count
+                *idle_count,
+                last_state,
+                IDLE_DEBOUNCE_THRESHOLD - *idle_count
             );
             // Return the last known state to maintain UI stability
             return Ok(GameState {
@@ -408,7 +477,11 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
         }
 
         // Threshold reached - this is a real transition
-        tracing::info!("[get_game_state] Idle confirmed after {} checks, transitioning {} -> idle", *idle_count, last_state);
+        tracing::info!(
+            "[get_game_state] Idle confirmed after {} checks, transitioning {} -> idle",
+            *idle_count,
+            last_state
+        );
         *idle_count = 0;
     }
 
@@ -454,7 +527,8 @@ async fn get_cached_parties(
             if cached_match_id.is_some() {
                 tracing::info!(
                     "[get_cached_parties] Match changed from {:?} to {}, clearing party cache",
-                    cached_match_id, match_id
+                    cached_match_id,
+                    match_id
                 );
             }
             state.cached_parties.write().clear();
@@ -475,7 +549,8 @@ async fn get_cached_parties(
     // Determine which players need history fetch (not fetched before this game session)
     let players_needing_fetch: Vec<String> = {
         let fetched = state.fetched_history_players.read();
-        puuids.iter()
+        puuids
+            .iter()
             .filter(|p| !fetched.contains(*p))
             .cloned()
             .collect()
@@ -494,7 +569,9 @@ async fn get_cached_parties(
 
     // Fetch parties - pass ALL puuids but only fetch history for new players
     // This ensures consistent party numbering across the entire lobby
-    let new_parties = api.detect_parties_with_cache(puuids, &players_needing_fetch, &cached).await;
+    let new_parties = api
+        .detect_parties_with_cache(puuids, &players_needing_fetch, &cached)
+        .await;
 
     // Mark these players as fetched
     {
@@ -542,7 +619,10 @@ fn capitalize_first(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         None => String::new(),
-        Some(first) => first.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect(),
+        Some(first) => first
+            .to_uppercase()
+            .chain(chars.flat_map(|c| c.to_lowercase()))
+            .collect(),
     }
 }
 
@@ -693,7 +773,10 @@ pub async fn get_chat_messages(
     tracing::debug!("[get_chat_messages] Request with CID: {:?}", cid);
 
     if let Some(history) = api.get_chat_history(cid.as_deref()).await {
-        tracing::debug!("[get_chat_messages] Returning {} messages", history.messages.len());
+        tracing::debug!(
+            "[get_chat_messages] Returning {} messages",
+            history.messages.len()
+        );
         Ok(history.messages)
     } else {
         tracing::debug!("[get_chat_messages] No history returned");
@@ -702,7 +785,9 @@ pub async fn get_chat_messages(
 }
 
 #[tauri::command]
-pub async fn get_active_conversations(state: State<'_, AppState>) -> Result<Vec<Conversation>, String> {
+pub async fn get_active_conversations(
+    state: State<'_, AppState>,
+) -> Result<Vec<Conversation>, String> {
     let api = &state.api;
     if !*api.connected.read() {
         return Err("Not connected".into());
@@ -713,24 +798,24 @@ pub async fn get_active_conversations(state: State<'_, AppState>) -> Result<Vec<
         let mut puuids = Vec::new();
         for conv in &convs.conversations {
             if conv.conversation_type == "chat" && !conv.cid.contains('@') {
-                 // Try to guess PUUID from CID if it IS a PUUID (DM conversations usually are)
-                 // But wait, the CID for DMs is usually "puuid@ares-parties.glz" or just a UUID
-                 // Let's safe check if the CID looks like a UUID
-                 if conv.cid.len() == 36 {
-                     puuids.push(conv.cid.clone());
-                  }
+                // Try to guess PUUID from CID if it IS a PUUID (DM conversations usually are)
+                // But wait, the CID for DMs is usually "puuid@ares-parties.glz" or just a UUID
+                // Let's safe check if the CID looks like a UUID
+                if conv.cid.len() == 36 {
+                    puuids.push(conv.cid.clone());
+                }
             }
         }
 
         if !puuids.is_empty() {
-             let names = api.get_player_names(&puuids).await;
-             for conv in &mut convs.conversations {
-                 if conv.conversation_type == "chat" && conv.cid.len() == 36 {
-                      if let Some(name) = names.get(&conv.cid) {
-                          conv.game_name = Some(name.clone());
-                      }
-                 }
-             }
+            let names = api.get_player_names(&puuids).await;
+            for conv in &mut convs.conversations {
+                if conv.conversation_type == "chat" && conv.cid.len() == 36 {
+                    if let Some(name) = names.get(&conv.cid) {
+                        conv.game_name = Some(name.clone());
+                    }
+                }
+            }
         }
 
         Ok(convs.conversations)
@@ -754,7 +839,11 @@ pub async fn send_message(
     tracing::debug!("[send_message] CID: {}, Type: {}", cid, message_type);
 
     // Direct send - CID should be correct (PID for DMs or actual CID for groups)
-    if api.send_chat_message(&cid, &message, &message_type).await.is_some() {
+    if api
+        .send_chat_message(&cid, &message, &message_type)
+        .await
+        .is_some()
+    {
         tracing::info!("[send_message] Message sent successfully");
         return Ok(true);
     }
@@ -776,17 +865,17 @@ pub async fn get_paginated_chat_messages(
     }
 
     if let Some(history) = api.get_chat_history(cid.as_deref()).await {
-         let total = history.messages.len();
-         // Sort by time descending (newest first) for pagination slicing
-         // But we want to return them in chronological order for chat view
-         let mut all_msgs = history.messages;
-         all_msgs.sort_by(|a, b| b.time.cmp(&a.time)); // Sort Newest -> Oldest
+        let total = history.messages.len();
+        // Sort by time descending (newest first) for pagination slicing
+        // But we want to return them in chronological order for chat view
+        let mut all_msgs = history.messages;
+        all_msgs.sort_by(|a, b| b.time.cmp(&a.time)); // Sort Newest -> Oldest
 
         let start = page * page_size;
         let end = (start + page_size).min(total);
 
         if start >= total {
-             return Ok(PaginatedMessages {
+            return Ok(PaginatedMessages {
                 messages: vec![],
                 total,
                 page,
@@ -796,11 +885,8 @@ pub async fn get_paginated_chat_messages(
             });
         }
 
-        let mut messages: Vec<ChatMessage> = all_msgs
-            .into_iter()
-            .skip(start)
-            .take(page_size)
-            .collect();
+        let mut messages: Vec<ChatMessage> =
+            all_msgs.into_iter().skip(start).take(page_size).collect();
 
         // Re-sort to Oldest -> Newest for display
         messages.sort_by(|a, b| a.time.cmp(&b.time));
@@ -840,7 +926,10 @@ pub async fn get_friends(state: State<'_, AppState>) -> Result<Vec<Friend>, Stri
 }
 
 #[tauri::command]
-pub async fn get_dm_cid(state: State<'_, AppState>, friend_puuid: String) -> Result<String, String> {
+pub async fn get_dm_cid(
+    state: State<'_, AppState>,
+    friend_puuid: String,
+) -> Result<String, String> {
     let api = &state.api;
     if !*api.connected.read() {
         return Err("Not connected".into());
@@ -862,7 +951,10 @@ pub async fn get_dm_cid(state: State<'_, AppState>, friend_puuid: String) -> Res
                 if let Some(participants) = api.get_chat_participants(Some(&conv.cid)).await {
                     for p in participants.participants {
                         if p.puuid == friend_puuid {
-                            tracing::debug!("[get_dm_cid] Found CID from conversations: {}", conv.cid);
+                            tracing::debug!(
+                                "[get_dm_cid] Found CID from conversations: {}",
+                                conv.cid
+                            );
                             return Ok(conv.cid);
                         }
                     }
@@ -951,7 +1043,8 @@ pub async fn get_cached_image(
                     // Save to cache (ignore errors - caching is optional)
                     let _ = std::fs::write(&cache_path, &bytes);
 
-                    let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+                    let base64 =
+                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
                     Ok(Some(format!("data:image/png;base64,{}", base64)))
                 }
                 Err(_) => Ok(None),
@@ -966,10 +1059,14 @@ pub async fn get_tracker_stats(
     player_name: String,
 ) -> Result<serde_json::Value, String> {
     tracing::info!("[Command] get_tracker_stats() for player: {}", player_name);
-    state.api.get_tracker_stats(&player_name).await.map_err(|e| {
-        tracing::error!("[Command] get_tracker_stats() failed: {}", e);
-        e.to_string()
-    })
+    state
+        .api
+        .get_tracker_stats(&player_name)
+        .await
+        .map_err(|e| {
+            tracing::error!("[Command] get_tracker_stats() failed: {}", e);
+            e.to_string()
+        })
 }
 
 /// Peak rank response type
@@ -988,14 +1085,14 @@ pub async fn get_peak_rank(
     puuid: String,
 ) -> Result<Option<PeakRankResponse>, String> {
     let api = &state.api;
-    
+
     tracing::info!("[Command] get_peak_rank called for puuid: {}", puuid);
 
     if !*api.connected.read() {
         tracing::warn!("[Command] get_peak_rank: Not connected");
         return Err("Not connected".into());
     }
-    
+
     match api.get_player_peak_rank(&puuid).await {
         Some((tier, rank_name, rank_color, season_id)) => {
             tracing::info!("[Command] get_peak_rank success: {} ({})", rank_name, tier);
@@ -1005,7 +1102,7 @@ pub async fn get_peak_rank(
                 rank_color,
                 season_id,
             }))
-        },
+        }
         None => {
             tracing::info!("[Command] get_peak_rank: No peak rank found");
             Ok(None)
@@ -1036,15 +1133,11 @@ pub enum LicenseStatus {
         score: u8,
     },
     #[allow(dead_code)]
-    Invalid {
-        reason: String,
-    },
+    Invalid { reason: String },
     #[allow(dead_code)]
     NotFound,
     #[allow(dead_code)]
-    Expired {
-        expired_at: i64,
-    },
+    Expired { expired_at: i64 },
 }
 
 #[derive(serde::Serialize)]
@@ -1071,9 +1164,7 @@ pub struct LicenseData {
 
 /// Get the Machine ID for this computer
 #[tauri::command]
-pub fn get_machine_id(
-    _state: State<'_, AppState>,
-) -> Result<MachineIdResponse, String> {
+pub fn get_machine_id(_state: State<'_, AppState>) -> Result<MachineIdResponse, String> {
     Ok(MachineIdResponse {
         machine_id: "FREE-VERSION".into(),
         components: HashMap::new(),
@@ -1082,9 +1173,7 @@ pub fn get_machine_id(
 
 /// Get full license request data (machine_id + hashes) for keygen - copy & paste into keygen
 #[tauri::command]
-pub fn get_license_request_data(
-    _state: State<'_, AppState>,
-) -> Result<LicenseRequestData, String> {
+pub fn get_license_request_data(_state: State<'_, AppState>) -> Result<LicenseRequestData, String> {
     Ok(LicenseRequestData {
         machine_id: "FREE-VERSION".into(),
         hashes: HashMap::new(),
@@ -1093,9 +1182,7 @@ pub fn get_license_request_data(
 
 /// Get encrypted activation code (single string)
 #[tauri::command]
-pub fn get_activation_code(
-    _state: State<'_, AppState>,
-) -> Result<String, String> {
+pub fn get_activation_code(_state: State<'_, AppState>) -> Result<String, String> {
     Ok("FREE-VERSION".into())
 }
 
@@ -1129,9 +1216,7 @@ pub fn import_license(
 
 /// Get license info (if valid)
 #[tauri::command]
-pub fn get_license_info(
-    _state: State<'_, AppState>,
-) -> Option<LicenseData> {
+pub fn get_license_info(_state: State<'_, AppState>) -> Option<LicenseData> {
     Some(LicenseData {
         hardware_hashes: HashMap::new(),
         weights: HashMap::new(),
@@ -1182,7 +1267,8 @@ pub fn log_frontend_message(level: String, message: String) {
 
 #[tauri::command]
 pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
-    let log_path = app.path()
+    let log_path = app
+        .path()
         .app_log_dir()
         .map_err(|e| e.to_string())?
         .join("app.log");

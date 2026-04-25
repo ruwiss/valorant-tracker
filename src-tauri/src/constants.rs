@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 pub static AGENTS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -28,9 +28,9 @@ pub static AGENTS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     m.insert("iso", "0e38b510-41a8-5780-5e8f-568b2a4f2d6c");
     m.insert("clove", "1dbf2edd-4729-0984-3115-daa5eed44993");
     m.insert("vyse", "efba5359-4016-a1e5-7626-b1ae76895940");
-    m.insert("tejo", "f94c3b30-42be-e959-889c-5aa313dba261");
-    m.insert("veto", "601dbbe7-43ce-be57-2a40-4abd24953621");
-    m.insert("waylay", "e370fa57-4757-3604-3648-499e1f642d3f");
+    m.insert("tejo", "b444168c-4e35-8076-db47-ef9bf368f384");
+    m.insert("veto", "92eeef5d-43b5-1d4a-8d03-b3927a09034b");
+    m.insert("waylay", "df1cb487-4902-002e-5c17-d28e83e78588");
     m.insert("miks", "7c8a4701-4de6-9355-b254-e09bc2a34b72");
     m
 });

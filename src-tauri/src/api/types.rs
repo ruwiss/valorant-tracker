@@ -144,8 +144,8 @@ pub struct PlayerData {
     pub rank_rr: i32,
     pub level: i32,
     pub previous_encounter: Option<u32>, // 1 = Last game, 2 = Two games ago
+    pub previous_encounter_agent: Option<String>,
 }
-
 
 // Presence types for party detection
 #[derive(Debug, Clone, Serialize, Deserialize)]

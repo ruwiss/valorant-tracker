@@ -1,5 +1,5 @@
-use crate::api::ValorantAPI;
 use crate::api::types::PlayerSkinData;
+use crate::api::ValorantAPI;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -28,11 +28,12 @@ pub struct AppState {
     pub map_agent_preferences: Arc<RwLock<HashMap<String, String>>>,
 
     // --- RECENT ENCOUNTER TRACKING ---
-    // Stores sets of PUUIDs from previous matches (max 2)
-    pub match_history: RwLock<VecDeque<HashSet<String>>>,
+    // Stores PUUID -> agent name from previous matches (max 2)
+    pub match_history: RwLock<VecDeque<HashMap<String, String>>>,
     // Current match tracking to know when to push to history
     pub current_match_id: RwLock<Option<String>>,
-    pub current_match_players: RwLock<HashSet<String>>,
+    pub current_match_players: RwLock<HashMap<String, String>>,
+    pub current_match_seen_ingame: RwLock<bool>,
 }
 
 impl AppState {
@@ -55,10 +56,11 @@ impl AppState {
             consecutive_idle_count: RwLock::new(0),
             last_known_state: RwLock::new("idle".to_string()),
             map_agent_preferences: Arc::new(RwLock::new(HashMap::new())),
-            
+
             match_history: RwLock::new(VecDeque::with_capacity(2)),
             current_match_id: RwLock::new(None),
-            current_match_players: RwLock::new(HashSet::new()),
+            current_match_players: RwLock::new(HashMap::new()),
+            current_match_seen_ingame: RwLock::new(false),
         }
     }
 }

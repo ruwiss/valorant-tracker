@@ -24,7 +24,7 @@ struct LockfileData {
 }
 
 pub struct ValorantAPI {
-    client: reqwest::Client,    // Standard client for Local Riot API (supports invalid certs)
+    client: reqwest::Client, // Standard client for Local Riot API (supports invalid certs)
     tracker_client: rquest::Client, // Impersonation client for Tracker.gg
     pub puuid: RwLock<String>,
     pub region: RwLock<String>,
@@ -36,7 +36,7 @@ pub struct ValorantAPI {
     pub needs_reinit: RwLock<bool>, // Signal that tokens need refresh
     last_init_time: RwLock<std::time::Instant>,
     pub consecutive_network_errors: RwLock<u32>, // Track network errors for smarter disconnection
-    lockfile_hash: RwLock<String>, // Track lockfile content hash to detect changes
+    lockfile_hash: RwLock<String>,               // Track lockfile content hash to detect changes
     last_lockfile_check: RwLock<std::time::Instant>, // Rate limit lockfile checks
     last_recovery_check: RwLock<std::time::Instant>, // Rate limit recovery checks
 }
@@ -84,8 +84,8 @@ impl ValorantAPI {
             std::env::var("LOCALAPPDATA").unwrap_or_default()
         );
 
-        let lockfile_content = std::fs::read_to_string(&lockfile_path)
-            .map_err(|_| ApiError::NotRunning)?;
+        let lockfile_content =
+            std::fs::read_to_string(&lockfile_path).map_err(|_| ApiError::NotRunning)?;
 
         let parts: Vec<&str> = lockfile_content.split(':').collect();
         if parts.len() < 4 {
@@ -96,7 +96,11 @@ impl ValorantAPI {
         let password = parts[3].to_string();
         let hash = format!("{}:{}", port, password); // Simple hash for comparison
 
-        Ok(LockfileData { port, password, hash })
+        Ok(LockfileData {
+            port,
+            password,
+            hash,
+        })
     }
 
     /// Check if lockfile has changed since last read (rate limited to once per second)
@@ -114,8 +118,11 @@ impl ValorantAPI {
         if let Ok(lockfile) = Self::read_lockfile() {
             let current_hash = self.lockfile_hash.read().clone();
             if !current_hash.is_empty() && lockfile.hash != current_hash {
-                tracing::debug!("[LockfileMonitor] Lockfile changed! Old hash: {}, New hash: {}",
-                    current_hash, lockfile.hash);
+                tracing::debug!(
+                    "[LockfileMonitor] Lockfile changed! Old hash: {}, New hash: {}",
+                    current_hash,
+                    lockfile.hash
+                );
                 return true;
             }
         }
@@ -125,32 +132,35 @@ impl ValorantAPI {
     /// Detect actual RiotClientServices port by checking which port the process is listening on
     /// This is a fallback when lockfile might be stale
     fn detect_riot_client_port() -> Option<String> {
-        use std::process::Command;
         use std::os::windows::process::CommandExt;
+        use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // First, find RiotClientServices PID
         // Use /NH to hide headers and /FO CSV for easier parsing
         let tasklist = Command::new("tasklist")
             .creation_flags(CREATE_NO_WINDOW)
-            .args(["/FI", "IMAGENAME eq RiotClientServices.exe", "/FO", "CSV", "/NH"])
+            .args([
+                "/FI",
+                "IMAGENAME eq RiotClientServices.exe",
+                "/FO",
+                "CSV",
+                "/NH",
+            ])
             .output()
             .ok()?;
 
         let tasklist_output = String::from_utf8_lossy(&tasklist.stdout);
 
         // Parse PID from tasklist output (format: "RiotClientServices.exe","PID",...)
-        let pid: Option<String> = tasklist_output
-            .lines()
-            .next()
-            .and_then(|line| {
-                let parts: Vec<&str> = line.split(',').collect();
-                if parts.len() >= 2 {
-                    Some(parts[1].trim_matches('"').to_string())
-                } else {
-                    None
-                }
-            });
+        let pid: Option<String> = tasklist_output.lines().next().and_then(|line| {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() >= 2 {
+                Some(parts[1].trim_matches('"').to_string())
+            } else {
+                None
+            }
+        });
 
         let pid = pid?;
         tracing::debug!("[PortDetect] Found RiotClientServices PID: {}", pid);
@@ -169,16 +179,19 @@ impl ValorantAPI {
             // Check for PID and Local Address 127.0.0.1
             // We check for "0.0.0.0:0" as Foreign Address to identify LISTENING sockets
             // This is safer than checking for word "LISTENING" which varies by system language
-            if line.contains(&pid) && line.contains("127.0.0.1:") && (line.contains("LISTENING") || line.contains("0.0.0.0:0")) {
-                 // Parse port from line like: "  TCP    127.0.0.1:64011        0.0.0.0:0              LISTENING       2424"
-                 let parts: Vec<&str> = line.split_whitespace().collect();
-                 // Column 1: Proto, Column 2: Local Address
-                 if parts.len() >= 2 {
-                     if let Some(port) = parts[1].split(':').last() {
+            if line.contains(&pid)
+                && line.contains("127.0.0.1:")
+                && (line.contains("LISTENING") || line.contains("0.0.0.0:0"))
+            {
+                // Parse port from line like: "  TCP    127.0.0.1:64011        0.0.0.0:0              LISTENING       2424"
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                // Column 1: Proto, Column 2: Local Address
+                if parts.len() >= 2 {
+                    if let Some(port) = parts[1].split(':').last() {
                         tracing::debug!("[PortDetect] Found listening port: {}", port);
                         return Some(port.to_string());
-                     }
-                 }
+                    }
+                }
             }
         }
 
@@ -203,13 +216,19 @@ impl ValorantAPI {
             let current_port = self.local_port.read().clone();
 
             if detected_port != current_port {
-                tracing::debug!("[Recovery] Port mismatch! Current: {}, Detected: {}", current_port, detected_port);
+                tracing::debug!(
+                    "[Recovery] Port mismatch! Current: {}, Detected: {}",
+                    current_port,
+                    detected_port
+                );
                 tracing::debug!("[Recovery] Will re-read lockfile to get new credentials...");
 
                 // Re-read lockfile which should have the updated port
                 if let Ok(lockfile) = Self::read_lockfile() {
                     if lockfile.port == detected_port {
-                        tracing::debug!("[Recovery] Lockfile has correct port, updating credentials...");
+                        tracing::debug!(
+                            "[Recovery] Lockfile has correct port, updating credentials..."
+                        );
                         let auth = STANDARD.encode(format!("riot:{}", lockfile.password));
                         *self.local_port.write() = lockfile.port.clone();
                         *self.local_auth.write() = format!("Basic {}", auth);
@@ -223,13 +242,15 @@ impl ValorantAPI {
                     }
                 }
             } else {
-                tracing::debug!("[Recovery] Port is correct ({}), issue might be temporary", current_port);
+                tracing::debug!(
+                    "[Recovery] Port is correct ({}), issue might be temporary",
+                    current_port
+                );
             }
         }
 
         false
     }
-
 
     /// Check if tokens might be stale (older than 45 minutes)
     fn should_refresh_tokens(&self) -> bool {
@@ -249,7 +270,10 @@ impl ValorantAPI {
         *self.local_auth.write() = format!("Basic {}", auth);
         *self.lockfile_hash.write() = lockfile.hash.clone(); // Save hash for change detection
 
-        tracing::debug!("[Initialize] Attempting connection to Riot Client on port {}", port);
+        tracing::debug!(
+            "[Initialize] Attempting connection to Riot Client on port {}",
+            port
+        );
 
         // Get entitlements with retry logic
         let ent_url = format!("https://127.0.0.1:{}/entitlements/v1/token", port);
@@ -258,9 +282,14 @@ impl ValorantAPI {
         let mut ent_response_opt: Option<EntitlementsResponse> = None;
 
         for attempt in 1..=3 {
-            tracing::debug!("[Initialize] Entitlements request attempt {}/3 to {}...", attempt, ent_url);
+            tracing::debug!(
+                "[Initialize] Entitlements request attempt {}/3 to {}...",
+                attempt,
+                ent_url
+            );
 
-            match self.client
+            match self
+                .client
                 .get(&ent_url)
                 .header("Authorization", format!("Basic {}", auth))
                 .send()
@@ -292,7 +321,11 @@ impl ValorantAPI {
                 }
                 Err(e) => {
                     last_error = e.to_string();
-                    tracing::debug!("[Initialize] Connection error (attempt {}): {}", attempt, last_error);
+                    tracing::debug!(
+                        "[Initialize] Connection error (attempt {}): {}",
+                        attempt,
+                        last_error
+                    );
 
                     // Print the error source chain for debugging
                     use std::error::Error;
@@ -304,7 +337,9 @@ impl ValorantAPI {
 
                     // Check specific error types
                     if e.is_connect() {
-                        tracing::warn!("[Initialize]   -> Connection failed (check firewall/antivirus)");
+                        tracing::warn!(
+                            "[Initialize]   -> Connection failed (check firewall/antivirus)"
+                        );
                     }
                     if e.is_timeout() {
                         tracing::warn!("[Initialize]   -> Timeout occurred");
@@ -318,29 +353,40 @@ impl ValorantAPI {
             }
         }
 
-
         // Check if we succeeded in the loop above
         if ent_response_opt.is_none() {
             // All retries failed - try to detect actual port from process
             tracing::debug!("[Initialize] All connection attempts failed, trying port recovery...");
             if let Some(detected_port) = Self::detect_riot_client_port() {
                 if detected_port != port {
-                    tracing::debug!("[Initialize] Port mismatch detected! Lockfile: {}, Actual: {}", port, detected_port);
+                    tracing::debug!(
+                        "[Initialize] Port mismatch detected! Lockfile: {}, Actual: {}",
+                        port,
+                        detected_port
+                    );
                     tracing::debug!("[Initialize] Re-reading lockfile and retrying...");
 
                     // Re-read lockfile to get updated credentials
                     if let Ok(new_lockfile) = Self::read_lockfile() {
                         if new_lockfile.port == detected_port {
-                            let new_auth = STANDARD.encode(format!("riot:{}", new_lockfile.password));
+                            let new_auth =
+                                STANDARD.encode(format!("riot:{}", new_lockfile.password));
                             *self.local_port.write() = new_lockfile.port.clone();
                             *self.local_auth.write() = format!("Basic {}", new_auth);
                             *self.lockfile_hash.write() = new_lockfile.hash;
 
                             // One more attempt with correct port
-                            let new_url = format!("https://127.0.0.1:{}/entitlements/v1/token", detected_port);
-                            tracing::debug!("[Initialize] Retrying with detected port: {}", new_url);
+                            let new_url = format!(
+                                "https://127.0.0.1:{}/entitlements/v1/token",
+                                detected_port
+                            );
+                            tracing::debug!(
+                                "[Initialize] Retrying with detected port: {}",
+                                new_url
+                            );
 
-                            if let Ok(resp) = self.client
+                            if let Ok(resp) = self
+                                .client
                                 .get(&new_url)
                                 .header("Authorization", format!("Basic {}", new_auth))
                                 .send()
@@ -356,13 +402,19 @@ impl ValorantAPI {
                         }
                     }
                 } else {
-                     tracing::debug!("[Initialize] Port matches detected port ({}), no recovery needed", detected_port);
+                    tracing::debug!(
+                        "[Initialize] Port matches detected port ({}), no recovery needed",
+                        detected_port
+                    );
                 }
             }
         }
 
         let ent_response = ent_response_opt.ok_or_else(|| {
-            tracing::error!("[Initialize] All attempts failed. Last error: {}", last_error);
+            tracing::error!(
+                "[Initialize] All attempts failed. Last error: {}",
+                last_error
+            );
             ApiError::RequestFailed(last_error)
         })?;
 
@@ -374,7 +426,10 @@ impl ValorantAPI {
         // Set remote headers
         {
             let mut headers = self.remote_headers.write();
-            headers.insert("Authorization".into(), format!("Bearer {}", ent_response.access_token));
+            headers.insert(
+                "Authorization".into(),
+                format!("Bearer {}", ent_response.access_token),
+            );
             headers.insert("X-Riot-Entitlements-JWT".into(), ent_response.token);
             headers.insert("X-Riot-ClientPlatform".into(), "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9".into());
             headers.insert("X-Riot-ClientVersion".into(), version);
@@ -382,8 +437,12 @@ impl ValorantAPI {
         }
 
         // Get region from sessions
-        let sessions_url = format!("https://127.0.0.1:{}/product-session/v1/external-sessions", port);
-        if let Ok(resp) = self.client
+        let sessions_url = format!(
+            "https://127.0.0.1:{}/product-session/v1/external-sessions",
+            port
+        );
+        if let Ok(resp) = self
+            .client
             .get(&sessions_url)
             .header("Authorization", format!("Basic {}", auth))
             .send()
@@ -440,11 +499,13 @@ impl ValorantAPI {
             "ap" => "ap",
             "kr" => "kr",
             _ => "eu",
-        }.to_string()
+        }
+        .to_string()
     }
 
     async fn get_client_version(&self) -> String {
-        if let Ok(resp) = self.client
+        if let Ok(resp) = self
+            .client
             .get("https://valorant-api.com/v1/version")
             .send()
             .await
@@ -463,8 +524,15 @@ impl ValorantAPI {
     fn glz_url(&self, endpoint: &str) -> String {
         let region = self.region.read();
         let shard = self.shard.read();
-        let glz_region = if region.to_lowercase() == "tr" { "eu" } else { &region };
-        format!("https://glz-{}-1.{}.a.pvp.net{}", glz_region, shard, endpoint)
+        let glz_region = if region.to_lowercase() == "tr" {
+            "eu"
+        } else {
+            &region
+        };
+        format!(
+            "https://glz-{}-1.{}.a.pvp.net{}",
+            glz_region, shard, endpoint
+        )
     }
 
     fn pd_url(&self, endpoint: &str) -> String {
@@ -492,7 +560,10 @@ impl ValorantAPI {
                 Ok(resp) => {
                     // Check for auth errors that indicate connection is stale
                     if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
-                        tracing::debug!("[get_remote] Auth error ({}), triggering reinit", resp.status());
+                        tracing::debug!(
+                            "[get_remote] Auth error ({}), triggering reinit",
+                            resp.status()
+                        );
                         *self.needs_reinit.write() = true;
                         return None;
                     }
@@ -512,7 +583,9 @@ impl ValorantAPI {
                     // After all retries failed, check if lockfile changed
                     // This is critical for detecting mid-game Riot Client restarts
                     if self.check_lockfile_changed() {
-                        tracing::debug!("[get_remote] Lockfile changed during game! Triggering full reinit...");
+                        tracing::debug!(
+                            "[get_remote] Lockfile changed during game! Triggering full reinit..."
+                        );
                         *self.needs_reinit.write() = true;
                         *self.connected.write() = false;
                         return None;
@@ -521,7 +594,9 @@ impl ValorantAPI {
                     // If lockfile hasn't changed, try to detect actual port from process
                     // This handles cases where lockfile is stale
                     if self.try_recover_connection() {
-                        tracing::debug!("[get_remote] Port recovery successful, triggering reinit...");
+                        tracing::debug!(
+                            "[get_remote] Port recovery successful, triggering reinit..."
+                        );
                         *self.connected.write() = false;
                         return None;
                     }
@@ -531,7 +606,10 @@ impl ValorantAPI {
                     *errors += 1;
                     // Only trigger reinit after 3+ consecutive network errors
                     if *errors >= 3 {
-                        tracing::debug!("[get_remote] Multiple network errors ({}), triggering reinit", *errors);
+                        tracing::debug!(
+                            "[get_remote] Multiple network errors ({}), triggering reinit",
+                            *errors
+                        );
                         *self.needs_reinit.write() = true;
                     }
                     return None;
@@ -560,7 +638,10 @@ impl ValorantAPI {
             match req.json(&serde_json::json!({})).send().await {
                 Ok(resp) => {
                     if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
-                        tracing::debug!("[post_remote] Auth error ({}), triggering reinit", resp.status());
+                        tracing::debug!(
+                            "[post_remote] Auth error ({}), triggering reinit",
+                            resp.status()
+                        );
                         *self.needs_reinit.write() = true;
                         return None;
                     }
@@ -577,7 +658,9 @@ impl ValorantAPI {
 
                     // Check if lockfile changed (Riot Client might have restarted)
                     if self.check_lockfile_changed() {
-                        tracing::debug!("[post_remote] Lockfile changed! Triggering full reinit...");
+                        tracing::debug!(
+                            "[post_remote] Lockfile changed! Triggering full reinit..."
+                        );
                         *self.needs_reinit.write() = true;
                         *self.connected.write() = false;
                         return None;
@@ -586,7 +669,10 @@ impl ValorantAPI {
                     let mut errors = self.consecutive_network_errors.write();
                     *errors += 1;
                     if *errors >= 3 {
-                        tracing::debug!("[post_remote] Multiple network errors ({}), triggering reinit", *errors);
+                        tracing::debug!(
+                            "[post_remote] Multiple network errors ({}), triggering reinit",
+                            *errors
+                        );
                         *self.needs_reinit.write() = true;
                     }
                     return None;
@@ -667,12 +753,18 @@ impl ValorantAPI {
     }
 
     pub async fn select_agent(&self, match_id: &str, agent_id: &str) {
-        let url = self.glz_url(&format!("/pregame/v1/matches/{}/select/{}", match_id, agent_id));
+        let url = self.glz_url(&format!(
+            "/pregame/v1/matches/{}/select/{}",
+            match_id, agent_id
+        ));
         let _ = self.post_remote_silent(&url).await;
     }
 
     pub async fn lock_agent(&self, match_id: &str, agent_id: &str) {
-        let url = self.glz_url(&format!("/pregame/v1/matches/{}/lock/{}", match_id, agent_id));
+        let url = self.glz_url(&format!(
+            "/pregame/v1/matches/{}/lock/{}",
+            match_id, agent_id
+        ));
         let _ = self.post_remote_silent(&url).await;
     }
 
@@ -684,7 +776,8 @@ impl ValorantAPI {
 
         let mut party_map = HashMap::new();
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -693,7 +786,10 @@ impl ValorantAPI {
             Ok(resp) => {
                 // Check for auth errors
                 if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
-                    tracing::debug!("[get_presences] Auth error ({}), checking lockfile...", resp.status());
+                    tracing::debug!(
+                        "[get_presences] Auth error ({}), checking lockfile...",
+                        resp.status()
+                    );
                     // Check if lockfile changed (port/password might have changed)
                     if self.check_lockfile_changed() {
                         tracing::debug!("[get_presences] Lockfile changed, triggering reinit");
@@ -707,7 +803,9 @@ impl ValorantAPI {
                         if let Some(private_b64) = p.private {
                             if let Ok(decoded) = STANDARD.decode(&private_b64) {
                                 if let Ok(json_str) = String::from_utf8(decoded) {
-                                    if let Ok(private_data) = serde_json::from_str::<PresencePrivate>(&json_str) {
+                                    if let Ok(private_data) =
+                                        serde_json::from_str::<PresencePrivate>(&json_str)
+                                    {
                                         if let Some(party_id) = private_data.party_id {
                                             if !party_id.is_empty() {
                                                 party_map.insert(p.puuid, party_id);
@@ -753,7 +851,8 @@ impl ValorantAPI {
             if let Some(party_id) = data.current_party_id {
                 let party_url = self.glz_url(&format!("/parties/v1/parties/{}", party_id));
                 if let Some(party_data) = self.get_remote::<PartyResponse>(&party_url).await {
-                    let members: Vec<String> = party_data.members
+                    let members: Vec<String> = party_data
+                        .members
                         .iter()
                         .filter_map(|m| m.subject.clone())
                         .collect();
@@ -771,7 +870,8 @@ impl ValorantAPI {
         let mut party_map: HashMap<String, String> = HashMap::new();
         let mut party_counter: HashMap<String, u32> = HashMap::new();
         let mut next_party_num: u32 = 1;
-        let mut found_via_presence: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut found_via_presence: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         // Get my party info
         let (my_party_id, my_party_members) = self.get_my_party().await;
@@ -799,7 +899,10 @@ impl ValorantAPI {
                     party_counter.insert(friend_party_id.clone(), next_party_num);
                     next_party_num += 1;
                 }
-                party_map.insert(puuid.clone(), format!("Grup-{}", party_counter[friend_party_id]));
+                party_map.insert(
+                    puuid.clone(),
+                    format!("Grup-{}", party_counter[friend_party_id]),
+                );
                 found_via_presence.insert(puuid.clone());
             }
         }
@@ -821,7 +924,8 @@ impl ValorantAPI {
                     if party_tag.starts_with("Grup-") {
                         let new_tag = format!("Grup-{}", next_party_num);
                         // Check if this is a new group we haven't seen
-                        let existing_count = party_map.values().filter(|v| *v == &party_tag).count();
+                        let existing_count =
+                            party_map.values().filter(|v| *v == &party_tag).count();
                         if existing_count == 0 {
                             party_map.insert(puuid, new_tag);
                             next_party_num += 1;
@@ -864,7 +968,10 @@ impl ValorantAPI {
         if let Some(data) = self.get_remote::<MmrResponse>(&url).await {
             if let Some(queue_skills) = data.queue_skills {
                 if let Some(competitive) = queue_skills.competitive {
-                    return (competitive.competitive_tier.unwrap_or(0), competitive.ranked_rating.unwrap_or(0));
+                    return (
+                        competitive.competitive_tier.unwrap_or(0),
+                        competitive.ranked_rating.unwrap_or(0),
+                    );
                 }
             }
         }
@@ -875,17 +982,17 @@ impl ValorantAPI {
     /// Returns (peak_tier, peak_rank_name, peak_rank_color, season_id)
     pub async fn get_player_peak_rank(&self, puuid: &str) -> Option<(u32, String, String, String)> {
         use crate::constants::{BEFORE_ASCENDANT_SEASONS, RANK_NAMES};
-        
+
         let url = self.pd_url(&format!("/mmr/v1/players/{}", puuid));
         let data: MmrResponse = self.get_remote(&url).await?;
-        
+
         let queue_skills = data.queue_skills?;
         let competitive = queue_skills.competitive?;
         let seasons = competitive.seasonal_info_by_season_id?;
-        
+
         let mut max_tier: u32 = 0;
         let mut max_tier_season = String::new();
-        
+
         for (season_id, season_info) in seasons {
             // Check WinsByTier - keys are tier numbers as strings
             if let Some(wins_by_tier) = season_info.wins_by_tier {
@@ -897,7 +1004,7 @@ impl ValorantAPI {
                         if BEFORE_ASCENDANT_SEASONS.contains(&season_id.as_str()) && tier > 20 {
                             tier += 3; // Shift old Immortal/Radiant to new tier numbers
                         }
-                        
+
                         if tier > max_tier {
                             max_tier = tier;
                             max_tier_season = season_id.clone();
@@ -905,7 +1012,7 @@ impl ValorantAPI {
                     }
                 }
             }
-            
+
             // Also check CompetitiveTier directly
             if let Some(tier) = season_info.competitive_tier {
                 let mut adjusted_tier = tier;
@@ -918,15 +1025,16 @@ impl ValorantAPI {
                 }
             }
         }
-        
+
         if max_tier == 0 {
             return None;
         }
-        
-        let (rank_name, rank_color) = RANK_NAMES.get(&max_tier)
+
+        let (rank_name, rank_color) = RANK_NAMES
+            .get(&max_tier)
             .map(|(n, c)| (n.to_string(), c.to_string()))
             .unwrap_or_else(|| ("Unknown".to_string(), "#768079".to_string()));
-        
+
         Some((max_tier, rank_name, rank_color, max_tier_season))
     }
 
@@ -1067,7 +1175,8 @@ impl ValorantAPI {
         let (my_party_id, my_party_members) = self.get_my_party().await;
         let presences = self.get_presences().await;
 
-        let mut found_via_presence: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut found_via_presence: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for puuid in all_puuids {
             // Skip if already in cache
@@ -1094,7 +1203,10 @@ impl ValorantAPI {
                     party_id_to_num.insert(friend_party_id.clone(), next_party_num);
                     next_party_num += 1;
                 }
-                party_map.insert(puuid.clone(), format!("Grup-{}", party_id_to_num[friend_party_id]));
+                party_map.insert(
+                    puuid.clone(),
+                    format!("Grup-{}", party_id_to_num[friend_party_id]),
+                );
                 found_via_presence.insert(puuid.clone());
             }
         }
@@ -1139,7 +1251,10 @@ impl ValorantAPI {
                                 party_id_to_num.insert(party_id.clone(), next_party_num);
                                 next_party_num += 1;
                             }
-                            party_map.insert(puuid.clone(), format!("Grup-{}", party_id_to_num[party_id]));
+                            party_map.insert(
+                                puuid.clone(),
+                                format!("Grup-{}", party_id_to_num[party_id]),
+                            );
                         }
                     }
                 }
@@ -1182,7 +1297,8 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
         let url = format!("https://127.0.0.1:{}/chat/v6/conversations", port);
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1199,12 +1315,16 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
 
         let url = if let Some(conversation_id) = cid {
-            format!("https://127.0.0.1:{}/chat/v6/messages?cid={}", port, conversation_id)
+            format!(
+                "https://127.0.0.1:{}/chat/v6/messages?cid={}",
+                port, conversation_id
+            )
         } else {
             format!("https://127.0.0.1:{}/chat/v6/messages", port)
         };
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1213,15 +1333,21 @@ impl ValorantAPI {
             Ok(resp) => {
                 let status = resp.status();
                 if !status.is_success() {
-                    tracing::debug!("[get_chat_history] HTTP {}: {}", status,
-                        resp.text().await.unwrap_or_default());
+                    tracing::debug!(
+                        "[get_chat_history] HTTP {}: {}",
+                        status,
+                        resp.text().await.unwrap_or_default()
+                    );
                     return None;
                 }
 
                 match resp.json().await {
                     Ok(history) => {
                         if cid.is_some() {
-                            tracing::info!("[get_chat_history] CID {} returned messages", cid.unwrap());
+                            tracing::info!(
+                                "[get_chat_history] CID {} returned messages",
+                                cid.unwrap()
+                            );
                         }
                         Some(history)
                     }
@@ -1243,9 +1369,13 @@ impl ValorantAPI {
     pub async fn get_game_chat(&self) -> Option<ConversationsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
-        let url = format!("https://127.0.0.1:{}/chat/v6/conversations/ares-coregame", port);
+        let url = format!(
+            "https://127.0.0.1:{}/chat/v6/conversations/ares-coregame",
+            port
+        );
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1261,9 +1391,13 @@ impl ValorantAPI {
     pub async fn get_party_chat(&self) -> Option<ConversationsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
-        let url = format!("https://127.0.0.1:{}/chat/v6/conversations/ares-parties", port);
+        let url = format!(
+            "https://127.0.0.1:{}/chat/v6/conversations/ares-parties",
+            port
+        );
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1291,7 +1425,8 @@ impl ValorantAPI {
             message_type: message_type.to_string(),
         };
 
-        match self.client
+        match self
+            .client
             .post(&url)
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
@@ -1315,11 +1450,10 @@ impl ValorantAPI {
     pub async fn send_game_message(&self, message: &str) -> bool {
         if let Some(conv) = self.get_game_chat().await {
             if let Some(first_conv) = conv.conversations.first() {
-                return self.send_chat_message(
-                    &first_conv.cid,
-                    message,
-                    "groupchat"
-                ).await.is_some();
+                return self
+                    .send_chat_message(&first_conv.cid, message, "groupchat")
+                    .await
+                    .is_some();
             }
         }
         false
@@ -1330,11 +1464,10 @@ impl ValorantAPI {
     pub async fn send_party_message(&self, message: &str) -> bool {
         if let Some(conv) = self.get_party_chat().await {
             if let Some(first_conv) = conv.conversations.first() {
-                return self.send_chat_message(
-                    &first_conv.cid,
-                    message,
-                    "groupchat"
-                ).await.is_some();
+                return self
+                    .send_chat_message(&first_conv.cid, message, "groupchat")
+                    .await
+                    .is_some();
             }
         }
         false
@@ -1345,7 +1478,8 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
         let url = format!("https://127.0.0.1:{}/chat/v4/friends", port);
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1373,17 +1507,24 @@ impl ValorantAPI {
     }
 
     /// Get chat participants
-    pub async fn get_chat_participants(&self, cid: Option<&str>) -> Option<ChatParticipantsResponse> {
+    pub async fn get_chat_participants(
+        &self,
+        cid: Option<&str>,
+    ) -> Option<ChatParticipantsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
 
         let url = if let Some(conversation_id) = cid {
-            format!("https://127.0.0.1:{}/chat/v5/participants?cid={}", port, conversation_id)
+            format!(
+                "https://127.0.0.1:{}/chat/v5/participants?cid={}",
+                port, conversation_id
+            )
         } else {
             format!("https://127.0.0.1:{}/chat/v5/participants", port)
         };
 
-        match self.client
+        match self
+            .client
             .get(&url)
             .header("Authorization", &auth)
             .send()
@@ -1421,14 +1562,24 @@ impl ValorantAPI {
 
         // All potentially valid chat regions/shards
         let mut all_regions = vec![
-            "eu1".to_string(), "eu2".to_string(), "eu3".to_string(),
+            "eu1".to_string(),
+            "eu2".to_string(),
+            "eu3".to_string(),
             "na1".to_string(),
-            "ap1".to_string(), "ap2".to_string(), "ap".to_string(),
-            "kr1".to_string(), "kr".to_string(),
-            "br1".to_string(), "br".to_string(),
-            "la1".to_string(), "la2".to_string(), "latam".to_string(),
-            "tr1".to_string(), "tr".to_string(),
-            "ru1".to_string(), "ru".to_string(),
+            "ap1".to_string(),
+            "ap2".to_string(),
+            "ap".to_string(),
+            "kr1".to_string(),
+            "kr".to_string(),
+            "br1".to_string(),
+            "br".to_string(),
+            "la1".to_string(),
+            "la2".to_string(),
+            "latam".to_string(),
+            "tr1".to_string(),
+            "tr".to_string(),
+            "ru1".to_string(),
+            "ru".to_string(),
         ];
 
         // Combine and dedup
@@ -1467,7 +1618,10 @@ impl ValorantAPI {
     /// ALWAYS returns double format CID required for sending messages
     #[allow(dead_code)]
     pub async fn find_or_recover_dm_cid(&self, friend_puuid: &str) -> String {
-        tracing::debug!("[find_or_recover_dm_cid] Searching for friend: {}", friend_puuid);
+        tracing::debug!(
+            "[find_or_recover_dm_cid] Searching for friend: {}",
+            friend_puuid
+        );
 
         // 1. Try to find existing from messages (will return double format)
         if let Some(cid) = self.find_dm_cid(friend_puuid).await {
@@ -1477,11 +1631,17 @@ impl ValorantAPI {
 
         // 2. Generate double format CID (required for sending)
         let formats = self.generate_all_cid_formats(friend_puuid);
-        tracing::debug!("[find_or_recover_dm_cid] Generated {} double-format CIDs to try", formats.len());
+        tracing::debug!(
+            "[find_or_recover_dm_cid] Generated {} double-format CIDs to try",
+            formats.len()
+        );
 
         // 3. Try the most likely format first (current region)
         let primary_cid = &formats[0];
-        tracing::debug!("[find_or_recover_dm_cid] Using primary double-format CID: {}", primary_cid);
+        tracing::debug!(
+            "[find_or_recover_dm_cid] Using primary double-format CID: {}",
+            primary_cid
+        );
 
         // We don't need to probe - just use the double format
         // The API will create the conversation on first send
@@ -1492,7 +1652,10 @@ impl ValorantAPI {
     /// This ensures the conversation is ready to receive messages
     #[allow(dead_code)]
     pub async fn initialize_dm_conversation(&self, cid: &str) -> bool {
-        tracing::debug!("[initialize_dm_conversation] Initializing conversation: {}", cid);
+        tracing::debug!(
+            "[initialize_dm_conversation] Initializing conversation: {}",
+            cid
+        );
 
         // Try to get existing history first
         if let Some(history) = self.get_chat_history(Some(cid)).await {
@@ -1530,7 +1693,11 @@ impl ValorantAPI {
         self.initialize_dm_conversation(&cid).await;
 
         // Try sending using the 'best' CID
-        if self.send_chat_message(&cid, message, "chat").await.is_some() {
+        if self
+            .send_chat_message(&cid, message, "chat")
+            .await
+            .is_some()
+        {
             tracing::info!("[send_dm] Message sent successfully");
             return true;
         }
@@ -1540,11 +1707,17 @@ impl ValorantAPI {
         // Fallback: If that failed, try ALL formats blindly
         let formats = self.generate_all_cid_formats(friend_puuid);
         for (i, fmt_cid) in formats.iter().enumerate() {
-            if fmt_cid == &cid { continue; } // Skip already tried
+            if fmt_cid == &cid {
+                continue;
+            } // Skip already tried
 
-            tracing::debug!("[send_dm] Retry {}/{}: {}", i+1, formats.len(), fmt_cid);
+            tracing::debug!("[send_dm] Retry {}/{}: {}", i + 1, formats.len(), fmt_cid);
 
-            if self.send_chat_message(fmt_cid, message, "chat").await.is_some() {
+            if self
+                .send_chat_message(fmt_cid, message, "chat")
+                .await
+                .is_some()
+            {
                 tracing::info!("[send_dm] Message sent with alternate format");
                 return true;
             }
@@ -1573,7 +1746,8 @@ impl ValorantAPI {
     #[allow(dead_code)]
     pub async fn get_conversations_with_history(&self) -> Vec<Conversation> {
         if let Some(convs) = self.get_conversations().await {
-            return convs.conversations
+            return convs
+                .conversations
                 .into_iter()
                 .filter(|c| c.message_history)
                 .collect();
@@ -1618,24 +1792,35 @@ impl ValorantAPI {
 
     /// Get DM history with checking for message_history flag
     #[allow(dead_code)]
-    pub async fn get_dm_history_checked(&self, friend_puuid: &str) -> Result<ChatHistoryResponse, String> {
+    pub async fn get_dm_history_checked(
+        &self,
+        friend_puuid: &str,
+    ) -> Result<ChatHistoryResponse, String> {
         // Find conversation
-        let cid = self.find_dm_cid(friend_puuid).await
+        let cid = self
+            .find_dm_cid(friend_puuid)
+            .await
             .ok_or("Conversation bulunamadı")?;
 
         // Check if conversation has history
         if let Some(convs) = self.get_conversations().await {
-            let conv = convs.conversations.iter()
+            let conv = convs
+                .conversations
+                .iter()
                 .find(|c| c.cid == cid)
                 .ok_or("Conversation detayları alınamadı")?;
 
             if !conv.message_history {
-                return Err("Bu conversation için mesaj geçmişi devre dışı (message_history=false)".to_string());
+                return Err(
+                    "Bu conversation için mesaj geçmişi devre dışı (message_history=false)"
+                        .to_string(),
+                );
             }
         }
 
         // Get history
-        self.get_chat_history(Some(&cid)).await
+        self.get_chat_history(Some(&cid))
+            .await
             .ok_or("Mesaj geçmişi alınamadı".to_string())
     }
 
@@ -1659,7 +1844,10 @@ impl ValorantAPI {
     }
 
     /// Fetch player stats from tracker.gg
-    pub async fn get_tracker_stats(&self, player_name: &str) -> Result<serde_json::Value, ApiError> {
+    pub async fn get_tracker_stats(
+        &self,
+        player_name: &str,
+    ) -> Result<serde_json::Value, ApiError> {
         let encoded_name = urlencoding::encode(player_name);
         let url = format!(
             "https://api.tracker.gg/api/v2/valorant/standard/profile/riot/{}",
@@ -1671,7 +1859,8 @@ impl ValorantAPI {
         // Use impersonated client - no need for manual headers
         // The client automatically handles User-Agent and TLS fingerprinting
         // Use impersonation client for tracker.gg
-        let response = self.tracker_client
+        let response = self
+            .tracker_client
             .get(&url)
             .send()
             .await
@@ -1682,7 +1871,8 @@ impl ValorantAPI {
             tracing::error!("[Tracker] request failed with status {}", status);
 
             if status == 429 {
-                let retry_after = response.headers()
+                let retry_after = response
+                    .headers()
                     .get("retry-after")
                     .and_then(|h| h.to_str().ok())
                     .unwrap_or("60"); // Default to 60s if missing
@@ -1692,7 +1882,8 @@ impl ValorantAPI {
             return Err(ApiError::RequestFailed(format!("HTTP {}", status)));
         }
 
-        let json = response.json::<serde_json::Value>()
+        let json = response
+            .json::<serde_json::Value>()
             .await
             .map_err(|e| ApiError::ParseError(e.to_string()))?;
 

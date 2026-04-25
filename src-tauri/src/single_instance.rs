@@ -111,7 +111,10 @@ pub enum SingleInstanceResult {
 fn encode_wide(s: &str) -> Vec<u16> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -154,7 +157,10 @@ pub fn try_acquire_single_instance() -> SingleInstanceResult {
                     let handle_raw = h.0 as usize;
                     let shutdown_flag = Arc::new(AtomicBool::new(false));
 
-                    SingleInstanceResult::Primary(SingleInstanceGuard::new(shutdown_flag, handle_raw))
+                    SingleInstanceResult::Primary(SingleInstanceGuard::new(
+                        shutdown_flag,
+                        handle_raw,
+                    ))
                 }
             }
             Err(e) => {
@@ -178,10 +184,7 @@ fn signal_existing_instance() -> Result<(), String> {
     const MAX_ATTEMPTS: u32 = 3;
 
     while attempts < MAX_ATTEMPTS {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .open(PIPE_NAME)
-        {
+        match std::fs::OpenOptions::new().write(true).open(PIPE_NAME) {
             Ok(mut pipe) => {
                 // Send a simple message to show overlay
                 let message = b"SHOW_OVERLAY";
@@ -195,14 +198,21 @@ fn signal_existing_instance() -> Result<(), String> {
                 return Ok(());
             }
             Err(e) => {
-                debug!("Failed to connect to pipe (attempt {}): {}", attempts + 1, e);
+                debug!(
+                    "Failed to connect to pipe (attempt {}): {}",
+                    attempts + 1,
+                    e
+                );
                 attempts += 1;
                 thread::sleep(std::time::Duration::from_millis(100));
             }
         }
     }
 
-    Err(format!("Failed to connect to existing instance after {} attempts", MAX_ATTEMPTS))
+    Err(format!(
+        "Failed to connect to existing instance after {} attempts",
+        MAX_ATTEMPTS
+    ))
 }
 
 #[cfg(not(windows))]
@@ -218,8 +228,8 @@ pub fn start_pipe_server(app_handle: AppHandle, shutdown_flag: Arc<AtomicBool>) 
     use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows::Win32::Storage::FileSystem::{ReadFile, PIPE_ACCESS_INBOUND};
     use windows::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
-        PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
 
     let pipe_name_wide = encode_wide(PIPE_NAME);
@@ -235,9 +245,9 @@ pub fn start_pipe_server(app_handle: AppHandle, shutdown_flag: Arc<AtomicBool>) 
                     PIPE_ACCESS_INBOUND,
                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                     PIPE_UNLIMITED_INSTANCES,
-                    512,  // Out buffer size
-                    512,  // In buffer size
-                    0,    // Default timeout
+                    512, // Out buffer size
+                    512, // In buffer size
+                    0,   // Default timeout
                     Some(ptr::null()),
                 )
             };
@@ -254,7 +264,9 @@ pub fn start_pipe_server(app_handle: AppHandle, shutdown_flag: Arc<AtomicBool>) 
             let _connected = unsafe { ConnectNamedPipe(pipe_handle, Some(ptr::null_mut())) };
 
             if shutdown_flag.load(Ordering::SeqCst) {
-                unsafe { let _ = CloseHandle(pipe_handle); }
+                unsafe {
+                    let _ = CloseHandle(pipe_handle);
+                }
                 break;
             }
 

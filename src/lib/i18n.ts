@@ -6,7 +6,7 @@ export type Locale = "en" | "tr";
 interface I18nStore {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }
 
 const translations: Record<Locale, Record<string, string>> = {
@@ -206,6 +206,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.peak": "PEAK",
     "player.recentEncounter1": "Last match encounter",
     "player.recentEncounter2": "Encountered 2 matches ago",
+    "player.previousAgent": "Played {agent} in that match",
   },
   tr: {
     // Header
@@ -403,6 +404,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.peak": "ZİRVE",
     "player.recentEncounter1": "Geçen maç denk geldin",
     "player.recentEncounter2": "2 maç önce denk geldin",
+    "player.previousAgent": "O maçta {agent} oynadı",
   },
 };
 
@@ -417,9 +419,17 @@ export const useI18n = create<I18nStore>()(
     (set, get) => ({
       locale: "tr" as Locale,
       setLocale: (locale: Locale) => set({ locale }),
-      t: (key: string) => {
+      t: (key: string, params?: Record<string, string | number>) => {
         const { locale } = get();
-        return translations[locale][key] || translations.en[key] || key;
+        let value = translations[locale][key] || translations.en[key] || key;
+
+        if (params) {
+          for (const [paramKey, paramValue] of Object.entries(params)) {
+            value = value.split(`{${paramKey}}`).join(String(paramValue));
+          }
+        }
+
+        return value;
       },
     }),
     {

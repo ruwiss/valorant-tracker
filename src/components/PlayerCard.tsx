@@ -25,6 +25,10 @@ export function PlayerCard({ player }: Props) {
   const partyIndex = player.party.startsWith("Grup-") || player.party.startsWith("Group-") ? parseInt(player.party.split("-")[1]) - 1 : -1;
   const partyColor = partyIndex >= 0 ? PARTY_COLORS[partyIndex % 4] : null;
   const agentIcon = player.agent ? getAgentIcon(player.agent) : null;
+  const previousAgentIcon = player.previous_encounter_agent ? getAgentIcon(player.previous_encounter_agent) : null;
+  const previousAgentName = player.previous_encounter_agent
+    ? player.previous_encounter_agent.charAt(0).toUpperCase() + player.previous_encounter_agent.slice(1)
+    : null;
 
   const statusColor = player.locked ? "bg-success" : player.agent ? "bg-warning" : "bg-dim";
   const isPrivate = getError(player.puuid) === "PROFILE_PRIVATE";
@@ -116,6 +120,20 @@ export function PlayerCard({ player }: Props) {
         <span className="text-[10px] text-dim mr-2 group-hover:text-primary transition-colors">
           {t("player.level")} {player.level > 0 ? player.level : (stats?.accountLevel ?? 0)}
         </span>
+      )}
+
+      {/* Previous encounter agent */}
+      {player.previous_encounter && previousAgentIcon && previousAgentName && (
+        <div
+          className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent-cyan/35 bg-black/30 shadow-[0_0_10px_rgba(0,212,170,0.18)]"
+          title={`${t(`player.recentEncounter${player.previous_encounter}`)} • ${t("player.previousAgent", { agent: previousAgentName })}`}
+        >
+          <CachedImage
+            src={previousAgentIcon}
+            alt={previousAgentName}
+            className="h-5 w-5 rounded-full object-cover"
+          />
+        </div>
       )}
 
       {/* Stats button */}
