@@ -37,9 +37,10 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         tokio::spawn(async move {
             tracing::info!("[Worker] Background worker started (Autolock & Event Emitter)");
             let mut last_emitted_state_json = String::new();
+            let autolock_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
                 // 1. Get the current game state
                 if let Ok(current_state) = get_game_state_internal(&app.state::<AppState>()).await {
@@ -52,8 +53,8 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                         }
                     }
 
-                    // 3. Autolock logic (if in pregame)
-                    if current_state.state == "pregame" {
+                    // 3. Autolock logic (if in pregame and not already running a sequence)
+                    if current_state.state == "pregame" && !autolock_in_progress.load(Ordering::Relaxed) {
                         if let Some(match_id) = current_state.match_id.clone() {
                             if let Some(map_name) = current_state.map_name.clone() {
                                 let global_agent = auto_lock_agent.read().clone();
@@ -64,17 +65,45 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                     None
                                 };
 
-                                if let Some(agent_id) = target_agent {
-                                    let is_locked = current_state.allies.iter()
-                                        .find(|p| p.is_me)
-                                        .map(|p| p.locked)
-                                        .unwrap_or(false);
+                                if let Some(agent_name) = target_agent {
+                                    let agent_id = if agent_name.len() > 20 {
+                                        agent_name.clone()
+                                    } else {
+                                        AGENTS.get(agent_name.to_lowercase().as_str())
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_default()
+                                    };
 
-                                    if !is_locked {
-                                        tracing::info!("[Worker] Attempting autolock for UUID {} on match {} (Map: {})", agent_id, match_id, map_name);
-                                        api.select_agent(&match_id, &agent_id).await;
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
-                                        api.lock_agent(&match_id, &agent_id).await;
+                                    if !agent_id.is_empty() {
+                                        let is_locked = current_state.allies.iter()
+                                            .find(|p| p.is_me)
+                                            .map(|p| p.locked)
+                                            .unwrap_or(false);
+
+                                        if !is_locked {
+                                            let api_clone = api.clone();
+                                            let in_progress_clone = autolock_in_progress.clone();
+                                            
+                                            // Spawn a SEPARATE task so we don't block the state emitter
+                                            in_progress_clone.store(true, Ordering::Relaxed);
+                                            tokio::spawn(async move {
+                                                tracing::info!("[Autolock] Waiting for UI to load (3s)...");
+                                                
+                                                // Phase 1: Wait for game client UI to fully render agent grid
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                                                let _ = api_clone.select_agent(&match_id, &agent_id).await;
+                                                tracing::info!("[Autolock] Agent selected (hovering visible)");
+
+                                                // Phase 2: Wait before locking (requested 3s)
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                                                let _ = api_clone.lock_agent(&match_id, &agent_id).await;
+                                                tracing::info!("[Autolock] Agent locked visibly!");
+                                                
+                                                // Allow next sequence after a buffer
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                                in_progress_clone.store(false, Ordering::Relaxed);
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -250,22 +279,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                 // Check if I'm already locked
                 let my_player = team.players.iter().find(|p| p.subject == my_puuid);
-                let im_locked = my_player
-                    .map(|p| p.character_selection_state == "locked")
-                    .unwrap_or(false);
-
-                // Auto-lock: keep trying until locked
-                if !im_locked {
-                    let auto_lock_agent = state.auto_lock_agent.read().clone();
-                    if let Some(agent_name) = auto_lock_agent.as_ref() {
-                        if let Some(agent_id) = AGENTS.get(agent_name.to_lowercase().as_str()) {
-                            api.select_agent(&match_id, agent_id).await;
-                            tokio::time::sleep(tokio::time::Duration::from_millis(2200)).await;
-                            api.lock_agent(&match_id, agent_id).await;
-                        }
-                    }
-                }
-
+                
+                // Note: Auto-lock is handled by the background worker to avoid blocking this function
+                
                 for p in team.players {
                     let agent_name = get_agent_name(&p.character_id);
                     if p.subject != my_puuid && !agent_name.is_empty() {
