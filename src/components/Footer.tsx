@@ -2,6 +2,7 @@ import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
 import { useUpdateStore } from "../stores/updateStore";
+import { useConstantsStore } from "../stores/constantsStore";
 
 export function Footer() {
   // Atomic selectors for performance
@@ -21,13 +22,16 @@ export function Footer() {
   const downloadProgress = useUpdateStore((s) => s.downloadProgress);
   const downloadAndInstall = useUpdateStore((s) => s.downloadAndInstall);
   const { t } = useI18n();
+  const getAgentByUuid = useConstantsStore((s) => s.getAgentByUuid);
 
   // Determine what to display for auto-lock status
   const getAutoLockStatus = () => {
+    const resolveName = (uuid: string | null) => uuid ? (getAgentByUuid(uuid)?.name || uuid).toUpperCase() : null;
+
     // 1. If we are in a match/pregame, show the EFFECTIVE agent being locked
     if (gameState.map_name) {
-      const agent = getAgentForMap(gameState.map_name);
-      if (agent) return agent.toUpperCase();
+      const agentUuid = getAgentForMap(gameState.map_name);
+      if (agentUuid) return resolveName(agentUuid);
     }
 
     // 2. If NO match active:
@@ -37,7 +41,7 @@ export function Footer() {
       if (Object.keys(mapAgentPreferences).length > 0) {
         return t("locale") === "tr" ? "ÖZEL" : "CUSTOM";
       }
-      return autoLockAgent.toUpperCase();
+      return resolveName(autoLockAgent);
     }
 
     // Case B: No Global, but has Map Specifics -> "CUSTOM"
@@ -50,7 +54,7 @@ export function Footer() {
       if (Object.keys(mapAgentPreferences).length > 0) {
         return t("locale") === "tr" ? "ÖZEL" : "CUSTOM";
       }
-      return pausedAutoLockAgent.toUpperCase();
+      return resolveName(pausedAutoLockAgent);
     }
 
     return t("footer.inactive");

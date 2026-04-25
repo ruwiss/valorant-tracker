@@ -1,163 +1,126 @@
-import { useEffect, useRef, useCallback } from "react";
+﻿import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
+import { useConstantsStore } from "../stores/constantsStore";
+import type { GameState } from "../lib/types";
 
-// Polling interval configuration
-const POLL_INTERVAL_CONNECTED = 1000;
-const POLL_INTERVAL_DISCONNECTED = 2000;
-const POLL_INTERVAL_INGAME = 1000;
-const POLL_INTERVAL_RECONNECTING = 3000;
-const POLL_INTERVAL_WAITING_FOR_GAME = 5000; // Throttled polling when waiting for game
 const MAX_RECONNECT_DURATION = 30000;
-const SILENT_REFRESH_INTERVAL = 100000; // 100 seconds - seamless background data refresh
+const PROCESS_CHECK_INTERVAL = 3000; // Check if game process is alive every 3s
 
 /**
- * Central game loop hook that manages:
- * - Adaptive polling based on connection and game state
- * - Watchdog for stuck reconnection detection
+ * Event-based game loop hook that manages:
+ * - Subscribing to Rust 'game_state_changed' events
+ * - Background game process checking
  * - Window focus listener for health checks
- * - License expiration monitoring
  */
 export function useGameLoop() {
-  const { initialize, fetchGameState, gameState, status, isConnected, isLoading, isWaitingForGame, checkGameProcess } = useGameStore();
+  const { initialize, setGameState, status, checkGameProcess } = useGameStore();
   const { registerHotkey, restoreWindowPosition, saveCurrentPosition } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
+  const { loadConstants } = useConstantsStore();
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const positionInitialized = useRef(false);
 
-  // Determine optimal poll interval based on state
-  const getPollInterval = useCallback(() => {
-    // When waiting for game, use throttled interval
-    if (isWaitingForGame()) return POLL_INTERVAL_WAITING_FOR_GAME;
-    if (!isConnected()) return POLL_INTERVAL_DISCONNECTED;
-    if (gameState.state === "ingame" || gameState.state === "pregame") {
-      return POLL_INTERVAL_INGAME;
-    }
-    return POLL_INTERVAL_CONNECTED;
-  }, [isConnected, isWaitingForGame, gameState.state]);
-
-  // Start adaptive polling
-  const startPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    const pollInterval = getPollInterval();
-    intervalRef.current = setInterval(() => {
-      const state = useGameStore.getState();
-
-      // Skip polling if reconnecting or connecting
-      if (state.status === "RECONNECTING" || state.status === "CONNECTING") return;
-
-      // If waiting for game, use checkGameProcess instead of fetchGameState
-      if (state.status === "WAITING_FOR_GAME") {
-        // checkGameProcess handles its own throttling, but we still call it periodically
-        state.checkGameProcess();
-        return;
-      }
-
-      // If PAUSED, only poll if autolock is active (autolock needs fetchGameState)
-      const hasAutoLock = state.autoLockAgent || state.pausedAutoLockAgent || Object.keys(state.mapAgentPreferences).length > 0;
-      if (state.status === "PAUSED" && !hasAutoLock) return;
-
-      fetchGameState();
-    }, pollInterval);
-  }, [getPollInterval, fetchGameState]);
-
-  // Startup tasks
   useEffect(() => {
-    useSettingsStore.getState().fetchContactInfo();
-  }, []);
-
-  const isInitialized = useRef(false);
-
-  // Initial setup
-  useEffect(() => {
-    if (isInitialized.current) return;
-
-    isInitialized.current = true;
-
-    // Start with checkGameProcess instead of initialize to avoid immediate retry loops
-    // This will detect if the game is running and connect, or wait if not
+    // 1. Initialize core state
     const state = useGameStore.getState();
-    if (state.status === 'WAITING_FOR_GAME') {
-      console.log("[GameLoop] Starting in WAITING_FOR_GAME state, checking for game...");
-      checkGameProcess();
+    if (state.status === 'RECONNECTING') {
+      console.warn("[GameLoop] Starting from RECONNECTING state, attempting re-init");
+      initialize();
     } else if (state.status !== 'PAUSED') {
       initialize();
     }
 
     loadAssets();
+    loadConstants();
 
-    // Setup hotkey
-    const setupHotkey = async () => {
-      try {
-        await registerHotkey();
-      } catch (e) {
-        console.error("Hotkey registration failed", e);
-      }
-    };
-    setupHotkey();
-
-    // Restore window position
+    // Set initial position
     if (!positionInitialized.current) {
-      positionInitialized.current = true;
       restoreWindowPosition();
+      positionInitialized.current = true;
     }
 
-    // Window move listener
-    let unlisten: (() => void) | null = null;
-    const setupMoveListener = async () => {
-      const win = getCurrentWindow();
-      unlisten = await win.onMoved(() => {
-        saveCurrentPosition();
-      });
-    };
-    setupMoveListener();
+    // Setup hotkey
+    registerHotkey();
 
-    // Window focus listener for health checks
-    let unlistenFocus: (() => void) | null = null;
+    // Setup window focus listener (for health checks)
     const setupFocusListener = async () => {
-      const win = getCurrentWindow();
-      unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-        if (focused) {
-          console.log("Window focused, checking connection...");
-          useSettingsStore.setState({ isWindowVisible: true });
-
-          const state = useGameStore.getState();
-          if (state.status !== "RECONNECTING" && state.status !== "CONNECTING") {
-            state.healthCheck();
+      try {
+        const window = getCurrentWindow();
+        return await window.onFocusChanged(({ payload: focused }) => {
+          if (focused) {
+            console.log("[GameLoop] Window focused, running health check");
+            const currentState = useGameStore.getState();
+            if (currentState.status === 'CONNECTED') {
+              currentState.healthCheck();
+            }
           }
-        }
-      });
+        });
+      } catch (e) {
+        console.error("[GameLoop] Failed to setup focus listener:", e);
+      }
     };
-    setupFocusListener();
+    
+    // Setup event listener for Game State Changes from Rust (Event-Based Architecture)
+    const setupStateListener = async () => {
+      try {
+        return await listen<GameState>("game_state_changed", (event) => {
+          // This fires ONLY when the backend detects a state change
+          console.debug("[GameLoop] Received game_state_changed event", event.payload.state);
+          setGameState(event.payload);
+        });
+      } catch (e) {
+        console.error("[GameLoop] Failed to setup state listener:", e);
+      }
+    };
 
-    // Listen for show-overlay event from another instance trying to start
-    let unlistenShowOverlay: (() => void) | null = null;
-    const setupShowOverlayListener = async () => {
-      unlistenShowOverlay = await listen("show-overlay", async () => {
-        console.log("Received show-overlay signal from another instance");
-        const win = getCurrentWindow();
-        const isVisible = await win.isVisible();
-        if (!isVisible) {
-          await win.show();
+    const setupOverlayListener = async () => {
+        try {
+            return await listen("show-overlay", async () => {
+                console.log("[SingleInstance] Show overlay event received");
+                const win = getCurrentWindow();
+                const isVisible = await win.isVisible();
+                
+                if (!isVisible) {
+                    await win.show();
+                }
+                
+                if (await win.isMinimized()) {
+                    await win.unminimize();
+                }
+                
+                await win.setFocus();
+            });
+        } catch (e) {
+            console.error("[SingleInstance] Failed to setup show-overlay listener:", e);
         }
-        await win.setFocus();
-        useSettingsStore.setState({ isWindowVisible: true });
-      });
     };
-    setupShowOverlayListener();
+
+    let unlistenFocus: (() => void) | undefined;
+    let unlistenState: (() => void) | undefined;
+    let unlistenShowOverlay: (() => void) | undefined;
+
+    setupFocusListener().then(u => { unlistenFocus = u; });
+    setupStateListener().then(u => { unlistenState = u; });
+    setupOverlayListener().then(u => { unlistenShowOverlay = u; });
+
+    // Background process checker (to handle 'WAITING_FOR_GAME' -> connected transitions)
+    const processChecker = setInterval(() => {
+        const currentStore = useGameStore.getState();
+        // If we are not connected and not currently trying to connect, check if process started
+        if (!currentStore.isConnected() && currentStore.status !== 'CONNECTING' && currentStore.status !== 'RECONNECTING') {
+            checkGameProcess();
+        }
+    }, PROCESS_CHECK_INTERVAL);
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (unlisten) unlisten();
       if (unlistenFocus) unlistenFocus();
+      if (unlistenState) unlistenState();
       if (unlistenShowOverlay) unlistenShowOverlay();
+      clearInterval(processChecker);
     };
   }, [initialize, loadAssets, registerHotkey, restoreWindowPosition, saveCurrentPosition, checkGameProcess]);
 
@@ -165,62 +128,22 @@ export function useGameLoop() {
   useEffect(() => {
     const watchdog = setInterval(() => {
       const state = useGameStore.getState();
-      // Don't interfere if user paused or waiting for game (which has its own throttling)
-      if (state.status === "PAUSED" || state.status === "WAITING_FOR_GAME") return;
-
-      if (state.status === "RECONNECTING" && state.reconnectStartTime > 0) {
-        const stuckDuration = Date.now() - state.reconnectStartTime;
-        if (stuckDuration > MAX_RECONNECT_DURATION) {
-          console.warn("[Watchdog] Reconnection stuck for", Math.round(stuckDuration / 1000), "seconds, switching to waiting state");
-          // Instead of force reset and immediate init, switch to waiting for game
-          useGameStore.setState({
-            status: 'WAITING_FOR_GAME',
-            consecutiveErrors: 0,
-            reconnectAttempts: 0,
-            reconnectStartTime: 0
+      
+      if (state.status === "RECONNECTING") {
+        const now = Date.now();
+        const duration = now - state.reconnectStartTime;
+        
+        if (duration > MAX_RECONNECT_DURATION) {
+          console.warn('[Watchdog] Reconnection stuck, forcing disconnect');
+          // In the new state machine, we just set it to IDLE or handle it via a reset
+          useGameStore.setState({ 
+            status: "IDLE",
           });
-          // Let checkGameProcess handle the throttled retry
-          setTimeout(() => state.checkGameProcess(), 1000);
         }
       }
     }, 5000);
 
     return () => clearInterval(watchdog);
-  }, []);
-
-  // Silent background refresh every 100 seconds
-  // Seamlessly refreshes connection tokens and game data without UI disruption
-  useEffect(() => {
-    const silentRefreshInterval = setInterval(() => {
-      const state = useGameStore.getState();
-      // Only trigger if connected and not in a transitional state
-      // Skip if waiting for game - checkGameProcess handles that
-      if (state.status === 'CONNECTED') {
-        state.silentRefresh();
-      }
-    }, SILENT_REFRESH_INTERVAL);
-
-    return () => clearInterval(silentRefreshInterval);
-  }, []);
-
-  // Adaptive polling based on connection state
-  useEffect(() => {
-    if (!isLoading()) {
-      startPolling();
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(() => {
-        console.log("[Background] Health check during reconnection...");
-        const state = useGameStore.getState();
-        if (state.status === "CONNECTED") {
-          console.log("[Background] Connection recovered, resuming normal polling");
-          startPolling();
-        }
-      }, POLL_INTERVAL_RECONNECTING);
-    }
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [status, gameState.state, startPolling, isLoading]);
+  }, [status]);
 }
+

@@ -1,5 +1,55 @@
-use once_cell::sync::Lazy;
+﻿use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentData {
+    pub uuid: String,
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AppConstants {
+    pub agents: Vec<AgentData>,
+}
+
+pub static APP_CONSTANTS: Lazy<AppConstants> = Lazy::new(|| {
+    let mut agents = Vec::new();
+    agents.push(AgentData { uuid: "add6443a-41bd-e414-f6ad-e58d267f4e95".into(), name: "jett".into(), color: "#7de8e0".into() });
+    agents.push(AgentData { uuid: "a3bfb853-43b2-7238-a4f1-ad90e9e46bcc".into(), name: "reyna".into(), color: "#bd3fff".into() });
+    agents.push(AgentData { uuid: "f94c3b30-42be-e959-889c-5aa313dba261".into(), name: "raze".into(), color: "#ecb22e".into() });
+    agents.push(AgentData { uuid: "eb93336a-449b-9c1b-0a54-a891f7921d69".into(), name: "phoenix".into(), color: "#ff9f43".into() });
+    agents.push(AgentData { uuid: "5f8d3a7f-467b-97f3-062c-13acf203c006".into(), name: "breach".into(), color: "#ff6b35".into() });
+    agents.push(AgentData { uuid: "320b2a48-4d9b-a075-30f1-1f93a9b638fa".into(), name: "sova".into(), color: "#4a90d9".into() });
+    agents.push(AgentData { uuid: "569fdd95-4d10-43ab-ca70-79becc718b46".into(), name: "sage".into(), color: "#57e2b4".into() });
+    agents.push(AgentData { uuid: "117ed9e3-49f3-6512-3ccf-0cada7e3823b".into(), name: "cypher".into(), color: "#ece8e1".into() });
+    agents.push(AgentData { uuid: "9f0d8ba9-4140-b941-57d3-a7ad57c6b417".into(), name: "brimstone".into(), color: "#ff4655".into() });
+    agents.push(AgentData { uuid: "1e58de9c-4950-5125-93e9-a0aee9f98746".into(), name: "killjoy".into(), color: "#f0d634".into() });
+    agents.push(AgentData { uuid: "707eab51-4836-f488-046a-cda6bf494859".into(), name: "viper".into(), color: "#1db954".into() });
+    agents.push(AgentData { uuid: "8e253930-4c05-31dd-1b6c-968525494517".into(), name: "omen".into(), color: "#7b42c9".into() });
+    agents.push(AgentData { uuid: "6f2a04ca-43e0-be17-7f36-b3908627744d".into(), name: "skye".into(), color: "#6bc26b".into() });
+    agents.push(AgentData { uuid: "7f94d92c-4234-0a36-9646-3a87eb8b5c89".into(), name: "yoru".into(), color: "#344afb".into() });
+    agents.push(AgentData { uuid: "41fb69c1-4189-7b37-f117-bcaf1e96f1bf".into(), name: "astra".into(), color: "#9b5fe0".into() });
+    agents.push(AgentData { uuid: "601dbbe7-43ce-be57-2a40-4abd24953621".into(), name: "kayo".into(), color: "#5da4e5".into() });
+    agents.push(AgentData { uuid: "22697a3d-45bf-8dd7-4fec-84a9e28c69d7".into(), name: "chamber".into(), color: "#d4a843".into() });
+    agents.push(AgentData { uuid: "bb2a4828-46eb-8cd1-e765-15848195d751".into(), name: "neon".into(), color: "#00bfff".into() });
+    agents.push(AgentData { uuid: "dade69b4-4f5a-8528-247b-219e5a1facd6".into(), name: "fade".into(), color: "#3e4772".into() });
+    agents.push(AgentData { uuid: "95b78ed7-4637-86d9-7e41-71ba8c293152".into(), name: "harbor".into(), color: "#36a8b5".into() });
+    agents.push(AgentData { uuid: "e370fa57-4757-3604-3648-499e1f642d3f".into(), name: "gekko".into(), color: "#a3e635".into() });
+    agents.push(AgentData { uuid: "cc8b64c8-4b25-4ff9-6e7f-37b4da43d235".into(), name: "deadlock".into(), color: "#768079".into() });
+    agents.push(AgentData { uuid: "0e38b510-41a8-5780-5e8f-568b2a4f2d6c".into(), name: "iso".into(), color: "#c77dff".into() });
+    agents.push(AgentData { uuid: "1dbf2edd-4729-0984-3115-daa5eed44993".into(), name: "clove".into(), color: "#e07be0".into() });
+    agents.push(AgentData { uuid: "efba5359-4016-a1e5-7626-b1ae76895940".into(), name: "vyse".into(), color: "#c94050".into() });
+    agents.push(AgentData { uuid: "b444168c-4e35-8076-db47-ef9bf368f384".into(), name: "tejo".into(), color: "#c49a3c".into() });
+    agents.push(AgentData { uuid: "92eeef5d-43b5-1d4a-8d03-b3927a09034b".into(), name: "veto".into(), color: "#2d8a6e".into() });
+    agents.push(AgentData { uuid: "df1cb487-4902-002e-5c17-d28e83e78588".into(), name: "waylay".into(), color: "#e85da0".into() });
+    agents.push(AgentData { uuid: "7c8a4701-4de6-9355-b254-e09bc2a34b72".into(), name: "miks".into(), color: "#462b75".into() });
+
+    AppConstants {
+        agents,
+    }
+});
 
 pub static AGENTS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -58,7 +108,7 @@ pub static MAP_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
 
 pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    m.insert("competitive", "Rekabetçi");
+    m.insert("competitive", "RekabetÃ§i");
     m.insert("unrated", "Normal");
     m.insert("spikerush", "Spike Rush");
     m.insert("deathmatch", "Deathmatch");
@@ -68,7 +118,7 @@ pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(||
     m.insert("swiftplay", "Swiftplay");
     m.insert("hurm", "Team Deathmatch");
     m.insert("premier", "Premier");
-    m.insert("custom", "Özel Oyun");
+    m.insert("custom", "Ã–zel Oyun");
     m
 });
 
@@ -126,3 +176,4 @@ pub static RANK_NAMES: Lazy<HashMap<u32, (&'static str, &'static str)>> = Lazy::
     m.insert(27, ("Radiant", "#ffffaa"));
     m
 });
+

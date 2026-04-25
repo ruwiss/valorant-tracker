@@ -4,7 +4,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
-import { AGENTS } from "../lib/constants";
+import { useConstantsStore } from "../stores/constantsStore";
 import { COMPETITIVE_MAPS, CompetitiveMap, MAP_METADATA } from "../lib/maps";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -42,6 +42,7 @@ export function SettingsPanel() {
   const { getAgentIcon, getAgentAsset, getMapSplash } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
+  const { constants } = useConstantsStore();
 
   const [activeTab, setActiveTab] = useState<Tab>("autolock");
   const [recording, setRecording] = useState(false);
@@ -175,17 +176,17 @@ export function SettingsPanel() {
               </div>
 
               <div className="grid grid-cols-6 gap-2 bg-dark/60 p-2.5 rounded-xl border border-white/5">
-                {AGENTS.map((agent) => {
-                  const isSelected = autoLockAgent === agent;
-                  const icon = getAgentIcon(agent);
+                {(constants?.agents || []).map((agentData) => {
+                  const isSelected = autoLockAgent === agentData.uuid;
+                  const icon = getAgentIcon(agentData.name);
 
                   return (
                     <button
-                      key={agent}
-                      onClick={() => setAutoLock(isSelected ? null : agent)}
+                      key={agentData.uuid}
+                      onClick={() => setAutoLock(isSelected ? null : agentData.uuid)}
                       onMouseEnter={() => {
-                        handleHover("global", agent);
-                        handleAgentHoverEnter(agent);
+                        handleHover("global", agentData.name);
+                        handleAgentHoverEnter(agentData.name);
                       }}
                       onMouseLeave={() => {
                         handleHover("global", null);
@@ -193,7 +194,7 @@ export function SettingsPanel() {
                       }}
                       className={`group relative aspect-square rounded-lg overflow-hidden transition-all duration-300 ${isSelected ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark scale-105 z-10" : "grayscale opacity-40 hover:grayscale-0 hover:opacity-100 hover:scale-110"}`}
                     >
-                      {icon ? <CachedImage src={icon} alt={agent} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agent[0].toUpperCase()}</div>}
+                      {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agentData.name[0].toUpperCase()}</div>}
                       {isSelected && <div className="absolute inset-0 bg-accent-cyan/10" />}
                     </button>
                   );
@@ -234,12 +235,16 @@ export function SettingsPanel() {
                           </div>
 
                           <div className="flex items-center gap-3">
-                            {selectedAgent && (
-                              <div className="flex items-center gap-2 bg-dark/80 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/10 animate-in zoom-in-90 duration-300">
-                                {getAgentIcon(selectedAgent) && <CachedImage src={getAgentIcon(selectedAgent)!} className="w-4 h-4 rounded-full" />}
-                                <span className="text-[9px] font-black text-accent-cyan uppercase">{selectedAgent}</span>
-                              </div>
-                            )}
+                            {selectedAgent && (() => {
+                              const agentInfo = constants?.agents.find((a) => a.uuid === selectedAgent);
+                              if (!agentInfo) return null;
+                              return (
+                                <div className="flex items-center gap-2 bg-dark/80 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/10 animate-in zoom-in-90 duration-300">
+                                  {getAgentIcon(agentInfo.name) && <CachedImage src={getAgentIcon(agentInfo.name)!} className="w-4 h-4 rounded-full" />}
+                                  <span className="text-[9px] font-black text-accent-cyan uppercase">{agentInfo.name}</span>
+                                </div>
+                              );
+                            })()}
                             <svg className={`w-4 h-4 text-dim transition-all duration-500 ${isExpanded ? "rotate-180 text-accent-cyan" : "group-hover:text-primary"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
                             </svg>
@@ -251,17 +256,17 @@ export function SettingsPanel() {
                       {isExpanded && (
                         <div className="p-3 bg-dark/40 backdrop-blur-xl border-t border-white/5 animate-in slide-in-from-top-2 duration-300">
                           <div className="grid grid-cols-6 gap-2">
-                            {AGENTS.map((agent) => {
-                              const isSelected = selectedAgent === agent;
-                              const icon = getAgentIcon(agent);
+                            {(constants?.agents || []).map((agentData) => {
+                              const isSelected = selectedAgent === agentData.uuid;
+                              const icon = getAgentIcon(agentData.name);
 
                               return (
                                 <button
-                                  key={agent}
-                                  onClick={() => setAutoLock(isSelected ? null : agent, map)}
+                                  key={agentData.uuid}
+                                  onClick={() => setAutoLock(isSelected ? null : agentData.uuid, map)}
                                   onMouseEnter={() => {
-                                    handleHover(map, agent);
-                                    handleAgentHoverEnter(agent, {
+                                    handleHover(map, agentData.name);
+                                    handleAgentHoverEnter(agentData.name, {
                                       mapName: map,
                                       mapSplash: splash,
                                       mapColor: MAP_METADATA[map]?.color || "#00d4aa",
@@ -272,9 +277,9 @@ export function SettingsPanel() {
                                     handleAgentHoverLeave();
                                   }}
                                   className={`group relative aspect-square rounded-lg overflow-hidden transition-all duration-300 ${isSelected ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark scale-105 z-10" : "grayscale opacity-40 hover:grayscale-0 hover:opacity-100 hover:scale-110"}`}
-                                  title={agent.toUpperCase()}
+                                  title={agentData.name.toUpperCase()}
                                 >
-                                  {icon ? <CachedImage src={icon} alt={agent} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agent[0].toUpperCase()}</div>}
+                                  {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agentData.name[0].toUpperCase()}</div>}
                                   {isSelected && <div className="absolute inset-0 bg-accent-cyan/10" />}
                                 </button>
                               );

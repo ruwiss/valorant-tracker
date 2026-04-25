@@ -228,49 +228,34 @@ export function PlayerPanel() {
     setIsTranslating(true);
     try {
       const nickname = selectedPlayer.name.split("#")[0];
-      const targetLang = locale === "tr" ? "Turkish" : "English";
-      const prompt = `You are a translator for gaming nicknames.
-Nickname: "${nickname}"
-Target Language: ${targetLang}
-
-Instructions:
-1. Translate the semantic meaning of the nickname to the target language.
-2. If the nickname is a common name (e.g. "Bahar"), translate its literal meaning (e.g. "Spring").
-3. If the nickname is a gamer tag with a clear meaning (e.g. "HeadHunter"), translate it.
-4. If the nickname has NO clear meaning, is a made-up word, or just a distinct proper noun (e.g. "Kratos"), return "-".
-5. Do NOT return the original nickname unless it is also the translation.
-6. Respond with ONLY the translated text or "-".`;
-
-      const apiKey = atob("c2stb3ItdjEtZjFhZmYwNjIyNDJmZjdhMjYyYjhlZjIwYjQ2OTM1YTMzNmRhNDFmYTM2ODUwNmM2ZWM0YWU4MzEzODJhMGNhYg==");
-
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://valorant-tracker.app", // Required by OpenRouter
-          "X-Title": "Valorant Helper", // Optional
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.0-flash-001",
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-        }),
-      });
-
-      if (!res.ok) throw new Error("Translation failed");
-
+      const targetLang = locale === "tr" ? "tr" : "en";
+      
+      // Use Google Translate's free API endpoint (client=gtx)
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(nickname)}`;
+      
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Google Translate HTTP Error");
+      
       const data = await res.json();
-      const cleanText = data.choices?.[0]?.message?.content?.trim();
-
-      if (!cleanText) throw new Error("Translation returned empty");
-      setTranslatedName(cleanText);
+      
+      // Google Translate returns an array where data[0] contains all translated segments.
+      // data[0][0][0] is usually the translated text.
+      if (data && data[0] && data[0][0] && data[0][0][0]) {
+        let translatedText = data[0][0][0];
+        
+        // Don't show if translation is identical to original (case-insensitive)
+        if (translatedText.toLowerCase().trim() !== nickname.toLowerCase().trim()) {
+           setTranslatedName(translatedText);
+        } else {
+           // If they are exactly the same, it means Google didn't find anything to translate
+           setTranslatedName("-");
+        }
+      } else {
+        throw new Error("Invalid translation response format");
+      }
     } catch (err) {
-      console.error("Translation error:", err);
+      console.error("Google Translation failed:", err);
+      setTranslatedName("Hata");
     } finally {
       setIsTranslating(false);
     }

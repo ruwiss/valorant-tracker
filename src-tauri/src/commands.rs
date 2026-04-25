@@ -1,4 +1,4 @@
-use crate::api::types::*;
+﻿use crate::api::types::*;
 use crate::constants::{AGENTS, MAP_NAMES, QUEUE_NAMES};
 use crate::state::AppState;
 use std::collections::HashMap;
@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tauri::State;
+use tauri::Emitter;
 
 #[tauri::command]
-pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     tracing::info!("[Command] initialize() called - attempting to connect to Valorant");
 
     let result = state.api.initialize().await.map_err(|e| {
@@ -32,66 +33,49 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
         let auto_lock_agent = state.auto_lock_agent.clone();
         let map_agent_preferences = state.map_agent_preferences.clone();
 
+        
         tokio::spawn(async move {
-            tracing::info!("[Worker] Background autolock worker started");
+            tracing::info!("[Worker] Background worker started (Autolock & Event Emitter)");
+            let mut last_emitted_state_json = String::new();
+
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-                // Check connection first
-                if !*api.connected.read() {
-                    continue;
-                }
+                // 1. Get the current game state
+                if let Ok(current_state) = get_game_state_internal(&app.state::<AppState>()).await {
+                    if let Ok(current_json) = serde_json::to_string(&current_state) {
+                        // 2. Emit only if the state has changed
+                        if current_json != last_emitted_state_json {
+                            tracing::debug!("[Worker] Game state changed, emitting event to frontend.");
+                            let _ = app.emit("game_state_changed", &current_state);
+                            last_emitted_state_json = current_json;
+                        }
+                    }
 
-                // Check pregame
-                if let Some(match_id) = api.get_pregame_match_id().await {
-                    if let Some(match_data) = api.get_pregame_match(&match_id).await {
-                        // Determine map name
-                        let map_name = MAP_NAMES
-                            .get(match_data.map_id.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "Unknown".into());
+                    // 3. Autolock logic (if in pregame)
+                    if current_state.state == "pregame" {
+                        if let Some(match_id) = current_state.match_id.clone() {
+                            if let Some(map_name) = current_state.map_name.clone() {
+                                let global_agent = auto_lock_agent.read().clone();
+                                let target_agent = if global_agent.is_some() {
+                                    let map_prefs = map_agent_preferences.read();
+                                    map_prefs.get(&map_name).cloned().or(global_agent)
+                                } else {
+                                    None
+                                };
 
-                        // Determine target agent
-                        // Priority: Map Preference > Global Auto Lock
-                        // BUT: If global auto_lock is disabled (None), skip map preferences too
-                        // This ensures the master toggle controls ALL autolock functionality
-                        let global_agent = auto_lock_agent.read().clone();
-                        let target_agent = if global_agent.is_some() {
-                            // Global enabled - check map preference first, then fall back to global
-                            let map_prefs = map_agent_preferences.read();
-                            map_prefs.get(&map_name).cloned().or(global_agent)
-                        } else {
-                            // Global disabled - no autolock at all (respects master toggle)
-                            None
-                        };
+                                if let Some(agent_id) = target_agent {
+                                    let is_locked = current_state.allies.iter()
+                                        .find(|p| p.is_me)
+                                        .map(|p| p.locked)
+                                        .unwrap_or(false);
 
-                        if let Some(agent_name) = target_agent {
-                            if let Some(agent_id) = AGENTS.get(agent_name.to_lowercase().as_str()) {
-                                // Check if already locked to avoid spamming
-                                let my_puuid = api.puuid.read().clone();
-                                let is_locked = match_data
-                                    .ally_team
-                                    .as_ref()
-                                    .and_then(|team| {
-                                        team.players
-                                            .iter()
-                                            .find(|p| p.subject == my_puuid)
-                                            .map(|p| p.character_selection_state == "locked")
-                                    })
-                                    .unwrap_or(false);
-
-                                if !is_locked {
-                                    tracing::info!(
-                                        "[Worker] Attempting autolock for {} on match {} (Map: {})",
-                                        agent_name,
-                                        match_id,
-                                        map_name
-                                    );
-                                    api.select_agent(&match_id, agent_id).await;
-                                    // 3 SECOND DELAY BEFORE LOCKING (Requested by user)
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(3000))
-                                        .await;
-                                    api.lock_agent(&match_id, agent_id).await;
+                                    if !is_locked {
+                                        tracing::info!("[Worker] Attempting autolock for UUID {} on match {} (Map: {})", agent_id, match_id, map_name);
+                                        api.select_agent(&match_id, &agent_id).await;
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+                                        api.lock_agent(&match_id, &agent_id).await;
+                                    }
                                 }
                             }
                         }
@@ -106,6 +90,10 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
 
 #[tauri::command]
 pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, String> {
+    get_game_state_internal(&state).await
+}
+
+pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, String> {
     let api = &state.api;
 
     if !*api.connected.read() {
@@ -511,7 +499,7 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
 /// Get parties with caching - persists across pregame->ingame transition
 /// Only clears when returning to idle state (lobby) OR when match_id changes
 async fn get_cached_parties(
-    state: &State<'_, AppState>,
+    state: &AppState,
     match_id: &str,
     puuids: &[String],
     api: &crate::api::ValorantAPI,
@@ -1304,3 +1292,9 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn get_app_constants() -> crate::constants::AppConstants {
+    crate::constants::APP_CONSTANTS.clone()
+}
+

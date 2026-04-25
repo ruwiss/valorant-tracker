@@ -52,6 +52,7 @@ pub fn run() -> RunResult {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
+            commands::get_app_constants,
             commands::initialize,
             commands::get_game_state,
             commands::set_auto_lock,

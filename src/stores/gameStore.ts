@@ -1,9 +1,7 @@
-import { create } from "zustand";
+﻿import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionStatus as ApiConnectionStatus, GameState } from "../lib/types";
-import { usePlayerStatsStore } from "./playerStatsStore";
-import { usePanelStore } from "./panelStore";
 
 // State machine for connection status - replaces multiple boolean flags
 export type AppConnectionStatus =
@@ -34,6 +32,7 @@ interface GameStore {
   // Actions
   initialize: (force?: boolean) => Promise<void>;
   fetchGameState: () => Promise<void>;
+  setGameState: (newState: GameState) => void;
   reconnect: (manual?: boolean) => Promise<void>;
   healthCheck: () => Promise<boolean>;
   setAutoLock: (agent: string | null, map?: string) => void;
@@ -76,7 +75,7 @@ const GAME_CHECK_INTERVAL = 5000;       // Check for game every 5 seconds when w
 const GAME_NOT_FOUND_RETRY_DELAY = 10000; // Wait 10 seconds before retry when game not found
 
 // Race condition guard - prevents older fetch responses from overwriting newer data
-let fetchSequence = 0;
+
 
 const getRetryDelay = (attempt: number): number => {
   if (attempt <= INSTANT_RETRY_THRESHOLD) return 500; // Increased from 100ms to allow backend to catch up
@@ -158,7 +157,7 @@ export const useGameStore = create<GameStore>()(
           set({ status: 'PAUSED', consecutiveErrors: 0, reconnectAttempts: 0 });
         } else {
           set({ status: 'CONNECTED' });
-          get().fetchGameState();
+          // State driven by Tauri events
         }
       },
 
@@ -241,7 +240,7 @@ export const useGameStore = create<GameStore>()(
           if (isGameNotRunningError(error)) {
             console.log("[GameCheck] Oyun tespit edilmedi, bekliyor...");
           } else {
-            console.log("[GameCheck] Bağlantı hatası, tekrar denenecek...");
+            console.log("[GameCheck] BaÄŸlantÄ± hatasÄ±, tekrar denenecek...");
           }
           
           // Schedule next check - throttled to prevent spam
@@ -320,7 +319,7 @@ export const useGameStore = create<GameStore>()(
 
           // Check if this is a "game not running" error
           if (isGameNotRunningError(error)) {
-            console.log("[Initialize] Oyun çalışmıyor, bekleme moduna geçiliyor...");
+            console.log("[Initialize] Oyun Ã§alÄ±ÅŸmÄ±yor, bekleme moduna geÃ§iliyor...");
             set({
               status: 'WAITING_FOR_GAME',
               consecutiveErrors: 0,
@@ -346,7 +345,7 @@ export const useGameStore = create<GameStore>()(
 
           // Limit retry attempts to prevent infinite loops
           if (attempts >= 10) {
-            console.log("[Initialize] Çok fazla başarısız deneme, bekleme moduna geçiliyor...");
+            console.log("[Initialize] Ã‡ok fazla baÅŸarÄ±sÄ±z deneme, bekleme moduna geÃ§iliyor...");
             set({ status: 'WAITING_FOR_GAME', reconnectAttempts: 0 });
             gameCheckTimer = setTimeout(() => {
               get().checkGameProcess();
@@ -403,7 +402,7 @@ export const useGameStore = create<GameStore>()(
             await get().initialize(true); // Force initialize
             if (get().status === 'CONNECTED') {
               get().restoreBackendState();
-              await get().fetchGameState();
+              // State driven by Tauri events
             }
           } catch (error) {
             console.error("Manual reconnect failed:", error);
@@ -462,7 +461,7 @@ export const useGameStore = create<GameStore>()(
           await get().initialize(true); // Force initialize
           if (get().status === 'CONNECTED') {
             get().restoreBackendState();
-            await get().fetchGameState();
+            // State driven by Tauri events
           }
         } catch (error) {
           console.error("Auto reconnect failed:", error);
@@ -482,175 +481,25 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      fetchGameState: async () => {
-        const { status, autoLockAgent, pausedAutoLockAgent } = get();
+      setGameState: (newState: GameState) => {
+      const state = get();
 
-        // Skip fetch if paused (unless auto-lock is active)
-        const hasAutoLock = autoLockAgent || pausedAutoLockAgent;
-        if (status === 'PAUSED' && !hasAutoLock) return;
-
-        // Skip during connection attempts or when waiting for game
-        if (status === 'RECONNECTING' || status === 'CONNECTING' || status === 'WAITING_FOR_GAME') return;
-
-        // Trigger reconnect if not connected
-        if (status !== 'CONNECTED' && status !== 'PAUSED') {
-          get().reconnect();
-          return;
+      if (newState.state === 'disconnected') {
+        if (state.status === 'CONNECTED' || state.status === 'RECONNECTING') {
+          set({ gameState: newState, status: 'WAITING_FOR_GAME', lastSuccessfulFetch: Date.now() });
         }
+        return;
+      }
 
-        // Race condition guard: capture current sequence before async call
-        // This prevents older responses from overwriting newer state
-        const currentSequence = ++fetchSequence;
+      const newStatus = (state.status === 'WAITING_FOR_GAME' || state.status === 'RECONNECTING' || state.status === 'IDLE' || state.status === 'CONNECTING') ? 'CONNECTED' : state.status;
+      set({ gameState: newState, status: newStatus, lastSuccessfulFetch: Date.now(), consecutiveErrors: 0 });
+    },
 
-        try {
-          // Suppress error toast for frequent polling
-          const state = await invokeCommand<GameState>("get_game_state", undefined, { suppressErrorToast: true });
-          
-          // Race condition check: if a newer fetch started, discard this result
-          if (currentSequence !== fetchSequence) {
-            console.log(`[fetchGameState] Discarding stale response (seq ${currentSequence} < ${fetchSequence})`);
-            return;
-          }
-          
-          if (!state) throw new Error("Fetch failed");
+    fetchGameState: async () => {
+      // Event-based architecture: Manual fetch is not needed. State is updated via game_state_changed events.
+    },
 
-          // CRITICAL: Always update fetch time on success to prevent health check from triggering
-          set({ lastSuccessfulFetch: Date.now() });
-
-          // Check if disconnected state returned
-          if (state.state === "disconnected") {
-            const errors = get().consecutiveErrors + 1;
-            set({ consecutiveErrors: errors });
-
-            // Don't auto-reconnect if user explicitly paused
-            if (get().status === 'PAUSED') {
-              return;
-            }
-
-            if (errors >= 3) {
-              console.log("Disconnected state received multiple times, reconnecting...");
-              set({ status: 'IDLE' });
-              // Add a small delay to break potential tight loops
-              setTimeout(() => {
-                 // Double-check PAUSED wasn't set during the delay
-                 if (get().status !== 'PAUSED') {
-                   get().reconnect();
-                 }
-              }, 1000);
-            }
-            return;
-          }
-
-          // SUCCESS: Reset errors (but don't change status if PAUSED)
-          const currentStatus = get().status;
-          set({
-            consecutiveErrors: 0,
-            status: currentStatus === 'PAUSED' ? 'PAUSED' : 'CONNECTED',
-            reconnectAttempts: 0
-          });
-
-          // If paused, just ensure connectivity is maintained
-          if (status === 'PAUSED') {
-            return;
-          }
-
-          const currentState = get().gameState.state;
-
-          // Map-aware auto-lock
-          // Map-aware auto-lock logic is now handled in the backend (Rust)
-          // via set_map_preferences to avoid race conditions and global state pollution.
-          if (state.state === "pregame" && state.map_name) {
-             const previousMatchId = get().gameState.match_id;
-             const isNewMatch = previousMatchId !== state.match_id;
-             if (isNewMatch) {
-                 console.log(`[AutoLock] New pregame on ${state.map_name} (Handled by backend worker)`);
-             }
-          }
-
-          // Handle transition to idle (Game End / Dodge) - No waiting
-          if ((currentState === "ingame" || currentState === "pregame") && state.state === "idle") {
-            console.log(`[Transition] ${currentState} -> idle. Cleaning up...`);
-            usePlayerStatsStore.getState().clearCache();
-            usePanelStore.getState().close();
-          }
-
-          // Success (preserve PAUSED status if set)
-          const finalStatus = get().status;
-          set({
-            gameState: state,
-            consecutiveErrors: 0,
-            status: finalStatus === 'PAUSED' ? 'PAUSED' : 'CONNECTED',
-            lastSuccessfulFetch: Date.now(),
-            reconnectAttempts: 0,
-          });
-        } catch (error) {
-          const errors = get().consecutiveErrors + 1;
-          set({ consecutiveErrors: errors });
-
-          console.log(`Fetch error (${errors}):`, error);
-
-          // Don't auto-reconnect if user explicitly paused
-          if (get().status === 'PAUSED') {
-            return;
-          }
-
-          // Check if this indicates game is not running
-          if (isGameNotRunningError(error)) {
-            console.log("[FetchGameState] Oyun kapanmış olabilir, bekleme moduna geçiliyor...");
-            set({
-              status: 'WAITING_FOR_GAME',
-              consecutiveErrors: 0,
-              gameState: initialGameState
-            });
-            // Start throttled game checking
-            gameCheckTimer = setTimeout(() => {
-              get().checkGameProcess();
-            }, GAME_NOT_FOUND_RETRY_DELAY);
-            return;
-          }
-
-          // If we have consecutive errors, it likely means the port changed or client closed
-          if (errors >= 5) {
-             const currentState = get().gameState.state;
-             const isInGame = currentState === 'ingame' || currentState === 'pregame';
-
-             if (isInGame) {
-                console.log("Multiple fetch errors during game. Persistent reconnecting...", errors);
-                // Don't go IDLE, stay in RECONNECTING/CONNECTED but force re-init
-                // We want to keep the "Game" UI visible, just show a warning
-                set({ status: 'RECONNECTING' });
-
-                // Retry in 2-3 seconds (as requested)
-                setTimeout(() => {
-                   const currentStatus = get().status;
-                   if (currentStatus !== 'PAUSED' && currentStatus !== 'WAITING_FOR_GAME') {
-                     get().reconnect(true);
-                   }
-                }, 2500);
-             } else {
-                console.log("Multiple fetch errors, checking game status...");
-                // Transition to waiting for game instead of aggressive retry
-                set({
-                  status: 'WAITING_FOR_GAME',
-                  consecutiveErrors: 0,
-                  gameState: initialGameState
-                });
-                
-                gameCheckTimer = setTimeout(() => {
-                  get().checkGameProcess();
-                }, GAME_NOT_FOUND_RETRY_DELAY);
-             }
-          } else {
-             // First few errors, just try soft reconnect or wait
-             console.log("Fetch error, waiting/soft reconnect...");
-             if (errors >= 2 && get().status !== 'PAUSED') {
-                get().reconnect();
-             }
-          }
-        }
-      },
-
-      silentRefresh: async () => {
+    silentRefresh: async () => {
         const { status } = get();
         
         // Skip only if user explicitly paused - allow refresh in all other states
@@ -677,7 +526,7 @@ export const useGameStore = create<GameStore>()(
           
           // Immediately follow up with a game state fetch to refresh player data
           // This uses the existing fetchGameState which already handles race conditions
-          await get().fetchGameState();
+          // State driven by Tauri events
           
           console.log("[SilentRefresh] Seamless update completed");
         } catch (error) {
@@ -749,3 +598,5 @@ if (typeof document !== "undefined") {
     }
   }, HEALTH_CHECK_INTERVAL);
 }
+
+
