@@ -1,6 +1,6 @@
 [package]
 name = "valorant-tracker"
-version = "1.5.5"
+version = "1.6.6"
 description = "Valorant Match Tracker"
 authors = ["omerg"]
 edition = "2021"
