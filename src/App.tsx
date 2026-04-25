@@ -45,7 +45,7 @@ function App() {
   };
 
   return (
-    <div className={`h-full flex bg-dark overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
+    <div className={`h-full flex bg-dark/95 backdrop-blur-md overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
       {/* Main content - Fixed width to prevent jumping during resize */}
       <div className="relative w-[380px] flex-none flex flex-col p-4 pl-5">
         <Header />
