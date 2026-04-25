@@ -88,8 +88,8 @@ pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, 
                                         map_name
                                     );
                                     api.select_agent(&match_id, agent_id).await;
-                                    // 1 SECOND DELAY BEFORE LOCKING (Requested by user)
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(1000))
+                                    // 3 SECOND DELAY BEFORE LOCKING (Requested by user)
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(3000))
                                         .await;
                                     api.lock_agent(&match_id, agent_id).await;
                                 }
@@ -272,7 +272,7 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
                     if let Some(agent_name) = auto_lock_agent.as_ref() {
                         if let Some(agent_id) = AGENTS.get(agent_name.to_lowercase().as_str()) {
                             api.select_agent(&match_id, agent_id).await;
-                            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_millis(2200)).await;
                             api.lock_agent(&match_id, agent_id).await;
                         }
                     }
