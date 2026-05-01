@@ -94,8 +94,8 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                                 let _ = api_clone.select_agent(&match_id, &agent_id).await;
                                                 tracing::info!("[Autolock] Agent selected (hovering visible)");
 
-                                                // Phase 2: Wait before locking (requested 3s)
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                                                // Phase 2: Wait before locking (requested 2s)
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
                                                 let _ = api_clone.lock_agent(&match_id, &agent_id).await;
                                                 tracing::info!("[Autolock] Agent locked visibly!");
                                                 
