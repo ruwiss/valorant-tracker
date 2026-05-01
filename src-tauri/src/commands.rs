@@ -650,14 +650,6 @@ pub async fn get_player_loadout(
         return Err("Not in game".into());
     };
 
-    // Check cache first (only if NOT pregame - in pregame we want fresh data for skin changes)
-    if !is_pregame {
-        let cached = state.cached_loadouts.read();
-        if let Some(loadout) = cached.get(&puuid) {
-            return Ok(Some(loadout.clone()));
-        }
-    }
-
     // Check if match changed - clear cache
     {
         let cached_match = state.loadouts_match_id.read();
@@ -665,6 +657,14 @@ pub async fn get_player_loadout(
             drop(cached_match);
             state.cached_loadouts.write().clear();
             *state.loadouts_match_id.write() = Some(match_id.clone());
+        }
+    }
+
+    // Check cache after match validation (only if NOT pregame - in pregame we want fresh data for skin changes)
+    if !is_pregame {
+        let cached = state.cached_loadouts.read();
+        if let Some(loadout) = cached.get(&puuid) {
+            return Ok(Some(loadout.clone()));
         }
     }
 

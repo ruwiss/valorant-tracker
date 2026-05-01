@@ -89,6 +89,11 @@ export function PlayerPanel() {
 
   // Reset state when player changes
   useEffect(() => {
+    setSkins([]);
+    setSkinMeta(new Map());
+    setBuddyMeta(new Map());
+    setError(null);
+    setLoading(false);
     setTranslatedName(null);
     setIsTranslating(false);
     setPeakRank(null);
@@ -108,7 +113,7 @@ export function PlayerPanel() {
     // Include matchId in cache key to force refetch on new match
     const cacheKey = `${selectedPlayer.puuid}-${matchId}-${locale}`;
     if (fetchedRef.current === cacheKey) return;
-    fetchLoadout();
+    fetchLoadout(selectedPlayer.puuid, cacheKey);
   }, [selectedPlayer?.puuid, matchId, locale]);
 
   // Fetch weapon icons once
@@ -132,13 +137,13 @@ export function PlayerPanel() {
     } catch {}
   };
 
-  const fetchLoadout = async () => {
-    if (!selectedPlayer) return;
-    fetchedRef.current = `${selectedPlayer.puuid}-${locale}`;
+  const fetchLoadout = async (puuid: string, cacheKey: string) => {
+    fetchedRef.current = cacheKey;
     setLoading(true);
     setError(null);
     try {
-      const data = await invokeCommand<PlayerSkinData | null>("get_player_loadout", { puuid: selectedPlayer.puuid });
+      const data = await invokeCommand<PlayerSkinData | null>("get_player_loadout", { puuid });
+      if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
       if (!data) {
         setError(t("player.loadoutNotFound"));
         setLoading(false);
