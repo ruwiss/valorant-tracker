@@ -28,6 +28,12 @@ const translations: Record<Locale, Record<string, string>> = {
     "status.reconnecting": "RECONNECTING...",
     "status.offline": "OFFLINE",
 
+    // Dialog
+    "dialog.closeTitle": "Close Application",
+    "dialog.closeMessage": "Are you sure you want to close the application?",
+    "dialog.yes": "Yes",
+    "dialog.no": "No",
+
     // Chat
     "chat.title": "COMMS",
     "chat.team": "TEAM",
@@ -226,6 +232,12 @@ const translations: Record<Locale, Record<string, string>> = {
     "status.reconnecting": "TEKRAR DENENİYOR...",
     "status.offline": "ÇEVRİMDIŞI",
     "settings.version": "Sürüm",
+
+    // Dialog
+    "dialog.closeTitle": "Uygulamayı Kapat",
+    "dialog.closeMessage": "Uygulamayı kapatmak istediğinize emin misiniz?",
+    "dialog.yes": "Evet",
+    "dialog.no": "Hayır",
 
     // Chat
     "chat.title": "İLETİŞİM",

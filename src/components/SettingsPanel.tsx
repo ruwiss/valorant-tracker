@@ -363,7 +363,7 @@ export function SettingsPanel() {
 
             <div className="h-px bg-border/50 my-2" />
 
-            {/* About / License Info */}
+            {/* About Info */}
             <div>
               <h3 className="text-[10px] font-semibold text-primary mb-2">{locale === "tr" ? "Hakkında" : "About"}</h3>
               <div className="bg-card/50 rounded p-2 space-y-1.5">
@@ -371,54 +371,8 @@ export function SettingsPanel() {
                   <span className="text-dim">{t("settings.version")}</span>
                   <span className="text-primary font-mono">{appVersion}</span>
                 </div>
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-dim">{locale === "tr" ? "Lisans Durumu" : "License Status"}</span>
-                  <span className="text-success font-semibold">{locale === "tr" ? "Ömür Boyu (Ücretsiz)" : "Lifetime (Free)"}</span>
-                </div>
               </div>
             </div>
-            {/* Contact / Social Links */}
-            {contactInfo && (
-              <div className="pt-2">
-                <div className="flex items-center justify-center gap-4 py-2 border-t border-border/30 mt-2">
-                  {contactInfo.telegram && (
-                    <button onClick={() => openUrl(contactInfo.telegram!.url)} className="group p-1.5 rounded-full hover:bg-accent-cyan/10 transition-all" title={`Telegram: ${contactInfo.telegram.username}`}>
-                      <svg className="w-5 h-5 text-dim group-hover:text-accent-cyan transition-all" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path
-                          fillRule="evenodd"
-                          clipRule="evenodd"
-                          d="M23.1117 4.49449C23.4296 2.94472 21.9074 1.65683 20.4317 2.227L2.3425 9.21601C0.694517 9.85273 0.621087 12.1572 2.22518 12.8975L6.1645 14.7157L8.03849 21.2746C8.13583 21.6153 8.40618 21.8791 8.74917 21.968C9.09216 22.0568 9.45658 21.9576 9.70712 21.707L12.5938 18.8203L16.6375 21.8531C17.8113 22.7334 19.5019 22.0922 19.7967 20.6549L23.1117 4.49449ZM3.0633 11.0816L21.1525 4.0926L17.8375 20.2531L13.1 16.6999C12.7019 16.4013 12.1448 16.4409 11.7929 16.7928L10.5565 18.0292L10.928 15.9861L18.2071 8.70703C18.5614 8.35278 18.5988 7.79106 18.2947 7.39293C17.9906 6.99479 17.4389 6.88312 17.0039 7.13168L6.95124 12.876L3.0633 11.0816ZM8.17695 14.4791L8.78333 16.6015L9.01614 15.321C9.05253 15.1209 9.14908 14.9366 9.29291 14.7928L11.5128 12.573L8.17695 14.4791Z"
-                          fill="currentColor"
-                        />
-                      </svg>
-                    </button>
-                  )}
-                  {contactInfo.discord && (
-                    <button onClick={() => openUrl(contactInfo.discord!.url)} className="group p-1.5 rounded-full hover:bg-[#5865F2]/10 transition-all" title={`Discord: ${contactInfo.discord.username}`}>
-                      <svg className="w-5 h-5 text-dim group-hover:text-[#5865F2] transition-all" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path
-                          d="M18.59 5.88997C17.36 5.31997 16.05 4.89997 14.67 4.65997C14.5 4.95997 14.3 5.36997 14.17 5.69997C12.71 5.47997 11.26 5.47997 9.83001 5.69997C9.69001 5.36997 9.49001 4.95997 9.32001 4.65997C7.94001 4.89997 6.63001 5.31997 5.40001 5.88997C2.92001 9.62997 2.25001 13.28 2.58001 16.87C4.23001 18.1 5.82001 18.84 7.39001 19.33C7.78001 18.8 8.12001 18.23 8.42001 17.64C7.85001 17.43 7.31001 17.16 6.80001 16.85C6.94001 16.75 7.07001 16.64 7.20001 16.54C10.33 18 13.72 18 16.81 16.54C16.94 16.65 17.07 16.75 17.21 16.85C16.7 17.16 16.15 17.42 15.59 17.64C15.89 18.23 16.23 18.8 16.62 19.33C18.19 18.84 19.79 18.1 21.43 16.87C21.82 12.7 20.76 9.08997 18.61 5.88997H18.59ZM8.84001 14.67C7.90001 14.67 7.13001 13.8 7.13001 12.73C7.13001 11.66 7.88001 10.79 8.84001 10.79C9.80001 10.79 10.56 11.66 10.55 12.73C10.55 13.79 9.80001 14.67 8.84001 14.67ZM15.15 14.67C14.21 14.67 13.44 13.8 13.44 12.73C13.44 11.66 14.19 10.79 15.15 10.79C16.11 10.79 16.87 11.66 16.86 12.73C16.86 13.79 16.11 14.67 15.15 14.67Z"
-                          fill="currentColor"
-                        />
-                      </svg>
-                    </button>
-                  )}
-                  {contactInfo.r10 && (
-                    <button onClick={() => openUrl(contactInfo.r10!.url)} className="group p-1.5 rounded-full hover:bg-accent-gold/10 transition-all" title={`R10: ${contactInfo.r10.username}`}>
-                      <div className="w-5 h-5 flex items-center justify-center text-dim group-hover:text-accent-gold font-black text-[7px] border border-dim group-hover:border-accent-gold rounded transition-all">R10</div>
-                    </button>
-                  )}
-                  {contactInfo.email && (
-                    <button onClick={() => openUrl(contactInfo.email!.url)} className="group p-1.5 rounded-full hover:bg-white/10 transition-all" title={`Email: ${contactInfo.email.address}`}>
-                      <svg className="w-5 h-5 text-dim group-hover:text-white transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                        <polyline points="22,6 12,13 2,6" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

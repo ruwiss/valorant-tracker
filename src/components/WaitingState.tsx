@@ -5,104 +5,93 @@ export function WaitingState() {
   const { status, reconnectAttempts, toggleMatchWatching, checkGameProcess } = useGameStore();
   const { t } = useI18n();
 
-  // Derive states from status
   const isPaused = status === "PAUSED";
   const isWaitingForGame = status === "WAITING_FOR_GAME";
   const isLoading = status === "CONNECTING" || status === "RECONNECTING" || status === "IDLE";
 
-  // Determine current active view for the key
   const activeView = isPaused ? "paused" : isWaitingForGame ? "waitingForGame" : isLoading ? "loading" : "waiting";
 
   return (
-    <div className="flex flex-col items-center justify-center flex-1 px-4 relative">
-      {/* State Container with Transition Key */}
-      <div key={activeView} className="flex flex-col items-center animate-smooth-appear">
-        {isPaused ? (
-          <>
-            {/* Paused state - clickable to resume */}
-            <button onClick={toggleMatchWatching} className="group relative w-16 h-16 mb-4 cursor-pointer transition-transform hover:scale-105 active:scale-95" title={t("waiting.clickToResume")}>
-              <div className="absolute inset-0 bg-card rounded-full shadow-[0_0_20px_rgba(236,178,46,0.1)]" />
-              <div className="absolute inset-4 bg-accent-gold/40 rounded-full" />
-              {/* Play icon */}
-              <svg className="absolute inset-0 w-16 h-16 p-5 text-accent-gold group-hover:text-accent-gold/80 transition-colors" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-            <h2 className="text-base font-semibold text-accent-gold mb-1">{t("waiting.paused")}</h2>
-            <p className="text-xs text-dim text-center px-8">{t("waiting.pausedDesc")}</p>
-          </>
-        ) : isWaitingForGame ? (
-          <>
-            {/* Waiting for game to launch - clickable to retry */}
-            <button onClick={() => checkGameProcess()} className="group relative w-[72px] h-[72px] mb-5 cursor-pointer transition-transform hover:scale-105 active:scale-95" title="Oyun kontrolü yap">
-              {/* Outer pulsing ring */}
-              <div className="absolute -inset-1.5 rounded-full border border-blue-500/20 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite] opacity-60" />
-              {/* Subtle ambient glow */}
-              <div className="absolute -inset-2 rounded-full bg-blue-500/5 blur-md group-hover:bg-blue-400/10 transition-colors duration-500" />
-              {/* Background circle with gradient border */}
-              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-card via-card to-blue-950/60 shadow-[0_0_24px_rgba(59,130,246,0.12),inset_0_1px_0_rgba(255,255,255,0.04)]" />
-              {/* Inner glow core */}
-              <div className="absolute inset-[18px] rounded-full bg-blue-500/20 backdrop-blur-sm animate-pulse group-hover:animate-none group-hover:bg-blue-400/30 transition-all duration-300" />
-              {/* Modern gamepad icon - outline style */}
-              <svg
-                className="absolute inset-0 w-[72px] h-[72px] p-[22px] text-blue-400 group-hover:text-blue-300 transition-colors duration-300 drop-shadow-[0_0_6px_rgba(96,165,250,0.4)]"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M6 11h4M8 9v4" />
-                <circle cx="15" cy="10" r="0.75" fill="currentColor" stroke="none" />
-                <circle cx="17.5" cy="12.5" r="0.75" fill="currentColor" stroke="none" />
-                <path d="M7.5 6h9a5 5 0 0 1 5 5v0a7 7 0 0 1-7 7h-5a7 7 0 0 1-7-7v0a5 5 0 0 1 5-5z" />
-              </svg>
-            </button>
-            <h2 className="text-base font-semibold text-blue-400 mb-1">Oyun Bekleniyor</h2>
-            <p className="text-xs text-dim text-center px-8">Valorant'ı başlatın, otomatik bağlanacak</p>
-          </>
-        ) : isLoading ? (
-          <>
-            {/* Loading/Reconnecting animation - clickable to pause */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleMatchWatching();
-              }}
-              className="group relative w-16 h-16 mb-4 cursor-pointer active:scale-95 transition-transform"
-              title={t("waiting.clickToPause")}
-            >
-              <div className="absolute inset-0 bg-card rounded-full" />
-              <div className="absolute inset-0 border-2 border-accent-gold border-t-transparent rounded-full animate-spin" />
-              <div className="absolute inset-4 bg-accent-gold/20 rounded-full" />
-              {/* Pause icon - appears on hover */}
-              <svg className="absolute inset-0 w-16 h-16 p-5 text-white/0 group-hover:text-accent-gold transition-colors z-10" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-              </svg>
-            </button>
-            <h2 className="text-base font-semibold text-accent-gold mb-1">{status === "CONNECTING" || status === "IDLE" ? t("header.connecting") : t("waiting.reconnecting")}</h2>
-            {status === "RECONNECTING" && (
-              <p className="text-xs text-dim">
-                {t("waiting.attempt")} {reconnectAttempts + 1}
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            {/* Normal waiting state (connected, waiting for match) - clickable to pause */}
-            <button onClick={toggleMatchWatching} className="group relative w-16 h-16 mb-4 cursor-pointer transition-transform hover:scale-105 active:scale-95" title={t("waiting.clickToPause")}>
-              <div className="absolute inset-0 bg-card rounded-full shadow-[0_0_20px_rgba(0,212,170,0.05)]" />
-              <div className="absolute inset-4 bg-accent-cyan rounded-full animate-pulse group-hover:animate-none" />
-              {/* Pause icon - appears on hover */}
-              <svg className="absolute inset-0 w-16 h-16 p-5 text-white/0 group-hover:text-white/80 transition-colors" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-              </svg>
-            </button>
-            <h2 className="text-base font-semibold text-primary mb-1">{t("waiting.title")}</h2>
-            <p className="text-xs text-dim text-center px-8">{t("waiting.desc")}</p>
-          </>
-        )}
+    <div className="flex flex-col items-center justify-center flex-1 px-4 relative overflow-hidden">
+      
+      {/* Hafif organik arka plan aydınlatması */}
+      <div className="absolute inset-0 pointer-events-none opacity-30">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-accent-cyan/10 rounded-full blur-[80px]" />
+      </div>
+
+      <div key={activeView} className="flex flex-col items-center animate-smooth-appear relative z-10 w-full max-w-[280px]">
+        {/* Çok hafif belirgin olan saydam yuvarlak arka plan (card) */}
+        <div className="flex flex-col items-center w-full bg-dark/20 backdrop-blur-sm rounded-[2rem] p-6 relative overflow-hidden">
+
+          {isPaused ? (
+             <div className="flex flex-col items-center text-center w-full">
+                 <button onClick={toggleMatchWatching} className="group relative w-16 h-16 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title={t("waiting.clickToResume")}>
+                    <div className="absolute inset-0 rounded-full border-2 border-accent-gold/20 bg-accent-gold/5 group-hover:border-accent-gold/40 group-hover:bg-accent-gold/10 transition-colors" />
+                    <svg className="relative z-10 w-6 h-6 text-accent-gold group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                 </button>
+                 <h2 className="text-[14px] font-black text-accent-gold tracking-widest mb-1.5">{t("waiting.paused")}</h2>
+                 <p className="text-[12px] text-dim/80 leading-relaxed font-medium">{t("waiting.pausedDesc")}</p>
+             </div>
+          ) : isWaitingForGame ? (
+             <div className="flex flex-col items-center text-center w-full">
+                 <button onClick={() => checkGameProcess()} className="group relative w-20 h-20 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title="Oyun kontrolü yap">
+                    {/* Dairesel Radar Animasyonu */}
+                    <div className="absolute inset-0 rounded-full border border-accent-cyan/30 bg-accent-cyan/5 group-hover:border-accent-cyan/50 group-hover:bg-accent-cyan/10 transition-colors" />
+                    <div className="absolute inset-[-6px] rounded-full border border-dashed border-accent-cyan/20 animate-[spin_10s_linear_infinite]" />
+                    <div className="absolute inset-[-12px] rounded-full border border-accent-cyan/10 opacity-0 group-hover:opacity-100 transition-opacity animate-pulse" />
+                    
+                    {/* VALORANT Logo SVG */}
+                    <svg className="relative z-10 w-10 h-10 animate-breathe-red-green transition-transform group-hover:scale-110" viewBox="0 0 32 32" fill="currentColor">
+                      <path d="M19.8,26.1h-0.2c-2.4,0-4.8,0-7.2,0c-0.3,0-0.5-0.1-0.6-0.3c-2.5-3.2-5.1-6.3-7.6-9.5C4.1,16.1,4,16,4,15.8 c0-3.1,0-6.1,0-9.2c0-0.1,0-0.2,0.1-0.2h0.1c5.2,6.5,10.4,13,15.5,19.5c0,0,0,0.1,0.1,0.1L19.8,26.1L19.8,26.1z"/>
+                      <path d="M27.8,16.3c-0.7,0.9-1.5,1.8-2.2,2.8c-0.2,0.2-0.4,0.3-0.6,0.3c-2.4,0-4.8,0-7.1,0c0,0-0.1,0-0.1,0c-0.1,0-0.2-0.1-0.1-0.2 c0,0,0-0.1,0.1-0.1c2.4-3,4.7-5.9,7.1-8.9c1-1.2,2-2.5,2.9-3.7c0-0.1,0.1-0.1,0.2-0.1c0,0,0.1,0,0.1,0c0,0.1,0,0.1,0,0.2 c0,3,0,6.1,0,9.1C28,16,27.9,16.2,27.8,16.3L27.8,16.3z"/>
+                    </svg>
+                 </button>
+                 <h2 className="text-[14px] font-black text-accent-cyan tracking-widest mb-1.5 drop-shadow-[0_0_5px_rgba(0,212,170,0.3)]">OYUN BEKLENİYOR</h2>
+                 <p className="text-[12px] text-dim/80 leading-relaxed font-medium">Valorant'ı başlatın, otomatik bağlanacak</p>
+             </div>
+          ) : isLoading ? (
+             <div className="flex flex-col items-center text-center w-full">
+                 <button onClick={(e) => { e.stopPropagation(); toggleMatchWatching(); }} className="group relative w-16 h-16 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title={t("waiting.clickToPause")}>
+                    <div className="absolute inset-0 rounded-full border-2 border-accent-gold/10 bg-accent-gold/5" />
+                    
+                    {/* Dairesel Yüklenme (Spin) Animasyonu */}
+                    <div className="absolute inset-0 rounded-full border-2 border-accent-gold/60 border-t-transparent animate-spin" style={{ animationDuration: '1.5s' }} />
+
+                    <svg className="relative z-10 w-6 h-6 text-transparent group-hover:text-accent-gold transition-colors" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                 </button>
+                 <h2 className="text-[14px] font-black text-accent-gold tracking-widest mb-1.5">
+                    {status === "CONNECTING" || status === "IDLE" ? t("header.connecting") : t("waiting.reconnecting")}
+                 </h2>
+                 {status === "RECONNECTING" && (
+                   <div className="flex items-center justify-center gap-1.5 mt-1 bg-dark/30 px-3 py-1 rounded-full">
+                     <span className="relative flex h-2 w-2">
+                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-gold opacity-75"></span>
+                       <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-gold"></span>
+                     </span>
+                     <span className="text-[10px] font-bold tracking-wider text-dim">{t("waiting.attempt")} {reconnectAttempts + 1}</span>
+                   </div>
+                 )}
+             </div>
+          ) : (
+             <div className="flex flex-col items-center text-center w-full">
+                 <button onClick={toggleMatchWatching} className="group relative w-16 h-16 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title={t("waiting.clickToPause")}>
+                    {/* Yumuşak Yuvarlak Halka */}
+                    <div className="absolute inset-0 rounded-full border-2 border-accent-cyan/20 bg-accent-cyan/10 group-hover:border-accent-cyan/40 group-hover:bg-accent-cyan/20 transition-colors shadow-[0_0_15px_rgba(0,212,170,0.1)] group-hover:shadow-[0_0_20px_rgba(0,212,170,0.2)]" />
+                    <div className="absolute inset-[-4px] rounded-full border border-accent-cyan/10 scale-110 opacity-0 group-hover:opacity-100 transition-all duration-300" />
+                    
+                    <svg className="relative z-10 w-6 h-6 text-accent-cyan/80 group-hover:text-accent-cyan transition-colors" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                 </button>
+                 <h2 className="text-[14px] font-black text-white tracking-widest mb-1.5">{t("waiting.title")}</h2>
+                 <p className="text-[12px] text-dim/80 leading-relaxed font-medium">{t("waiting.desc")}</p>
+             </div>
+          )}
+        </div>
       </div>
     </div>
   );

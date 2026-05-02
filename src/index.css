@@ -21,6 +21,18 @@
     --color-accent-green: #3fffbd;
     --animate-slide-in: slide-in 0.2s ease-out;
     --animate-smooth-appear: smooth-appear 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    --animate-breathe-red-green: breathe-red-green 4s ease-in-out infinite;
+}
+
+@keyframes breathe-red-green {
+    0%, 100% {
+        color: var(--color-accent-red);
+        filter: drop-shadow(0 0 10px rgba(255, 70, 85, 0.6));
+    }
+    50% {
+        color: var(--color-accent-cyan);
+        filter: drop-shadow(0 0 10px rgba(0, 212, 170, 0.6));
+    }
 }
 
 @keyframes smooth-appear {

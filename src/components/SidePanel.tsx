@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { usePanelStore } from "../stores/panelStore";
+import { useGameStore } from "../stores/gameStore";
 import { SettingsPanel } from "./SettingsPanel";
 import { PlayerPanel } from "./PlayerPanel";
 import { PlayerStatsPanel } from "./PlayerStatsPanel";
@@ -8,6 +9,16 @@ import { useI18n } from "../lib/i18n";
 export function SidePanel() {
   const { isOpen, panelType, close } = usePanelStore();
   const { t } = useI18n();
+  const gameState = useGameStore((s) => s.gameState);
+
+  // Close player/stats panel automatically when match ends or state clears
+  useEffect(() => {
+    if (isOpen && (panelType === "player" || panelType === "stats")) {
+      if (gameState.state !== "ingame" && gameState.state !== "pregame") {
+        close();
+      }
+    }
+  }, [gameState.state, isOpen, panelType, close]);
 
   // ESC to close
   useEffect(() => {
