@@ -7,7 +7,6 @@ import { useI18n } from "../lib/i18n";
 import { useConstantsStore } from "../stores/constantsStore";
 import { COMPETITIVE_MAPS, CompetitiveMap, MAP_METADATA } from "../lib/maps";
 import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
 
@@ -38,7 +37,7 @@ type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, contactInfo, windowStyle, setWindowStyle } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
