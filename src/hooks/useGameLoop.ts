@@ -18,7 +18,7 @@ const PROCESS_CHECK_INTERVAL = 3000; // Check if game process is alive every 3s
  */
 export function useGameLoop() {
   const { initialize, setGameState, status, checkGameProcess } = useGameStore();
-  const { registerHotkey, restoreWindowPosition, saveCurrentPosition } = useSettingsStore();
+  const { registerHotkey, restoreWindowPosition, saveCurrentPosition, syncAutoLockDelay } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
 
@@ -26,6 +26,7 @@ export function useGameLoop() {
 
   useEffect(() => {
     // 1. Initialize core state
+    syncAutoLockDelay();
     const state = useGameStore.getState();
     if (state.status === 'RECONNECTING') {
       console.warn("[GameLoop] Starting from RECONNECTING state, attempting re-init");
@@ -122,7 +123,7 @@ export function useGameLoop() {
       if (unlistenShowOverlay) unlistenShowOverlay();
       clearInterval(processChecker);
     };
-  }, [initialize, loadAssets, registerHotkey, restoreWindowPosition, saveCurrentPosition, checkGameProcess]);
+  }, [initialize, loadAssets, registerHotkey, restoreWindowPosition, saveCurrentPosition, checkGameProcess, syncAutoLockDelay]);
 
   // Watchdog for stuck reconnection
   useEffect(() => {

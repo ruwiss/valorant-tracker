@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { availableMonitors } from "@tauri-apps/api/window";
+import { invokeCommand } from "../utils/ipc";
 
 interface WindowPosition {
   x: number;
@@ -16,6 +17,7 @@ interface SettingsState {
   windowPosition: WindowPosition | null;
   contactInfo: ContactInfo | null;
   windowStyle: WindowStyle;
+  autoLockDelaySeconds: number;
 }
 
 interface SettingsStore extends SettingsState {
@@ -34,7 +36,14 @@ interface SettingsStore extends SettingsState {
   fetchContactInfo: () => Promise<void>;
   setWindowStyle: (style: WindowStyle) => Promise<void>;
   dockWindow: () => Promise<void>;
+  setAutoLockDelaySeconds: (seconds: number) => void;
+  syncAutoLockDelay: () => void;
 }
+
+const clampAutoLockDelay = (seconds: number) => {
+  if (!Number.isFinite(seconds)) return 6;
+  return Math.min(10, Math.max(1, Math.round(seconds)));
+};
 
 export interface ContactInfo {
   telegram?: { username: string; url: string; icon: string };
@@ -119,6 +128,19 @@ export const useSettingsStore = create<SettingsStore>()(
       isWindowVisible: true,
       contactInfo: null,
       windowStyle: "docked" as WindowStyle, // Default docked
+      autoLockDelaySeconds: 6,
+
+      setAutoLockDelaySeconds: (seconds: number) => {
+        const autoLockDelaySeconds = clampAutoLockDelay(seconds);
+        set({ autoLockDelaySeconds });
+        invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
+      },
+
+      syncAutoLockDelay: () => {
+        const autoLockDelaySeconds = clampAutoLockDelay(get().autoLockDelaySeconds);
+        set({ autoLockDelaySeconds });
+        invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
+      },
 
       fetchContactInfo: async () => {
         try {
@@ -350,6 +372,7 @@ export const useSettingsStore = create<SettingsStore>()(
         windowPosition: state.windowPosition,
         contactInfo: state.contactInfo,
         windowStyle: state.windowStyle,
+        autoLockDelaySeconds: state.autoLockDelaySeconds,
       }),
     }
   )

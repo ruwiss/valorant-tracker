@@ -8,6 +8,7 @@ pub struct AppState {
     pub api: Arc<ValorantAPI>,
     pub http_client: reqwest::Client,
     pub auto_lock_agent: Arc<RwLock<Option<String>>>,
+    pub auto_lock_delay_ms: Arc<RwLock<u64>>,
     // Cache for party detection - persists across pregame->ingame transition
     pub cached_parties: RwLock<HashMap<String, String>>,
     // Track which match the party cache belongs to
@@ -46,6 +47,7 @@ impl AppState {
                 .build()
                 .unwrap_or_default(),
             auto_lock_agent: Arc::new(RwLock::new(None)),
+            auto_lock_delay_ms: Arc::new(RwLock::new(6000)),
             cached_parties: RwLock::new(HashMap::new()),
             cached_parties_match_id: RwLock::new(None),
             in_game_session: RwLock::new(false),

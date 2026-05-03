@@ -31,6 +31,7 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         *started = true;
         let api = state.api.clone();
         let auto_lock_agent = state.auto_lock_agent.clone();
+        let auto_lock_delay_ms = state.auto_lock_delay_ms.clone();
         let map_agent_preferences = state.map_agent_preferences.clone();
 
         
@@ -86,6 +87,7 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                             
                                             // Spawn a SEPARATE task so we don't block the state emitter
                                             in_progress_clone.store(true, Ordering::Relaxed);
+                                            let lock_delay_ms = *auto_lock_delay_ms.read();
                                             tokio::spawn(async move {
                                                 tracing::info!("[Autolock] Waiting for UI to load (3s)...");
                                                 
@@ -94,8 +96,8 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                                 let _ = api_clone.select_agent(&match_id, &agent_id).await;
                                                 tracing::info!("[Autolock] Agent selected (hovering visible)");
 
-                                                // Phase 2: Wait before locking (requested 2s)
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                                tracing::info!("[Autolock] Waiting before lock ({}ms)...", lock_delay_ms);
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(lock_delay_ms)).await;
                                                 let _ = api_clone.lock_agent(&match_id, &agent_id).await;
                                                 tracing::info!("[Autolock] Agent locked visibly!");
                                                 
@@ -599,6 +601,17 @@ pub fn set_auto_lock(state: State<'_, AppState>, agent: Option<String>) {
 #[tauri::command]
 pub fn get_auto_lock(state: State<'_, AppState>) -> Option<String> {
     state.auto_lock_agent.read().clone()
+}
+
+#[tauri::command]
+pub fn set_auto_lock_delay(state: State<'_, AppState>, seconds: u64) {
+    let clamped_seconds = seconds.clamp(1, 10);
+    *state.auto_lock_delay_ms.write() = clamped_seconds * 1000;
+}
+
+#[tauri::command]
+pub fn get_auto_lock_delay(state: State<'_, AppState>) -> u64 {
+    (*state.auto_lock_delay_ms.read() / 1000).clamp(1, 10)
 }
 
 #[tauri::command]

@@ -57,6 +57,8 @@ pub fn run() -> RunResult {
             commands::get_game_state,
             commands::set_auto_lock,
             commands::get_auto_lock,
+            commands::set_auto_lock_delay,
+            commands::get_auto_lock_delay,
             commands::set_map_preferences,
             commands::get_player_loadout,
             commands::get_chat_messages,

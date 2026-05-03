@@ -37,7 +37,7 @@ type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
@@ -198,6 +198,27 @@ export function SettingsPanel() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-dark/40 border-b border-white/5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] text-dim font-black uppercase tracking-[0.2em]">{locale === "tr" ? "Kilitleme Süresi" : "Lock Delay"}</label>
+                <span className="text-[10px] font-black text-accent-green tabular-nums">{autoLockDelaySeconds}s</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                value={autoLockDelaySeconds}
+                onChange={(event) => setAutoLockDelaySeconds(Number(event.target.value))}
+                className="w-full accent-[#3fffbd] cursor-pointer"
+              />
+              <div className="flex justify-between text-[8px] text-dim/70 font-bold mt-1">
+                <span>1s</span>
+                <span>{locale === "tr" ? "Varsayılan: 6s" : "Default: 6s"}</span>
+                <span>10s</span>
               </div>
             </div>
 
