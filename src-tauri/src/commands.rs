@@ -1,15 +1,18 @@
-﻿use crate::api::types::*;
+use crate::api::types::*;
 use crate::constants::{AGENTS, MAP_NAMES, QUEUE_NAMES};
-use crate::state::AppState;
+use crate::state::{AppState, EncounterPlayer};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
-use tauri::Emitter;
 
 #[tauri::command]
-pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+pub async fn initialize(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ConnectionStatus, String> {
     tracing::info!("[Command] initialize() called - attempting to connect to Valorant");
 
     let result = state.api.initialize().await.map_err(|e| {
@@ -34,11 +37,11 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
         let auto_lock_delay_ms = state.auto_lock_delay_ms.clone();
         let map_agent_preferences = state.map_agent_preferences.clone();
 
-        
         tokio::spawn(async move {
             tracing::info!("[Worker] Background worker started (Autolock & Event Emitter)");
             let mut last_emitted_state_json = String::new();
-            let autolock_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let autolock_in_progress =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -48,14 +51,18 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                     if let Ok(current_json) = serde_json::to_string(&current_state) {
                         // 2. Emit only if the state has changed
                         if current_json != last_emitted_state_json {
-                            tracing::debug!("[Worker] Game state changed, emitting event to frontend.");
+                            tracing::debug!(
+                                "[Worker] Game state changed, emitting event to frontend."
+                            );
                             let _ = app.emit("game_state_changed", &current_state);
                             last_emitted_state_json = current_json;
                         }
                     }
 
                     // 3. Autolock logic (if in pregame and not already running a sequence)
-                    if current_state.state == "pregame" && !autolock_in_progress.load(Ordering::Relaxed) {
+                    if current_state.state == "pregame"
+                        && !autolock_in_progress.load(Ordering::Relaxed)
+                    {
                         if let Some(match_id) = current_state.match_id.clone() {
                             if let Some(map_name) = current_state.map_name.clone() {
                                 let global_agent = auto_lock_agent.read().clone();
@@ -70,13 +77,16 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                     let agent_id = if agent_name.len() > 20 {
                                         agent_name.clone()
                                     } else {
-                                        AGENTS.get(agent_name.to_lowercase().as_str())
+                                        AGENTS
+                                            .get(agent_name.to_lowercase().as_str())
                                             .map(|s| s.to_string())
                                             .unwrap_or_default()
                                     };
 
                                     if !agent_id.is_empty() {
-                                        let is_locked = current_state.allies.iter()
+                                        let is_locked = current_state
+                                            .allies
+                                            .iter()
                                             .find(|p| p.is_me)
                                             .map(|p| p.locked)
                                             .unwrap_or(false);
@@ -84,25 +94,47 @@ pub async fn initialize(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
                                         if !is_locked {
                                             let api_clone = api.clone();
                                             let in_progress_clone = autolock_in_progress.clone();
-                                            
+
                                             // Spawn a SEPARATE task so we don't block the state emitter
                                             in_progress_clone.store(true, Ordering::Relaxed);
                                             let lock_delay_ms = *auto_lock_delay_ms.read();
                                             tokio::spawn(async move {
-                                                tracing::info!("[Autolock] Waiting for UI to load (3s)...");
-                                                
-                                                // Phase 1: Wait for game client UI to fully render agent grid
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
-                                                let _ = api_clone.select_agent(&match_id, &agent_id).await;
-                                                tracing::info!("[Autolock] Agent selected (hovering visible)");
+                                                tracing::info!(
+                                                    "[Autolock] Waiting for UI to load (3s)..."
+                                                );
 
-                                                tracing::info!("[Autolock] Waiting before lock ({}ms)...", lock_delay_ms);
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(lock_delay_ms)).await;
-                                                let _ = api_clone.lock_agent(&match_id, &agent_id).await;
+                                                // Phase 1: Wait for game client UI to fully render agent grid
+                                                tokio::time::sleep(
+                                                    tokio::time::Duration::from_millis(3000),
+                                                )
+                                                .await;
+                                                let _ = api_clone
+                                                    .select_agent(&match_id, &agent_id)
+                                                    .await;
+                                                tracing::info!(
+                                                    "[Autolock] Agent selected (hovering visible)"
+                                                );
+
+                                                tracing::info!(
+                                                    "[Autolock] Waiting before lock ({}ms)...",
+                                                    lock_delay_ms
+                                                );
+                                                tokio::time::sleep(
+                                                    tokio::time::Duration::from_millis(
+                                                        lock_delay_ms,
+                                                    ),
+                                                )
+                                                .await;
+                                                let _ = api_clone
+                                                    .lock_agent(&match_id, &agent_id)
+                                                    .await;
                                                 tracing::info!("[Autolock] Agent locked visibly!");
-                                                
+
                                                 // Allow next sequence after a buffer
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                                tokio::time::sleep(
+                                                    tokio::time::Duration::from_millis(2000),
+                                                )
+                                                .await;
                                                 in_progress_clone.store(false, Ordering::Relaxed);
                                             });
                                         }
@@ -240,14 +272,18 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
     }
 
-    let get_encounter_data = |puuid: &str| -> (Option<u32>, Option<String>) {
+    let get_encounter_data = |puuid: &str| -> (Option<u32>, Option<String>, Option<bool>) {
         let history = state.match_history.read();
         for (i, players) in history.iter().enumerate() {
-            if let Some(agent) = players.get(puuid) {
-                return (Some((i + 1) as u32), Some(agent.clone()));
+            if let Some(player) = players.get(puuid) {
+                return (
+                    Some((i + 1) as u32),
+                    Some(player.agent.clone()),
+                    Some(player.was_enemy),
+                );
             }
         }
-        (None, None)
+        (None, None, None)
     };
     // ---------------------------------------
 
@@ -281,20 +317,26 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                 // Check if I'm already locked
                 let my_player = team.players.iter().find(|p| p.subject == my_puuid);
-                
+
                 // Note: Auto-lock is handled by the background worker to avoid blocking this function
-                
+
                 for p in team.players {
                     let agent_name = get_agent_name(&p.character_id);
                     if p.subject != my_puuid && !agent_name.is_empty() {
-                        state
-                            .current_match_players
-                            .write()
-                            .insert(p.subject.clone(), agent_name.clone());
+                        state.current_match_players.write().insert(
+                            p.subject.clone(),
+                            EncounterPlayer {
+                                agent: agent_name.clone(),
+                                was_enemy: false,
+                            },
+                        );
                     }
 
-                    let (previous_encounter, previous_encounter_agent) =
-                        get_encounter_data(&p.subject);
+                    let (
+                        previous_encounter,
+                        previous_encounter_agent,
+                        previous_encounter_was_enemy,
+                    ) = get_encounter_data(&p.subject);
                     let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
                     let party = parties
                         .get(&p.subject)
@@ -321,6 +363,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         level,
                         previous_encounter,
                         previous_encounter_agent,
+                        previous_encounter_was_enemy,
                     });
                 }
 
@@ -373,14 +416,19 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
             for p in match_data.players {
                 let agent_name = get_agent_name(&p.character_id);
+                let was_enemy = p.team_id != my_team;
                 if p.subject != my_puuid && !agent_name.is_empty() {
-                    state
-                        .current_match_players
-                        .write()
-                        .insert(p.subject.clone(), agent_name.clone());
+                    state.current_match_players.write().insert(
+                        p.subject.clone(),
+                        EncounterPlayer {
+                            agent: agent_name.clone(),
+                            was_enemy,
+                        },
+                    );
                 }
 
-                let (previous_encounter, previous_encounter_agent) = get_encounter_data(&p.subject);
+                let (previous_encounter, previous_encounter_agent, previous_encounter_was_enemy) =
+                    get_encounter_data(&p.subject);
                 let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
                 let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
                 let party = parties
@@ -408,6 +456,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     level,
                     previous_encounter,
                     previous_encounter_agent,
+                    previous_encounter_was_enemy,
                 };
 
                 if p.team_id == my_team {
@@ -1326,4 +1375,3 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
 pub fn get_app_constants() -> crate::constants::AppConstants {
     crate::constants::APP_CONSTANTS.clone()
 }
-

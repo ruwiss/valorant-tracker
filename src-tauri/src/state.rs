@@ -4,6 +4,12 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
+#[derive(Clone)]
+pub struct EncounterPlayer {
+    pub agent: String,
+    pub was_enemy: bool,
+}
+
 pub struct AppState {
     pub api: Arc<ValorantAPI>,
     pub http_client: reqwest::Client,
@@ -29,11 +35,11 @@ pub struct AppState {
     pub map_agent_preferences: Arc<RwLock<HashMap<String, String>>>,
 
     // --- RECENT ENCOUNTER TRACKING ---
-    // Stores PUUID -> agent name from previous matches (max 2)
-    pub match_history: RwLock<VecDeque<HashMap<String, String>>>,
+    // Stores PUUID -> agent/team info from previous matches (max 2)
+    pub match_history: RwLock<VecDeque<HashMap<String, EncounterPlayer>>>,
     // Current match tracking to know when to push to history
     pub current_match_id: RwLock<Option<String>>,
-    pub current_match_players: RwLock<HashMap<String, String>>,
+    pub current_match_players: RwLock<HashMap<String, EncounterPlayer>>,
     pub current_match_seen_ingame: RwLock<bool>,
 }
 

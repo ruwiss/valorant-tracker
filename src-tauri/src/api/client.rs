@@ -1059,7 +1059,7 @@ impl ValorantAPI {
         self.get_remote(&url).await
     }
 
-    /// Detect parties using match history - checks last match for party groupings
+    /// Detect parties using match history - checks recent matches for party groupings
     #[allow(dead_code)]
     pub async fn detect_parties_via_history(&self, puuids: &[String]) -> HashMap<String, String> {
         let mut party_map: HashMap<String, String> = HashMap::new();
@@ -1067,15 +1067,15 @@ impl ValorantAPI {
         let mut next_party_num: u32 = 1;
 
         // We need to find a common recent match to get party info
-        // Strategy: Get last 2 matches of first player for better coverage
+        // Strategy: Get last 3 matches of first player for better coverage
 
         if puuids.is_empty() {
             return party_map;
         }
 
-        // Get last 2 matches of first player
+        // Get last 3 matches of first player
         let first_puuid = &puuids[0];
-        let match_ids = self.get_match_history(first_puuid, 2).await;
+        let match_ids = self.get_match_history(first_puuid, 3).await;
 
         // Collect party info from both matches
         let mut all_match_parties: HashMap<String, String> = HashMap::new();
@@ -1219,9 +1219,9 @@ impl ValorantAPI {
             .collect();
 
         if !need_history.is_empty() {
-            // Pick first player that needs history to fetch last 2 matches
+            // Pick first player that needs history to fetch last 3 matches
             if let Some(first_puuid) = need_history.first() {
-                let match_ids = self.get_match_history(first_puuid, 2).await;
+                let match_ids = self.get_match_history(first_puuid, 3).await;
 
                 // Collect party info from matches
                 let mut match_parties: HashMap<String, String> = HashMap::new();

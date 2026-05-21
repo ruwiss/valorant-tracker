@@ -12,7 +12,7 @@
 
 ### Gelişmiş Analiz
 - **Silah Skin Görüntüleyici**: Maçtaki diğer oyuncuların hangi silah kaplamalarını (skin) kullandığını anında görün.
-- **Takım Arkadaşı Geçmişi**: Oyuncuların son 2 maçına dayanarak kimlerle sık oynadığını (premade) tespit edin.
+- **Takım Arkadaşı Geçmişi**: Oyuncuların son 3 maçına dayanarak kimlerle sık oynadığını (premade) tespit edin.
 - **Tracker.gg Entegrasyonu**: Detaylı oyuncu profili istatistiklerine ve performans geçmişine hızlı erişim sağlayın.
 
 ### Otomasyon ve Araçlar

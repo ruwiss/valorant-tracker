@@ -16,6 +16,7 @@ export interface PlayerData {
   level: number;
   previous_encounter?: number; // 1 = Last game, 2 = Two games ago
   previous_encounter_agent?: string;
+  previous_encounter_was_enemy?: boolean;
 }
 
 export interface GameState {

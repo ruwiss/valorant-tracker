@@ -126,7 +126,7 @@ export function PlayerCard({ player }: Props) {
       {player.previous_encounter && previousAgentIcon && previousAgentName && (
         <div
           className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent-cyan/35 bg-black/30 shadow-[0_0_10px_rgba(0,212,170,0.18)]"
-          title={`${t(`player.recentEncounter${player.previous_encounter}`)} • ${t("player.previousAgent", { agent: previousAgentName })}`}
+          title={`${t(`player.recentEncounter${player.previous_encounter}`)}${player.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""} • ${t("player.previousAgent", { agent: previousAgentName })}`}
         >
           <CachedImage
             src={previousAgentIcon}

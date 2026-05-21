@@ -212,6 +212,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.peak": "PEAK",
     "player.recentEncounter1": "Last match encounter",
     "player.recentEncounter2": "Encountered 2 matches ago",
+    "player.recentEncounterShort1": "LAST MATCH",
+    "player.recentEncounterShort2": "2 MATCHES AGO",
+    "player.encounterEnemySuffix": " (enemy)",
     "player.previousAgent": "Played {agent} in that match",
   },
   tr: {
@@ -416,6 +419,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.peak": "ZİRVE",
     "player.recentEncounter1": "Geçen maç denk geldin",
     "player.recentEncounter2": "2 maç önce denk geldin",
+    "player.recentEncounterShort1": "GEÇEN MAÇ",
+    "player.recentEncounterShort2": "2 MAÇ ÖNCE",
+    "player.encounterEnemySuffix": " (rakip)",
     "player.previousAgent": "O maçta {agent} oynadı",
   },
 };

@@ -398,14 +398,11 @@ export function PlayerPanel() {
               {selectedPlayer.previous_encounter && (
                 <div 
                   className="px-1.5 py-0.5 rounded-[4px] bg-accent-cyan/10 border border-accent-cyan/30 flex items-center gap-1 shrink-0 animate-pulse"
-                  title={t(`player.recentEncounter${selectedPlayer.previous_encounter}`)}
+                  title={`${t(`player.recentEncounter${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
                 >
                   <div className="w-1 h-1 rounded-full bg-accent-cyan" />
                   <span className="text-[7px] font-bold text-accent-cyan uppercase tracking-tighter">
-                    {locale === 'tr' 
-                      ? (selectedPlayer.previous_encounter === 1 ? "GEÇEN MAÇ" : "2 MAÇ ÖNCE")
-                      : (selectedPlayer.previous_encounter === 1 ? "LAST MATCH" : "2 MATCHES AGO")
-                    }
+                    {`${t(`player.recentEncounterShort${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
                   </span>
                 </div>
               )}
