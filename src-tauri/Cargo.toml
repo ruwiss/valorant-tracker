@@ -29,6 +29,7 @@ rquest-util = "2"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 base64 = "0.22"
+flate2 = "1"
 thiserror = "2"
 parking_lot = "0.12"
 tracing = "0.1"

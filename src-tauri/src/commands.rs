@@ -8,56 +8,172 @@ use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
 
-#[tauri::command]
-pub async fn initialize(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<ConnectionStatus, String> {
-    tracing::info!("[Command] initialize() called - attempting to connect to Valorant");
+#[derive(serde::Serialize, Clone)]
+pub struct ConnectionEvent {
+    pub status: String, // "connected" | "connecting" | "waiting_for_game" | "paused"
+    pub region: String,
+}
 
-    let result = state.api.initialize().await.map_err(|e| {
+/// Emit a `connection_changed` event only when it differs from the last one.
+fn emit_connection(app: &tauri::AppHandle, last_json: &mut String, status: &str, region: &str) {
+    let ev = ConnectionEvent {
+        status: status.to_string(),
+        region: region.to_string(),
+    };
+    if let Ok(json) = serde_json::to_string(&ev) {
+        if json != *last_json {
+            let _ = app.emit("connection_changed", &ev);
+            *last_json = json;
+        }
+    }
+}
+
+/// Force a connection attempt now. Kept for compatibility / manual use; the
+/// supervisor below owns the ongoing connection lifecycle.
+#[tauri::command]
+pub async fn initialize(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+    tracing::info!("[Command] initialize() called - forcing a connection attempt");
+    state.api.initialize().await.map_err(|e| {
         tracing::error!("[Command] initialize() failed: {}", e);
         e.to_string()
-    });
+    })
+}
 
-    if let Ok(ref status) = result {
-        tracing::info!(
-            "[Command] initialize() success: connected={}, region={}",
-            status.connected,
-            status.region
-        );
+#[derive(serde::Serialize, Clone)]
+pub struct PresetAppliedEvent {
+    pub ok: bool,
+    pub preset_id: String,
+    pub error: Option<String>,
+}
+
+/// If a preset is armed, apply it to the just-connected account, then disarm.
+/// Emits `preset_auto_applied` to the frontend with the result. Runs from the
+/// supervisor right after a fresh connection is established.
+async fn try_apply_armed_preset(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+
+    // Take the armed preset (clear it so we don't retry on every tick).
+    let armed = { state.armed_preset.write().take() };
+    let Some(armed) = armed else {
+        return;
+    };
+
+    let Some(store) = state.presets.read().clone() else {
+        return;
+    };
+    let Some(preset) = store.get(&armed.id) else {
+        tracing::warn!("[ArmedPreset] preset {} no longer exists", armed.id);
+        return;
+    };
+
+    tracing::info!("[ArmedPreset] Applying armed preset to fresh connection");
+    let api = state.api.clone();
+    let result = run_apply(&api, &store, &preset, armed.make_backup, &armed.backup_label).await;
+
+    let ev = match &result {
+        Ok(_) => {
+            tracing::info!("[ArmedPreset] Applied successfully");
+            PresetAppliedEvent { ok: true, preset_id: armed.id.clone(), error: None }
+        }
+        Err(e) => {
+            tracing::error!("[ArmedPreset] Apply failed: {}", e);
+            PresetAppliedEvent { ok: false, preset_id: armed.id.clone(), error: Some(e.clone()) }
+        }
+    };
+    let _ = app.emit("preset_auto_applied", &ev);
+}
+
+/// Single background supervisor that OWNS the connection lifecycle:
+/// connect -> watch game state -> self-reconnect on token/lockfile changes ->
+/// drive autolock. Emits `connection_changed` and `game_state_changed` events.
+/// Started once from lib.rs `setup()`.
+pub fn start_supervisor(app: tauri::AppHandle) {
+    {
+        let state = app.state::<AppState>();
+        let mut started = state.supervisor_started.write();
+        if *started {
+            return;
+        }
+        *started = true;
     }
 
-    // Start autolock worker if not already running
-    let mut started = state.autolock_worker_started.write();
-    if !*started {
-        *started = true;
-        let api = state.api.clone();
-        let auto_lock_agent = state.auto_lock_agent.clone();
-        let auto_lock_delay_ms = state.auto_lock_delay_ms.clone();
-        let map_agent_preferences = state.map_agent_preferences.clone();
+    let api = app.state::<AppState>().api.clone();
+    let auto_lock_agent = app.state::<AppState>().auto_lock_agent.clone();
+    let auto_lock_delay_ms = app.state::<AppState>().auto_lock_delay_ms.clone();
+    let map_agent_preferences = app.state::<AppState>().map_agent_preferences.clone();
 
-        tokio::spawn(async move {
-            tracing::info!("[Worker] Background worker started (Autolock & Event Emitter)");
-            let mut last_emitted_state_json = String::new();
-            let autolock_in_progress =
-                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    tauri::async_runtime::spawn(async move {
+        tracing::info!("[Supervisor] Started (connect + watch + reconnect + autolock)");
+        let mut last_emitted_state_json = String::new();
+        let mut last_conn_json = String::new();
+        let autolock_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut backoff_ms: u64 = 1000;
+        const MAX_BACKOFF_MS: u64 = 10_000;
 
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-                // 1. Get the current game state
-                if let Ok(current_state) = get_game_state_internal(&app.state::<AppState>()).await {
-                    if let Ok(current_json) = serde_json::to_string(&current_state) {
-                        // 2. Emit only if the state has changed
-                        if current_json != last_emitted_state_json {
-                            tracing::debug!(
-                                "[Worker] Game state changed, emitting event to frontend."
-                            );
-                            let _ = app.emit("game_state_changed", &current_state);
-                            last_emitted_state_json = current_json;
-                        }
+            // 0. Respect user pause - stop watching but keep the task alive.
+            if *app.state::<AppState>().is_paused.read() {
+                emit_connection(&app, &mut last_conn_json, "paused", "");
+                continue;
+            }
+
+            // 1. Ensure the connection. The backend now OWNS reconnection: if we
+            // are disconnected or our tokens went stale, re-initialize here with
+            // backoff instead of waiting for the frontend to ask.
+            let connected = *api.connected.read();
+            let needs_reinit = *api.needs_reinit.read();
+            if !connected || needs_reinit {
+                emit_connection(&app, &mut last_conn_json, "connecting", "");
+                match api.initialize().await {
+                    Ok(status) => {
+                        backoff_ms = 1000;
+                        tracing::info!("[Supervisor] Connected (region={})", status.region);
+                        emit_connection(&app, &mut last_conn_json, "connected", &status.region);
+
+                        // Fresh token just arrived. If a preset is armed, apply it
+                        // now — before the game reads its settings (~46s window).
+                        try_apply_armed_preset(&app).await;
                     }
+                    Err(e) => {
+                        tracing::debug!(
+                            "[Supervisor] Connect failed: {} (retry in {}ms)",
+                            e,
+                            backoff_ms
+                        );
+                        emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Poll the current game state and push it to the frontend.
+            if let Ok(current_state) = get_game_state_internal(&app.state::<AppState>()).await {
+                // Emit game state only when it changed - including "disconnected"
+                // so the UI resets away from a stale pregame/ingame panel.
+                if let Ok(current_json) = serde_json::to_string(&current_state) {
+                    if current_json != last_emitted_state_json {
+                        tracing::debug!("[Supervisor] Game state changed, emitting to frontend.");
+                        let _ = app.emit("game_state_changed", &current_state);
+                        last_emitted_state_json = current_json;
+                    }
+                }
+
+                // A disconnect detected mid-poll: reconnect on the next tick.
+                if current_state.state == "disconnected" {
+                    continue;
+                }
+
+                // Keep the connection status fresh (region may have resolved).
+                emit_connection(
+                    &app,
+                    &mut last_conn_json,
+                    "connected",
+                    &api.region.read().to_uppercase(),
+                );
 
                     // 3. Autolock logic (if in pregame and not already running a sequence)
                     if current_state.state == "pregame"
@@ -108,9 +224,7 @@ pub async fn initialize(
                                                     tokio::time::Duration::from_millis(3000),
                                                 )
                                                 .await;
-                                                let _ = api_clone
-                                                    .select_agent(&match_id, &agent_id)
-                                                    .await;
+                                                api_clone.select_agent(&match_id, &agent_id).await;
                                                 tracing::info!(
                                                     "[Autolock] Agent selected (hovering visible)"
                                                 );
@@ -125,14 +239,91 @@ pub async fn initialize(
                                                     ),
                                                 )
                                                 .await;
-                                                let _ = api_clone
-                                                    .lock_agent(&match_id, &agent_id)
-                                                    .await;
-                                                tracing::info!("[Autolock] Agent locked visibly!");
 
-                                                // Allow next sequence after a buffer
+                                                // Phase 2: Lock with verification + fast retry.
+                                                // A single fire-and-forget lock can be silently
+                                                // dropped (stale token, request racing the
+                                                // server's select state, lock fired a touch too
+                                                // early). Confirm via the pregame match and
+                                                // re-attempt until the agent is actually locked,
+                                                // the pregame ends, or we hit the safety cap.
+                                                let my_puuid = api_clone.puuid.read().clone();
+                                                let mut locked = false;
+                                                for attempt in 1..=20u32 {
+                                                    api_clone
+                                                        .lock_agent(&match_id, &agent_id)
+                                                        .await;
+
+                                                    // Give the server a moment, then verify.
+                                                    tokio::time::sleep(
+                                                        tokio::time::Duration::from_millis(700),
+                                                    )
+                                                    .await;
+
+                                                    match api_clone
+                                                        .get_pregame_match(&match_id)
+                                                        .await
+                                                    {
+                                                        Some(m) => {
+                                                            let me_locked = m
+                                                                .ally_team
+                                                                .as_ref()
+                                                                .and_then(|t| {
+                                                                    t.players.iter().find(|p| {
+                                                                        p.subject == my_puuid
+                                                                    })
+                                                                })
+                                                                .map(|p| {
+                                                                    p.character_selection_state
+                                                                        == "locked"
+                                                                })
+                                                                .unwrap_or(false);
+
+                                                            if me_locked {
+                                                                locked = true;
+                                                                tracing::info!(
+                                                                    "[Autolock] Lock confirmed (attempt {})",
+                                                                    attempt
+                                                                );
+                                                                break;
+                                                            }
+
+                                                            tracing::warn!(
+                                                                "[Autolock] Lock not confirmed (attempt {}), re-hovering and retrying...",
+                                                                attempt
+                                                            );
+                                                            // Re-hover in case the select state
+                                                            // was lost, then retry the lock.
+                                                            api_clone
+                                                                .select_agent(&match_id, &agent_id)
+                                                                .await;
+                                                            tokio::time::sleep(
+                                                                tokio::time::Duration::from_millis(
+                                                                    500,
+                                                                ),
+                                                            )
+                                                            .await;
+                                                        }
+                                                        None => {
+                                                            // Pregame gone (game started, dodge,
+                                                            // or disconnect) - stop retrying.
+                                                            tracing::info!(
+                                                                "[Autolock] Pregame ended before lock confirmed; stopping retries."
+                                                            );
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                if !locked {
+                                                    tracing::warn!(
+                                                        "[Autolock] Could not confirm lock after retries."
+                                                    );
+                                                }
+
+                                                // Allow next sequence after a small buffer
                                                 tokio::time::sleep(
-                                                    tokio::time::Duration::from_millis(2000),
+                                                    tokio::time::Duration::from_millis(1000),
                                                 )
                                                 .await;
                                                 in_progress_clone.store(false, Ordering::Relaxed);
@@ -146,9 +337,6 @@ pub async fn initialize(
                 }
             }
         });
-    }
-
-    result
 }
 
 #[tauri::command]
@@ -315,10 +503,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 // Get parties with caching - only fetch once per match
                 let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
 
-                // Check if I'm already locked
-                let my_player = team.players.iter().find(|p| p.subject == my_puuid);
-
-                // Note: Auto-lock is handled by the background worker to avoid blocking this function
+                // Note: Auto-lock is handled by the background supervisor to avoid blocking this function
 
                 for p in team.players {
                     let agent_name = get_agent_name(&p.character_id);
@@ -668,6 +853,47 @@ pub fn set_map_preferences(state: State<'_, AppState>, preferences: HashMap<Stri
     *state.map_agent_preferences.write() = preferences;
 }
 
+/// Pause match watching - the supervisor stops polling/autolock until resumed.
+#[tauri::command]
+pub fn pause_watching(state: State<'_, AppState>) {
+    *state.is_paused.write() = true;
+    tracing::info!("[Command] pause_watching");
+}
+
+/// Resume match watching and force an immediate reconnect.
+#[tauri::command]
+pub fn resume_watching(state: State<'_, AppState>) {
+    *state.is_paused.write() = false;
+    *state.api.needs_reinit.write() = true;
+    tracing::info!("[Command] resume_watching");
+}
+
+/// Manual reconnect - asks the supervisor to re-initialize the connection now.
+#[tauri::command]
+pub fn reconnect(state: State<'_, AppState>) {
+    *state.api.needs_reinit.write() = true;
+    tracing::info!("[Command] reconnect requested");
+}
+
+/// Initial-sync helper: returns the current connection status so the frontend
+/// can render correctly without waiting for the next `connection_changed` event.
+#[tauri::command]
+pub fn get_connection_status(state: State<'_, AppState>) -> ConnectionEvent {
+    let paused = *state.is_paused.read();
+    let connected = *state.api.connected.read();
+    let status = if paused {
+        "paused"
+    } else if connected {
+        "connected"
+    } else {
+        "waiting_for_game"
+    };
+    ConnectionEvent {
+        status: status.to_string(),
+        region: state.api.region.read().to_uppercase(),
+    }
+}
+
 fn get_agent_name(agent_id: &str) -> String {
     for (name, id) in AGENTS.iter() {
         if id.eq_ignore_ascii_case(agent_id) {
@@ -989,6 +1215,262 @@ pub async fn get_friends(state: State<'_, AppState>) -> Result<Vec<Friend>, Stri
     } else {
         Ok(vec![])
     }
+}
+
+/// Read the player's current in-game Valorant settings (sensitivity, crosshair,
+/// keybinds, video, audio, ...) so the frontend can save them as a preset.
+#[tauri::command]
+pub async fn get_player_settings(
+    state: State<'_, AppState>,
+) -> Result<PlayerSettingsResponse, String> {
+    tracing::info!("[Command] get_player_settings() called");
+    // Reads on-disk config files; works even without a live connection, though
+    // an active connection lets us target the exact account by puuid.
+    state.api.get_player_settings().await
+}
+
+// ===== Settings Presets =====
+
+/// Helper: get the lazily-initialized preset store, or an error string.
+fn preset_store(
+    state: &State<'_, AppState>,
+) -> Result<std::sync::Arc<crate::presets::PresetStore>, String> {
+    state
+        .presets
+        .read()
+        .clone()
+        .ok_or_else(|| "Preset store not ready".to_string())
+}
+
+/// True if the VALORANT game process (not just Riot Client) is running.
+/// Applying settings while the game is open would let the game overwrite the
+/// cloud from its in-memory state, so apply is blocked when this is true.
+fn is_game_running() -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq VALORANT-Win64-Shipping.exe", "/NH"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout).contains("VALORANT-Win64-Shipping.exe")
+        })
+        .unwrap_or(false)
+}
+
+/// Whether the VALORANT game process is currently running. The frontend uses
+/// this (not connection status) to decide when applying a preset is allowed.
+#[tauri::command]
+pub async fn get_game_running() -> Result<bool, String> {
+    Ok(is_game_running())
+}
+
+/// Capture the currently signed-in account's cloud settings as a named preset.
+/// Requires an active connection (the game must be/have been open for tokens).
+#[tauri::command]
+pub async fn capture_player_settings(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<crate::presets::PresetMeta, String> {
+    tracing::info!("[Command] capture_player_settings(name={})", name);
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("EMPTY_NAME".into());
+    }
+    let raw = state.api.fetch_cloud_settings_raw().await?;
+    let puuid = state.api.puuid.read().clone();
+    let store = preset_store(&state)?;
+    let preset = crate::presets::new_preset(name.to_string(), puuid, false, raw);
+    store.add(preset)
+}
+
+/// Return the crosshair profiles stored inside a preset, parsed from the
+/// `SavedCrosshairProfileData` string setting. Shape: `{currentProfile, profiles}`.
+/// Lets the UI list/preview crosshairs without shipping the whole 60KB blob.
+#[tauri::command]
+pub async fn get_preset_crosshairs(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let store = preset_store(&state)?;
+    let preset = store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+
+    let empty = serde_json::json!({ "currentProfile": 0, "profiles": [] });
+
+    let raw = preset
+        .data
+        .get("stringSettings")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter().find_map(|item| {
+                let name = item.get("settingEnum")?.as_str()?;
+                if name.ends_with("SavedCrosshairProfileData") {
+                    item.get("value")?.as_str()
+                } else {
+                    None
+                }
+            })
+        });
+
+    let Some(raw) = raw else {
+        return Ok(empty);
+    };
+
+    // Usually a single JSON.parse is enough; rarely the value is double-encoded.
+    let parsed: serde_json::Value = serde_json::from_str(raw)
+        .or_else(|_| {
+            serde_json::from_str::<String>(raw).and_then(|inner| serde_json::from_str(&inner))
+        })
+        .unwrap_or(empty);
+
+    Ok(parsed)
+}
+
+/// List all saved presets (metadata only).
+#[tauri::command]
+pub async fn list_presets(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::presets::PresetMeta>, String> {
+    let store = preset_store(&state)?;
+    Ok(store.list())
+}
+
+/// Delete a preset by id.
+#[tauri::command]
+pub async fn delete_preset(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    tracing::info!("[Command] delete_preset(id={})", id);
+    let store = preset_store(&state)?;
+    store.delete(&id)
+}
+
+/// Rename a preset.
+#[tauri::command]
+pub async fn rename_preset(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<crate::presets::PresetMeta, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("EMPTY_NAME".into());
+    }
+    let store = preset_store(&state)?;
+    store.rename(&id, name)
+}
+
+/// Apply a preset to the currently signed-in account's cloud settings.
+/// If `make_backup` is true, the current cloud settings are first saved as an
+/// auto-backup preset (pruned to the newest 5). Blocked while the game runs.
+#[tauri::command]
+pub async fn apply_preset(
+    state: State<'_, AppState>,
+    id: String,
+    make_backup: bool,
+    backup_label: Option<String>,
+) -> Result<(), String> {
+    tracing::info!("[Command] apply_preset(id={}, make_backup={})", id, make_backup);
+
+    if is_game_running() {
+        return Err("GAME_RUNNING".into());
+    }
+
+    let store = preset_store(&state)?;
+    let preset = store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+
+    // Save current cloud settings as an auto-backup before overwriting.
+    if make_backup {
+        match state.api.fetch_cloud_settings_raw().await {
+            Ok(current) => {
+                let puuid = state.api.puuid.read().clone();
+                // Frontend supplies a localized, readable label (e.g. "Yedek").
+                let label = backup_label
+                    .as_deref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Backup")
+                    .to_string();
+                let backup = crate::presets::new_preset(label, puuid, true, current);
+                if let Err(e) = store.add(backup) {
+                    tracing::warn!("[apply_preset] backup failed: {}", e);
+                } else {
+                    let _ = store.prune_auto_backups(5);
+                }
+            }
+            Err(e) => {
+                // Don't silently apply without a backup the user asked for.
+                return Err(format!("BACKUP_FAILED:{}", e));
+            }
+        }
+    }
+
+    state.api.apply_player_settings(&preset.data).await
+}
+
+/// Core apply routine shared by the manual command and the auto-apply hook:
+/// optionally back up the current cloud settings, then write the preset.
+/// Assumes a live connection (caller ensures tokens are fresh).
+pub async fn run_apply(
+    api: &std::sync::Arc<crate::api::ValorantAPI>,
+    store: &std::sync::Arc<crate::presets::PresetStore>,
+    preset: &crate::presets::SettingsPreset,
+    make_backup: bool,
+    backup_label: &str,
+) -> Result<(), String> {
+    if make_backup {
+        match api.fetch_cloud_settings_raw().await {
+            Ok(current) => {
+                let puuid = api.puuid.read().clone();
+                let label = if backup_label.trim().is_empty() {
+                    "Backup".to_string()
+                } else {
+                    backup_label.trim().to_string()
+                };
+                let backup = crate::presets::new_preset(label, puuid, true, current);
+                if let Err(e) = store.add(backup) {
+                    tracing::warn!("[run_apply] backup failed: {}", e);
+                } else {
+                    let _ = store.prune_auto_backups(5);
+                }
+            }
+            Err(e) => return Err(format!("BACKUP_FAILED:{}", e)),
+        }
+    }
+    api.apply_player_settings(&preset.data).await
+}
+
+/// Arm a preset to auto-apply on the next fresh connection (next game launch /
+/// account login). This is the "gir-çık yok" flow: the user arms while the game
+/// is closed; the supervisor applies the moment a fresh token arrives, before
+/// the game reads its settings (~46s window).
+#[tauri::command]
+pub async fn arm_preset(
+    state: State<'_, AppState>,
+    id: String,
+    make_backup: bool,
+    backup_label: Option<String>,
+) -> Result<(), String> {
+    // Validate the preset exists before arming.
+    let store = preset_store(&state)?;
+    store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+
+    *state.armed_preset.write() = Some(crate::state::ArmedPreset {
+        id,
+        make_backup,
+        backup_label: backup_label.unwrap_or_default(),
+    });
+    tracing::info!("[Command] arm_preset armed");
+    Ok(())
+}
+
+/// Cancel a pending armed preset.
+#[tauri::command]
+pub async fn disarm_preset(state: State<'_, AppState>) -> Result<(), String> {
+    *state.armed_preset.write() = None;
+    Ok(())
+}
+
+/// Id of the currently armed preset, if any (so the UI can show "pending").
+#[tauri::command]
+pub async fn get_armed_preset(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.armed_preset.read().as_ref().map(|a| a.id.clone()))
 }
 
 #[tauri::command]

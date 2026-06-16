@@ -2,7 +2,12 @@ use crate::api::types::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use parking_lot::RwLock;
 use rquest_util::Emulation;
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
+use flate2::Compression;
 use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -32,6 +37,7 @@ pub struct ValorantAPI {
     local_port: RwLock<String>,
     local_auth: RwLock<String>,
     remote_headers: RwLock<HashMap<String, String>>,
+    pp_host: RwLock<String>, // Cloud player-preferences host (affinity-based, e.g. euc1.pp.sgp.pvp.net)
     pub connected: RwLock<bool>,
     pub needs_reinit: RwLock<bool>, // Signal that tokens need refresh
     last_init_time: RwLock<std::time::Instant>,
@@ -67,6 +73,7 @@ impl ValorantAPI {
             local_port: RwLock::new(String::new()),
             local_auth: RwLock::new(String::new()),
             remote_headers: RwLock::new(HashMap::new()),
+            pp_host: RwLock::new(String::new()),
             connected: RwLock::new(false),
             needs_reinit: RwLock::new(false),
             last_init_time: RwLock::new(std::time::Instant::now()),
@@ -480,6 +487,14 @@ impl ValorantAPI {
             *self.shard.write() = self.get_shard(&self.region.read());
         }
 
+        // Resolve the cloud player-preferences host (affinity-based). Best effort:
+        // PAS token first, region table fallback. Used for settings presets.
+        let pp_host = self
+            .resolve_pp_host(&ent_response.access_token)
+            .await;
+        tracing::info!("[Initialize] Player-preferences host: {}", pp_host);
+        *self.pp_host.write() = pp_host;
+
         *self.connected.write() = true;
         *self.needs_reinit.write() = false;
         *self.consecutive_network_errors.write() = 0;
@@ -501,6 +516,70 @@ impl ValorantAPI {
             _ => "eu",
         }
         .to_string()
+    }
+
+    /// Map an affinity / region code to the cloud player-preferences host prefix.
+    /// The pp host uses the player-affinity prefix (e.g. `euc1`), which differs
+    /// from the glz/pd shard. Verified live: EU -> euc1. Others are best-effort.
+    fn pp_host_for_affinity(affinity: &str) -> String {
+        let prefix = match affinity.to_lowercase().as_str() {
+            "eu" | "eu1" | "euc1" | "tr" | "tr1" => "euc1",
+            "na" | "na1" | "us" | "usw2" | "latam" | "br" => "usw2",
+            "ap" | "ap1" | "apse1" | "sea" => "apse1",
+            "kr" | "kr1" => "apse1", // KR routed via AP pp cluster (fallback)
+            other if !other.is_empty() => return format!("{}.pp.sgp.pvp.net", other),
+            _ => "prod",
+        };
+        format!("{}.pp.sgp.pvp.net", prefix)
+    }
+
+    /// Resolve the cloud player-preferences host. Prefers the PAS affinity token
+    /// (authoritative), falls back to the local region table.
+    async fn resolve_pp_host(&self, access_token: &str) -> String {
+        // 1. PAS affinity token (authoritative). JWT: header.payload.signature,
+        //    payload has an `affinity` claim like "eu1".
+        if let Ok(resp) = self
+            .client
+            .get("https://riot-geo.pas.si.riotgames.com/pas/v1/product/valorant")
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await
+        {
+            if let Ok(jwt) = resp.text().await {
+                if let Some(affinity) = Self::affinity_from_pas(&jwt) {
+                    return Self::pp_host_for_affinity(&affinity);
+                }
+            }
+        }
+        // 2. Region table fallback.
+        Self::pp_host_for_affinity(&self.region.read())
+    }
+
+    /// Extract the `affinity` claim from a PAS JWT (base64url payload).
+    fn affinity_from_pas(jwt: &str) -> Option<String> {
+        let payload_b64 = jwt.trim().split('.').nth(1)?;
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .ok()?;
+        let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+        json.get("affinity")?.as_str().map(|s| s.to_string())
+    }
+
+    /// Raw DEFLATE inflate (no zlib/gzip wrapper). Matches Node `inflateRawSync`.
+    fn inflate_raw(bytes: &[u8]) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        DeflateDecoder::new(bytes)
+            .read_to_end(&mut out)
+            .map_err(|e| format!("inflate error: {}", e))?;
+        Ok(out)
+    }
+
+    /// Raw DEFLATE compress (no zlib/gzip wrapper). Matches Node `deflateRawSync`.
+    fn deflate_raw(bytes: &[u8]) -> Result<Vec<u8>, String> {
+        let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(bytes)
+            .map_err(|e| format!("deflate error: {}", e))?;
+        enc.finish().map_err(|e| format!("deflate finish error: {}", e))
     }
 
     async fn get_client_version(&self) -> String {
@@ -691,7 +770,20 @@ impl ValorantAPI {
             req = req.header(k, v);
         }
         match req.json(&serde_json::json!({})).send().await {
-            Ok(resp) => resp.json().await.ok(),
+            Ok(resp) => {
+                // Auth errors mean our tokens are stale. Flag for reinit so the
+                // next cycle refreshes them - otherwise select/lock would keep
+                // silently failing and the agent would never get locked.
+                if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
+                    tracing::debug!(
+                        "[post_remote_silent] Auth error ({}), triggering reinit",
+                        resp.status()
+                    );
+                    *self.needs_reinit.write() = true;
+                    return None;
+                }
+                resp.json().await.ok()
+            }
             Err(e) => {
                 tracing::error!("[post_remote_silent] Error (ignored): {}", e);
                 None
@@ -766,6 +858,330 @@ impl ValorantAPI {
             match_id, agent_id
         ));
         let _ = self.post_remote_silent(&url).await;
+    }
+
+    /// Cloud player-preferences GET. Returns the RAW settings JSON (serde Value)
+    /// so nothing is lost on round-trip (keybind sub-fields, crosshair profiles,
+    /// future keys). This is the authoritative source the game actually reads.
+    ///
+    ///   GET https://{pp_host}/playerPref/v3/getPreference/Ares.PlayerSettings
+    ///   -> { type, data: base64(raw-deflate(JSON)), modified }
+    pub async fn fetch_cloud_settings_raw(&self) -> Result<serde_json::Value, String> {
+        let pp_host = self.pp_host.read().clone();
+        if pp_host.is_empty() {
+            return Err("Not connected (no pp host)".to_string());
+        }
+        let url = format!(
+            "https://{}/playerPref/v3/getPreference/Ares.PlayerSettings",
+            pp_host
+        );
+        let headers = self.remote_headers.read().clone();
+        let mut req = self.client.get(&url);
+        for (k, v) in headers.iter() {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("Cloud GET failed: {}", e))?;
+        let status = resp.status().as_u16();
+        if status == 401 || status == 403 {
+            *self.needs_reinit.write() = true;
+            return Err("STALE_TOKEN".to_string());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("Cloud GET HTTP {}", status));
+        }
+        let envelope: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Cloud GET parse error: {}", e))?;
+        let data_b64 = envelope
+            .get("data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Cloud response missing 'data'".to_string())?;
+        let compressed = STANDARD
+            .decode(data_b64)
+            .map_err(|e| format!("base64 decode error: {}", e))?;
+        let json_bytes = Self::inflate_raw(&compressed)?;
+        serde_json::from_slice(&json_bytes).map_err(|e| format!("settings JSON parse error: {}", e))
+    }
+
+    /// Cloud player-preferences PUT. Takes the RAW settings JSON (serde Value),
+    /// compresses and uploads it. The game loads this on next launch.
+    ///
+    ///   PUT https://{pp_host}/playerPref/v3/savePreference
+    ///   body { type:"Ares.PlayerSettings", data: base64(raw-deflate(JSON)) }
+    pub async fn push_cloud_settings_raw(&self, settings: &serde_json::Value) -> Result<(), String> {
+        if self.should_refresh_tokens() {
+            *self.needs_reinit.write() = true;
+            return Err("STALE_TOKEN".to_string());
+        }
+        let pp_host = self.pp_host.read().clone();
+        if pp_host.is_empty() {
+            return Err("Not connected (no pp host)".to_string());
+        }
+        let json_bytes =
+            serde_json::to_vec(settings).map_err(|e| format!("serialize error: {}", e))?;
+        let compressed = Self::deflate_raw(&json_bytes)?;
+        let data_b64 = STANDARD.encode(&compressed);
+        let body = serde_json::json!({
+            "type": "Ares.PlayerSettings",
+            "data": data_b64,
+        });
+
+        let url = format!("https://{}/playerPref/v3/savePreference", pp_host);
+        let headers = self.remote_headers.read().clone();
+        let mut req = self.client.put(&url).json(&body);
+        for (k, v) in headers.iter() {
+            // json() sets Content-Type; don't double-insert it.
+            if k.eq_ignore_ascii_case("content-type") {
+                continue;
+            }
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("Cloud PUT failed: {}", e))?;
+        let status = resp.status().as_u16();
+        if status == 401 || status == 403 {
+            *self.needs_reinit.write() = true;
+            return Err("STALE_TOKEN".to_string());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("Cloud PUT HTTP {}", status));
+        }
+        Ok(())
+    }
+
+    /// True for machine/account-specific settings that must NOT travel with a
+    /// preset (audio device handles, monitor ids, onboarding flags). On apply we
+    /// keep the TARGET account's own value for these instead of the preset's.
+    fn is_machine_specific(setting_enum: &str) -> bool {
+        const DROP_EXACT: &[&str] = &[
+            "VoiceDeviceCaptureHandle",
+            "VoiceDeviceRenderHandle",
+            "DefaultMonitorDeviceID",
+            "PreferredMonitorDeviceID",
+            "PreferredGamePods",
+        ];
+        const DROP_PREFIX: &[&str] = &["HasSeen", "HasAccepted", "HasEver", "LastSeen"];
+        let name = setting_enum.rsplit("::").next().unwrap_or(setting_enum);
+        DROP_EXACT.contains(&name) || DROP_PREFIX.iter().any(|p| name.starts_with(p))
+    }
+
+    /// Build the blob to upload when applying a preset, using **full replace**
+    /// semantics so the target ends up exactly like the preset:
+    ///   - start from the preset (drop its machine-specific entries)
+    ///   - carry over the TARGET account's machine-specific entries unchanged
+    /// Settings absent from the preset are therefore absent from the upload, so
+    /// Valorant resets them to default (e.g. a toggle that was at default when
+    /// the preset was captured, then later changed, goes back to default).
+    fn merge_for_apply(
+        preset: &serde_json::Value,
+        target_current: &serde_json::Value,
+    ) -> serde_json::Value {
+        let mut out = preset.clone();
+        let Some(out_obj) = out.as_object_mut() else {
+            return out;
+        };
+
+        for arr_key in ["boolSettings", "intSettings", "floatSettings", "stringSettings"] {
+            // Drop machine-specific entries that came from the preset's source.
+            if let Some(arr) = out_obj.get_mut(arr_key).and_then(|v| v.as_array_mut()) {
+                arr.retain(|item| {
+                    item.get("settingEnum")
+                        .and_then(|v| v.as_str())
+                        .map(|s| !Self::is_machine_specific(s))
+                        .unwrap_or(true)
+                });
+            }
+            // Re-add the target account's own machine-specific entries.
+            if let Some(target_arr) = target_current.get(arr_key).and_then(|v| v.as_array()) {
+                let keep: Vec<serde_json::Value> = target_arr
+                    .iter()
+                    .filter(|item| {
+                        item.get("settingEnum")
+                            .and_then(|v| v.as_str())
+                            .map(Self::is_machine_specific)
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect();
+                if !keep.is_empty() {
+                    let entry = out_obj
+                        .entry(arr_key.to_string())
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                    if let Some(arr) = entry.as_array_mut() {
+                        arr.extend(keep);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Apply a preset to the currently signed-in account's cloud, full-replace.
+    /// Reads the target's current settings to preserve its machine-specific
+    /// entries. Game must be closed (caller's responsibility); guards on token.
+    pub async fn apply_player_settings(&self, settings: &serde_json::Value) -> Result<(), String> {
+        // The target's current cloud settings — for machine-specific carry-over.
+        let target_current = self
+            .fetch_cloud_settings_raw()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let merged = Self::merge_for_apply(settings, &target_current);
+        self.push_cloud_settings_raw(&merged).await
+    }
+
+    /// Typed view of the player's settings for UI/capture-meta. Prefers the cloud
+    /// (authoritative); falls back to local files if the cloud is unreachable.
+    pub async fn get_player_settings(&self) -> Result<PlayerSettingsResponse, String> {
+        match self.fetch_cloud_settings_raw().await {
+            Ok(raw) => {
+                let data: PlayerSettingsData = serde_json::from_value(raw)
+                    .map_err(|e| format!("settings typed parse error: {}", e))?;
+                Ok(PlayerSettingsResponse {
+                    data,
+                    modified: 0,
+                    settings_type: "Ares.PlayerSettings".to_string(),
+                })
+            }
+            Err(e) => {
+                tracing::debug!("[get_player_settings] cloud failed ({}), trying local", e);
+                self.get_player_settings_local()
+            }
+        }
+    }
+
+    /// Read settings from the local plaintext config files (fallback only — the
+    /// game ignores these on launch; cloud is authoritative).
+    ///   %LOCALAPPDATA%\VALORANT\Saved\Config\<puuid>-<region>\
+    ///     Windows\RiotUserSettings.ini      -> sensitivity / crosshair / audio
+    ///     WindowsClient\BackupKeybinds.json  -> keybinds (actionMappings)
+    pub fn get_player_settings_local(&self) -> Result<PlayerSettingsResponse, String> {
+        let dir = self
+            .resolve_valorant_config_dir()
+            .ok_or_else(|| "Could not locate VALORANT config folder".to_string())?;
+
+        let ini_path = dir.join("Windows").join("RiotUserSettings.ini");
+        let ini = std::fs::read_to_string(&ini_path)
+            .map_err(|e| format!("Failed to read {}: {}", ini_path.display(), e))?;
+
+        let mut data = PlayerSettingsData {
+            action_mappings: Vec::new(),
+            bool_settings: Vec::new(),
+            float_settings: Vec::new(),
+            int_settings: Vec::new(),
+            string_settings: Vec::new(),
+            roaming_settings_version: 0,
+        };
+
+        for line in ini.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("LocalSettingsVersion=") {
+                data.roaming_settings_version = rest.trim().parse().unwrap_or(0);
+                continue;
+            }
+            // Each setting line is "EAres<Kind>SettingName::Name=value".
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.starts_with("EAres") {
+                continue;
+            }
+            let key = key.to_string();
+            if key.starts_with("EAresBoolSettingName::") {
+                data.bool_settings.push(BoolSetting {
+                    setting_enum: key,
+                    value: value.eq_ignore_ascii_case("true"),
+                });
+            } else if key.starts_with("EAresFloatSettingName::") {
+                data.float_settings.push(FloatSetting {
+                    setting_enum: key,
+                    value: value.parse().unwrap_or(0.0),
+                });
+            } else if key.starts_with("EAresIntSettingName::") {
+                data.int_settings.push(IntSetting {
+                    setting_enum: key,
+                    value: value.parse().unwrap_or(0),
+                });
+            } else if key.starts_with("EAresStringSettingName::") {
+                data.string_settings.push(StringSetting {
+                    setting_enum: key,
+                    value: value.to_string(),
+                });
+            }
+        }
+
+        // Keybinds live in a separate JSON file.
+        let keybinds_path = dir.join("WindowsClient").join("BackupKeybinds.json");
+        if let Ok(raw) = std::fs::read_to_string(&keybinds_path) {
+            if let Ok(kb) = serde_json::from_str::<KeybindsFile>(&raw) {
+                data.action_mappings = kb.action_mappings;
+            }
+        }
+
+        let modified = std::fs::metadata(&ini_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        tracing::info!(
+            "[get_player_settings] Read {} float / {} bool / {} int / {} string / {} keybinds from {}",
+            data.float_settings.len(),
+            data.bool_settings.len(),
+            data.int_settings.len(),
+            data.string_settings.len(),
+            data.action_mappings.len(),
+            ini_path.display()
+        );
+
+        Ok(PlayerSettingsResponse {
+            data,
+            modified,
+            settings_type: "Ares.PlayerSettings".to_string(),
+        })
+    }
+
+    /// Locate the active account's VALORANT config folder. Prefers the folder
+    /// matching the current puuid; otherwise falls back to the most recently
+    /// modified `<id>-<region>` folder that has a RiotUserSettings.ini.
+    fn resolve_valorant_config_dir(&self) -> Option<PathBuf> {
+        let base = PathBuf::from(std::env::var("LOCALAPPDATA").ok()?)
+            .join("VALORANT")
+            .join("Saved")
+            .join("Config");
+
+        let puuid = self.puuid.read().clone();
+        let entries = std::fs::read_dir(&base).ok()?;
+
+        let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let ini = path.join("Windows").join("RiotUserSettings.ini");
+            if !ini.exists() {
+                continue;
+            }
+            // Exact puuid match wins immediately.
+            if !puuid.is_empty() && name.starts_with(&puuid) {
+                return Some(path);
+            }
+            let mtime = std::fs::metadata(&ini)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+                best = Some((mtime, path));
+            }
+        }
+        best.map(|(_, p)| p)
     }
 
     /// Get presences from local chat API - returns puuid -> party_id map

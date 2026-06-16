@@ -449,3 +449,88 @@ pub struct ChatParticipant {
     pub puuid: String,
     pub region: String,
 }
+
+// ===== Player Settings (Ares.PlayerSettings) =====
+// Local endpoint: GET /player-preferences/v1/data-json/Ares.PlayerSettings
+// Auth: Basic (lockfile) - same as chat endpoints.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerSettingsResponse {
+    pub data: PlayerSettingsData,
+    #[serde(default)]
+    pub modified: i64,
+    #[serde(rename = "type", default)]
+    pub settings_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerSettingsData {
+    #[serde(rename = "actionMappings", default)]
+    pub action_mappings: Vec<ActionMapping>,
+    #[serde(rename = "boolSettings", default)]
+    pub bool_settings: Vec<BoolSetting>,
+    #[serde(rename = "floatSettings", default)]
+    pub float_settings: Vec<FloatSetting>,
+    #[serde(rename = "intSettings", default)]
+    pub int_settings: Vec<IntSetting>,
+    #[serde(rename = "stringSettings", default)]
+    pub string_settings: Vec<StringSetting>,
+    #[serde(rename = "roamingSetttingsVersion", default)]
+    pub roaming_settings_version: i64,
+}
+
+/// Shape of WindowsClient/BackupKeybinds.json (keybinds are stored locally,
+/// separate from the cloud roaming settings).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindsFile {
+    #[serde(rename = "actionMappings", default)]
+    pub action_mappings: Vec<ActionMapping>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionMapping {
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(rename = "bindIndex", default)]
+    pub bind_index: i64,
+    #[serde(rename = "characterName", default)]
+    pub character_name: String,
+    #[serde(default)]
+    pub cmd: bool,
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub shift: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoolSetting {
+    #[serde(rename = "settingEnum")]
+    pub setting_enum: String,
+    pub value: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FloatSetting {
+    #[serde(rename = "settingEnum")]
+    pub setting_enum: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntSetting {
+    #[serde(rename = "settingEnum")]
+    pub setting_enum: String,
+    pub value: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StringSetting {
+    #[serde(rename = "settingEnum")]
+    pub setting_enum: String,
+    pub value: String,
+}

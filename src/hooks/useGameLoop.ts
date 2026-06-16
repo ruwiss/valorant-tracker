@@ -1,150 +1,90 @@
-﻿import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
-import type { GameState } from "../lib/types";
-
-const MAX_RECONNECT_DURATION = 30000;
-const PROCESS_CHECK_INTERVAL = 3000; // Check if game process is alive every 3s
+import { invokeCommand } from "../utils/ipc";
+import type { ConnectionEvent, GameState } from "../lib/types";
 
 /**
- * Event-based game loop hook that manages:
- * - Subscribing to Rust 'game_state_changed' events
- * - Background game process checking
- * - Window focus listener for health checks
+ * Event-driven game loop. The backend supervisor OWNS the connection lifecycle
+ * (connect, watch, self-reconnect, autolock); this hook is a thin consumer:
+ *  - subscribes to `connection_changed` and `game_state_changed` events
+ *  - pushes persisted settings to the (fresh) backend on startup
+ *  - does a one-shot initial sync so the UI renders immediately
  */
 export function useGameLoop() {
-  const { initialize, setGameState, status, checkGameProcess } = useGameStore();
-  const { registerHotkey, restoreWindowPosition, saveCurrentPosition, syncAutoLockDelay } = useSettingsStore();
+  const { setGameState, applyConnectionEvent, pushSettingsToBackend } = useGameStore();
+  const { registerHotkey, restoreWindowPosition, syncAutoLockDelay } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
 
-  const positionInitialized = useRef(false);
-
   useEffect(() => {
-    // 1. Initialize core state
-    syncAutoLockDelay();
-    const state = useGameStore.getState();
-    if (state.status === 'RECONNECTING') {
-      console.warn("[GameLoop] Starting from RECONNECTING state, attempting re-init");
-      initialize();
-    } else if (state.status !== 'PAUSED') {
-      initialize();
-    }
-
+    // 1. One-time setup: assets, constants, window, hotkey, autolock delay.
     loadAssets();
     loadConstants();
-
-    // Set initial position
-    if (!positionInitialized.current) {
-      restoreWindowPosition();
-      positionInitialized.current = true;
-    }
-
-    // Setup hotkey
+    restoreWindowPosition();
     registerHotkey();
+    syncAutoLockDelay();
 
-    // Setup window focus listener (for health checks)
-    const setupFocusListener = async () => {
+    // 2. Push persisted settings (autolock + pause intent) to the backend,
+    //    which starts with an empty AppState on each launch.
+    pushSettingsToBackend();
+
+    // 3. Subscribe to backend events.
+    const setupConnectionListener = () =>
+      listen<ConnectionEvent>("connection_changed", (event) => {
+        useGameStore.getState().applyConnectionEvent(event.payload);
+      });
+
+    const setupStateListener = () =>
+      listen<GameState>("game_state_changed", (event) => {
+        useGameStore.getState().setGameState(event.payload);
+      });
+
+    const setupOverlayListener = () =>
+      listen("show-overlay", async () => {
+        const win = getCurrentWindow();
+        if (!(await win.isVisible())) await win.show();
+        if (await win.isMinimized()) await win.unminimize();
+        await win.setFocus();
+      });
+
+    // 4. Initial sync - render correct state without waiting for the next event.
+    const initialSync = async () => {
       try {
-        const window = getCurrentWindow();
-        return await window.onFocusChanged(({ payload: focused }) => {
-          if (focused) {
-            console.log("[GameLoop] Window focused, running health check");
-            const currentState = useGameStore.getState();
-            if (currentState.status === 'CONNECTED') {
-              currentState.healthCheck();
-            }
-          }
+        const conn = await invokeCommand<ConnectionEvent>("get_connection_status", undefined, {
+          suppressErrorToast: true,
         });
+        if (conn) applyConnectionEvent(conn);
+
+        const gs = await invokeCommand<GameState>("get_game_state", undefined, {
+          suppressErrorToast: true,
+        });
+        if (gs) setGameState(gs);
       } catch (e) {
-        console.error("[GameLoop] Failed to setup focus listener:", e);
+        console.debug("[GameLoop] Initial sync skipped:", e);
       }
     };
-    
-    // Setup event listener for Game State Changes from Rust (Event-Based Architecture)
-    const setupStateListener = async () => {
-      try {
-        return await listen<GameState>("game_state_changed", (event) => {
-          // This fires ONLY when the backend detects a state change
-          console.debug("[GameLoop] Received game_state_changed event", event.payload.state);
-          setGameState(event.payload);
-        });
-      } catch (e) {
-        console.error("[GameLoop] Failed to setup state listener:", e);
-      }
-    };
 
-    const setupOverlayListener = async () => {
-        try {
-            return await listen("show-overlay", async () => {
-                console.log("[SingleInstance] Show overlay event received");
-                const win = getCurrentWindow();
-                const isVisible = await win.isVisible();
-                
-                if (!isVisible) {
-                    await win.show();
-                }
-                
-                if (await win.isMinimized()) {
-                    await win.unminimize();
-                }
-                
-                await win.setFocus();
-            });
-        } catch (e) {
-            console.error("[SingleInstance] Failed to setup show-overlay listener:", e);
-        }
-    };
-
-    let unlistenFocus: (() => void) | undefined;
+    let unlistenConnection: (() => void) | undefined;
     let unlistenState: (() => void) | undefined;
     let unlistenShowOverlay: (() => void) | undefined;
 
-    setupFocusListener().then(u => { unlistenFocus = u; });
-    setupStateListener().then(u => { unlistenState = u; });
-    setupOverlayListener().then(u => { unlistenShowOverlay = u; });
-
-    // Background process checker (to handle 'WAITING_FOR_GAME' -> connected transitions)
-    const processChecker = setInterval(() => {
-        const currentStore = useGameStore.getState();
-        // If we are not connected and not currently trying to connect, check if process started
-        if (!currentStore.isConnected() && currentStore.status !== 'CONNECTING' && currentStore.status !== 'RECONNECTING') {
-            checkGameProcess();
-        }
-    }, PROCESS_CHECK_INTERVAL);
+    setupConnectionListener().then((u) => { unlistenConnection = u; });
+    setupStateListener().then((u) => { unlistenState = u; });
+    setupOverlayListener().then((u) => { unlistenShowOverlay = u; }).catch((e) =>
+      console.error("[GameLoop] Failed to setup show-overlay listener:", e)
+    );
+    initialSync();
 
     return () => {
-      if (unlistenFocus) unlistenFocus();
+      if (unlistenConnection) unlistenConnection();
       if (unlistenState) unlistenState();
       if (unlistenShowOverlay) unlistenShowOverlay();
-      clearInterval(processChecker);
     };
-  }, [initialize, loadAssets, registerHotkey, restoreWindowPosition, saveCurrentPosition, checkGameProcess, syncAutoLockDelay]);
-
-  // Watchdog for stuck reconnection
-  useEffect(() => {
-    const watchdog = setInterval(() => {
-      const state = useGameStore.getState();
-      
-      if (state.status === "RECONNECTING") {
-        const now = Date.now();
-        const duration = now - state.reconnectStartTime;
-        
-        if (duration > MAX_RECONNECT_DURATION) {
-          console.warn('[Watchdog] Reconnection stuck, forcing disconnect');
-          // In the new state machine, we just set it to IDLE or handle it via a reset
-          useGameStore.setState({ 
-            status: "IDLE",
-          });
-        }
-      }
-    }, 5000);
-
-    return () => clearInterval(watchdog);
-  }, [status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
-

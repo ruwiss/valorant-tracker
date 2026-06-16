@@ -5492,6 +5492,7 @@ name = "valorant-tracker"
 version = "1.6.6"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "futures-util",
  "hex",
  "once_cell",

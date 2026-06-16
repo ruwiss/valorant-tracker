@@ -26,8 +26,10 @@ pub struct AppState {
     // Cache for player loadouts - puuid -> skins
     pub cached_loadouts: RwLock<HashMap<String, PlayerSkinData>>,
     pub loadouts_match_id: RwLock<Option<String>>,
-    // Track if background autolock worker is running
-    pub autolock_worker_started: RwLock<bool>,
+    // Track if the background connection supervisor (connect + watch + reconnect + autolock) is running
+    pub supervisor_started: RwLock<bool>,
+    // User paused match watching - supervisor stops polling/autolock while true
+    pub is_paused: RwLock<bool>,
     // Debounce: consecutive idle responses needed before transitioning from pregame/ingame to idle
     pub consecutive_idle_count: RwLock<u32>,
     // Last known game state for debounce logic
@@ -41,6 +43,19 @@ pub struct AppState {
     pub current_match_id: RwLock<Option<String>>,
     pub current_match_players: RwLock<HashMap<String, EncounterPlayer>>,
     pub current_match_seen_ingame: RwLock<bool>,
+
+    // Settings presets store. Lazy-initialized in setup() once app_data_dir is known.
+    pub presets: RwLock<Option<Arc<crate::presets::PresetStore>>>,
+    // A preset "armed" to auto-apply on the next fresh connection (next game
+    // launch / account login). Holds (preset_id, make_backup, backup_label).
+    pub armed_preset: RwLock<Option<crate::state::ArmedPreset>>,
+}
+
+#[derive(Clone)]
+pub struct ArmedPreset {
+    pub id: String,
+    pub make_backup: bool,
+    pub backup_label: String,
 }
 
 impl AppState {
@@ -60,7 +75,8 @@ impl AppState {
             fetched_history_players: RwLock::new(HashSet::new()),
             cached_loadouts: RwLock::new(HashMap::new()),
             loadouts_match_id: RwLock::new(None),
-            autolock_worker_started: RwLock::new(false),
+            supervisor_started: RwLock::new(false),
+            is_paused: RwLock::new(false),
             consecutive_idle_count: RwLock::new(0),
             last_known_state: RwLock::new("idle".to_string()),
             map_agent_preferences: Arc::new(RwLock::new(HashMap::new())),
@@ -69,6 +85,9 @@ impl AppState {
             current_match_id: RwLock::new(None),
             current_match_players: RwLock::new(HashMap::new()),
             current_match_seen_ingame: RwLock::new(false),
+
+            presets: RwLock::new(None),
+            armed_preset: RwLock::new(None),
         }
     }
 }

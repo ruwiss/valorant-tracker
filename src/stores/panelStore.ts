@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import type { PlayerData } from "../lib/types";
+import type { PlayerData, CrosshairLayer } from "../lib/types";
 
 type PanelType = "settings" | "player" | "stats" | null;
 
@@ -29,12 +29,18 @@ export interface HoveredAgent {
   };
 }
 
+export interface HoveredCrosshair {
+  name: string;
+  layer: CrosshairLayer;
+}
+
 interface PanelStore {
   isOpen: boolean;
   panelType: PanelType;
   selectedPlayer: PlayerData | null;
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
+  hoveredCrosshair: HoveredCrosshair | null;
 
   openSettings: () => Promise<void>;
   openPlayer: (player: PlayerData) => Promise<void>;
@@ -42,6 +48,7 @@ interface PanelStore {
   close: () => Promise<void>;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
   setHoveredAgent: (agent: HoveredAgent | null) => void;
+  setHoveredCrosshair: (crosshair: HoveredCrosshair | null) => void;
 }
 
 async function resizeWindow(expanded: boolean) {
@@ -81,6 +88,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
+  hoveredCrosshair: null,
 
   openSettings: async () => {
     const wasOpen = get().isOpen;
@@ -129,7 +137,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   close: async () => {
-    set({ isOpen: false, panelType: null, selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
+    set({ isOpen: false, panelType: null, selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null, hoveredCrosshair: null });
     // Wait for exit animation or state update to clear
     await new Promise(resolve => setTimeout(resolve, 300));
     await resizeWindow(false);
@@ -141,5 +149,9 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   setHoveredAgent: (agent) => {
     set({ hoveredAgent: agent });
+  },
+
+  setHoveredCrosshair: (crosshair) => {
+    set({ hoveredCrosshair: crosshair });
   },
 }));

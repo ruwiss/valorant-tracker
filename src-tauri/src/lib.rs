@@ -2,6 +2,7 @@ mod api;
 mod commands;
 mod constants;
 mod logger;
+mod presets;
 mod single_instance;
 mod state;
 
@@ -60,6 +61,10 @@ pub fn run() -> RunResult {
             commands::set_auto_lock_delay,
             commands::get_auto_lock_delay,
             commands::set_map_preferences,
+            commands::pause_watching,
+            commands::resume_watching,
+            commands::reconnect,
+            commands::get_connection_status,
             commands::get_player_loadout,
             commands::get_chat_messages,
             commands::get_active_conversations,
@@ -70,6 +75,17 @@ pub fn run() -> RunResult {
             commands::get_cached_image,
             commands::get_tracker_stats,
             commands::get_peak_rank,
+            commands::get_player_settings,
+            commands::capture_player_settings,
+            commands::list_presets,
+            commands::delete_preset,
+            commands::apply_preset,
+            commands::rename_preset,
+            commands::arm_preset,
+            commands::disarm_preset,
+            commands::get_armed_preset,
+            commands::get_game_running,
+            commands::get_preset_crosshairs,
             // License commands
             commands::get_machine_id,
             commands::get_license_request_data,
@@ -90,8 +106,22 @@ pub fn run() -> RunResult {
             let log_dir = app.path().app_log_dir().expect("Failed to get log dir");
             logger::init_logger(log_dir);
 
+            // Initialize the settings-preset store from the app data dir.
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let store =
+                    presets::PresetStore::load(presets::presets_path(&data_dir));
+                *app.state::<AppState>().presets.write() = Some(Arc::new(store));
+            } else {
+                tracing::error!("[Presets] Could not resolve app_data_dir; presets disabled");
+            }
+
             // Start the named pipe server to listen for signals from other instances
             single_instance::start_pipe_server(app.handle().clone(), shutdown_flag.clone());
+
+            // Start the connection supervisor: it owns the whole connection
+            // lifecycle (connect, watch, self-reconnect, autolock) and emits
+            // `connection_changed` / `game_state_changed` events to the frontend.
+            commands::start_supervisor(app.handle().clone());
 
             #[cfg(debug_assertions)]
             {

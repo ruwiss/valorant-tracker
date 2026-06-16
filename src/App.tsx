@@ -6,6 +6,7 @@ import { IngameState } from "./components/IngameState";
 import { SidePanel } from "./components/SidePanel";
 import { WeaponOverlay } from "./components/WeaponOverlay";
 import { AgentOverlay } from "./components/AgentOverlay";
+import { CrosshairOverlay } from "./components/CrosshairOverlay";
 import { ChatPanel } from "./components/Chat/ChatPanel";
 import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -17,7 +18,7 @@ function App() {
   const { gameState } = useGameStore();
   const { windowStyle } = useSettingsStore();
 
-  // Initialize game loop (polling, watchdog, listeners)
+  // Subscribe to backend connection/game-state events (backend owns the loop)
   useGameLoop();
 
   // Disable context menu (right-click) globally
@@ -57,6 +58,9 @@ function App() {
 
         {/* Agent hover overlay for settings */}
         <AgentOverlay />
+
+        {/* Crosshair hover preview for presets */}
+        <CrosshairOverlay />
       </div>
 
       {/* Side panel */}

@@ -9,6 +9,7 @@ import { COMPETITIVE_MAPS, CompetitiveMap, MAP_METADATA } from "../lib/maps";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
+import { PresetsTab } from "./PresetsTab";
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
 const BLOCKED_KEYS = ["Escape", "Tab", "CapsLock", "Enter", "Backspace", "Space"];
@@ -33,7 +34,7 @@ function buildHotkeyString(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-type Tab = "autolock" | "general";
+type Tab = "autolock" | "presets" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
@@ -135,23 +136,31 @@ export function SettingsPanel() {
   return (
     <div className="flex flex-col h-full bg-dark/40 backdrop-blur-md">
       {/* Tabs */}
-      <div className="flex p-2 gap-2 border-b border-white/5 bg-white/2">
+      <div className="flex p-2 gap-1 border-b border-white/5 bg-white/2">
         <button
           onClick={() => setActiveTab("autolock")}
-          className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all duration-300 ${activeTab === "autolock" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
+          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "autolock" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
         >
-          {locale === "tr" ? "Ajan Seçimi" : "Agent Select"}
+          {locale === "tr" ? "Ajan" : "Agent"}
+        </button>
+        <button
+          onClick={() => setActiveTab("presets")}
+          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "presets" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
+        >
+          {t("presets.tab")}
         </button>
         <button
           onClick={() => setActiveTab("general")}
-          className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all duration-300 ${activeTab === "general" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
+          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "general" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
         >
           {t("settings.title")}
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 selection:bg-accent-cyan/30">
-        {activeTab === "autolock" ? (
+        {activeTab === "presets" ? (
+          <PresetsTab />
+        ) : activeTab === "autolock" ? (
           /* Agent Selection Tab - Map-based */
           <div className="flex flex-col h-full">
             {/* Global Default Section */}
