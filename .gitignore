@@ -6,6 +6,8 @@
 **/gen/
 **/out/
 release_output/
+# Discord RPC source images (uploaded to Discord portal, not needed in repo)
+discord_assets/
 
 # Logs
 logs

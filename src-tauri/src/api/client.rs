@@ -1258,6 +1258,55 @@ impl ValorantAPI {
         party_map
     }
 
+    /// Read our OWN presence to extract the live round score. The GLZ match
+    /// endpoints do not expose the score, but the Riot client publishes it in
+    /// our private presence as partyOwnerMatchScoreAllyTeam/EnemyTeam.
+    /// Returns (ally_score, enemy_score), each None if unavailable/not ingame.
+    pub async fn get_my_presence_score(&self) -> (Option<i32>, Option<i32>) {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let my_puuid = self.puuid.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v4/presences", port);
+
+        let resp = match self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return (None, None),
+        };
+
+        if let Ok(data) = resp.json::<PresencesResponse>().await {
+            for p in data.presences {
+                if p.puuid != my_puuid {
+                    continue;
+                }
+                if let Some(private_b64) = p.private {
+                    if let Ok(decoded) = STANDARD.decode(&private_b64) {
+                        if let Ok(json_str) = String::from_utf8(decoded) {
+                            if let Ok(pd) =
+                                serde_json::from_str::<PresencePrivate>(&json_str)
+                            {
+                                // Only trust the score while actually ingame.
+                                if pd.session_loop_state.as_deref() == Some("INGAME") {
+                                    return (
+                                        pd.party_owner_match_score_ally_team,
+                                        pd.party_owner_match_score_enemy_team,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        (None, None)
+    }
+
     /// Get my party info - returns (party_id, member_puuids)
     pub async fn get_my_party(&self) -> (Option<String>, Vec<String>) {
         let puuid = self.puuid.read().clone();

@@ -38,7 +38,7 @@ type Tab = "autolock" | "presets" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
@@ -349,6 +349,20 @@ export function SettingsPanel() {
                   {t("settings.windowStyleDocked")}
                 </button>
               </div>
+            </div>
+
+            {/* Discord Rich Presence */}
+            <div>
+              <label className="text-[10px] text-dim block mb-1.5">{t("settings.discordRpc")}</label>
+              <div className="flex gap-1.5">
+                <button onClick={() => setDiscordRpcEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${discordRpcEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.on")}
+                </button>
+                <button onClick={() => setDiscordRpcEnabled(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!discordRpcEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.off")}
+                </button>
+              </div>
+              <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.discordRpcDesc")}</p>
             </div>
 
             {/* Hotkey */}

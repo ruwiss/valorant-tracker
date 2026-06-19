@@ -17,7 +17,7 @@ import type { ConnectionEvent, GameState } from "../lib/types";
  */
 export function useGameLoop() {
   const { setGameState, applyConnectionEvent, pushSettingsToBackend } = useGameStore();
-  const { registerHotkey, restoreWindowPosition, syncAutoLockDelay } = useSettingsStore();
+  const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
 
@@ -28,6 +28,7 @@ export function useGameLoop() {
     restoreWindowPosition();
     registerHotkey();
     syncAutoLockDelay();
+    syncDiscordRpc();
 
     // 2. Push persisted settings (autolock + pause intent) to the backend,
     //    which starts with an empty AppState on each launch.

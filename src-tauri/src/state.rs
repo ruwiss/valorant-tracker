@@ -49,6 +49,9 @@ pub struct AppState {
     // A preset "armed" to auto-apply on the next fresh connection (next game
     // launch / account login). Holds (preset_id, make_backup, backup_label).
     pub armed_preset: RwLock<Option<crate::state::ArmedPreset>>,
+
+    // Discord Rich Presence integration (mirrors map/score into Discord profile).
+    pub discord: Arc<crate::discord::DiscordPresence>,
 }
 
 #[derive(Clone)]
@@ -88,6 +91,7 @@ impl AppState {
 
             presets: RwLock::new(None),
             armed_preset: RwLock::new(None),
+            discord: Arc::new(crate::discord::DiscordPresence::new()),
         }
     }
 }

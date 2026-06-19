@@ -121,7 +121,7 @@ pub struct ConnectionStatus {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GameState {
     pub state: String, // "idle" | "pregame" | "ingame"
     pub match_id: Option<String>,
@@ -130,6 +130,9 @@ pub struct GameState {
     pub side: Option<String>,
     pub allies: Vec<PlayerData>,
     pub enemies: Vec<PlayerData>,
+    // Round score while ingame (from our own Riot presence). None in pregame/idle.
+    pub ally_score: Option<i32>,
+    pub enemy_score: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +167,11 @@ pub struct Presence {
 #[serde(rename_all = "camelCase")]
 pub struct PresencePrivate {
     pub party_id: Option<String>,
+    // Live match info exposed by the Riot client in our own presence. Used to
+    // surface the round score (the GLZ match endpoints do not include it).
+    pub session_loop_state: Option<String>, // "MENUS" | "PREGAME" | "INGAME"
+    pub party_owner_match_score_ally_team: Option<i32>,
+    pub party_owner_match_score_enemy_team: Option<i32>,
 }
 
 // Party types

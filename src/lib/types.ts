@@ -37,6 +37,8 @@ export interface GameState {
   side: string | null;
   allies: PlayerData[];
   enemies: PlayerData[];
+  ally_score: number | null;
+  enemy_score: number | null;
 }
 
 export interface ChatMessage {

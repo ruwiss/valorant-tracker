@@ -504,7 +504,7 @@ checksum = "d38f2da7a0a2c4ccf0065be06397cc26a81f4e528be095826eee9d4adbb8c60f"
 dependencies = [
  "byteorder",
  "fnv",
- "uuid",
+ "uuid 1.19.0",
 ]
 
 [[package]]
@@ -887,6 +887,21 @@ dependencies = [
  "option-ext",
  "redox_users",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "discord-rich-presence"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90c55d69cab17c19677ce3a5f8face993a9e6eaf847fecac3547f3a3ff4a2494"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_repr",
+ "thiserror 2.0.17",
+ "uuid 0.8.2",
 ]
 
 [[package]]
@@ -3812,7 +3827,7 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
- "uuid",
+ "uuid 1.19.0",
 ]
 
 [[package]]
@@ -4555,7 +4570,7 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "url",
- "uuid",
+ "uuid 1.19.0",
  "walkdir",
 ]
 
@@ -4816,7 +4831,7 @@ dependencies = [
  "toml 0.9.10+spec-1.1.0",
  "url",
  "urlpattern",
- "uuid",
+ "uuid 1.19.0",
  "walkdir",
 ]
 
@@ -5477,6 +5492,15 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom 0.2.16",
+]
+
+[[package]]
+name = "uuid"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
@@ -5489,9 +5513,10 @@ dependencies = [
 
 [[package]]
 name = "valorant-tracker"
-version = "1.6.9"
+version = "1.7.0"
 dependencies = [
  "base64 0.22.1",
+ "discord-rich-presence",
  "flate2",
  "futures-util",
  "hex",
@@ -5518,7 +5543,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "urlencoding",
- "uuid",
+ "uuid 1.19.0",
  "windows 0.58.0",
  "winreg",
 ]
@@ -6502,7 +6527,7 @@ dependencies = [
  "serde_repr",
  "tracing",
  "uds_windows",
- "uuid",
+ "uuid 1.19.0",
  "windows-sys 0.61.2",
  "winnow 0.7.14",
  "zbus_macros",

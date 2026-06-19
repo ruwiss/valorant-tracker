@@ -62,6 +62,8 @@ const initialGameState: GameState = {
   side: null,
   allies: [],
   enemies: [],
+  ally_score: null,
+  enemy_score: null,
 };
 
 // Map the backend connection status string to the UI status enum.

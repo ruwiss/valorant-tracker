@@ -18,6 +18,7 @@ interface SettingsState {
   contactInfo: ContactInfo | null;
   windowStyle: WindowStyle;
   autoLockDelaySeconds: number;
+  discordRpcEnabled: boolean;
 }
 
 interface SettingsStore extends SettingsState {
@@ -38,6 +39,8 @@ interface SettingsStore extends SettingsState {
   dockWindow: () => Promise<void>;
   setAutoLockDelaySeconds: (seconds: number) => void;
   syncAutoLockDelay: () => void;
+  setDiscordRpcEnabled: (enabled: boolean) => void;
+  syncDiscordRpc: () => void;
 }
 
 const clampAutoLockDelay = (seconds: number) => {
@@ -53,6 +56,8 @@ export interface ContactInfo {
 }
 
 let isToggling = false;
+// Re-entrancy guard for hotkey (re)registration (StrictMode double-invoke safe).
+let isRegisteringHotkey = false;
 
 // Helper to position window off-screen before showing (ALWAYS LEFT)
 async function positionOffScreen(win: any) {
@@ -129,6 +134,7 @@ export const useSettingsStore = create<SettingsStore>()(
       contactInfo: null,
       windowStyle: "docked" as WindowStyle, // Default docked
       autoLockDelaySeconds: 6,
+      discordRpcEnabled: true,
 
       setAutoLockDelaySeconds: (seconds: number) => {
         const autoLockDelaySeconds = clampAutoLockDelay(seconds);
@@ -140,6 +146,16 @@ export const useSettingsStore = create<SettingsStore>()(
         const autoLockDelaySeconds = clampAutoLockDelay(get().autoLockDelaySeconds);
         set({ autoLockDelaySeconds });
         invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
+      },
+
+      setDiscordRpcEnabled: (enabled: boolean) => {
+        set({ discordRpcEnabled: enabled });
+        invokeCommand("set_discord_rpc", { enabled }).catch(console.error);
+      },
+
+      // Push the persisted Discord RPC preference to the (fresh) backend on startup.
+      syncDiscordRpc: () => {
+        invokeCommand("set_discord_rpc", { enabled: get().discordRpcEnabled }).catch(console.error);
       },
 
       fetchContactInfo: async () => {
@@ -191,16 +207,20 @@ export const useSettingsStore = create<SettingsStore>()(
       },
 
       registerHotkey: async () => {
-        const { hotkey } = get();
+        // Guard against concurrent calls (e.g. React StrictMode double-invokes
+        // the effect in dev): without it, both calls unregister, find nothing,
+        // then both register -> "HotKey already registered".
+        if (isRegisteringHotkey) return;
+        isRegisteringHotkey = true;
         try {
+          const { hotkey, toggleWindow } = get();
           // Always try to unregister first to clear any stale state
           await unregister(hotkey).catch(() => {});
-
-          const { toggleWindow } = get();
           await register(hotkey, toggleWindow);
-          console.log(`Hotkey ${hotkey} registered successfully`);
         } catch (error) {
           console.error("Failed to register hotkey:", error);
+        } finally {
+          isRegisteringHotkey = false;
         }
       },
 
@@ -227,7 +247,6 @@ export const useSettingsStore = create<SettingsStore>()(
           const { toggleWindow } = get();
           await register(hotkey, toggleWindow);
           set({ isHotkeyPaused: false });
-          console.log(`Hotkey ${hotkey} resumed`);
         } catch (error) {
           console.error("Failed to resume hotkey:", error);
         }
@@ -359,7 +378,6 @@ export const useSettingsStore = create<SettingsStore>()(
           const y = Math.round((screenHeight - winSize.height) / 2);
 
           await win.setPosition(new PhysicalPosition(x, y));
-          console.log(`Window docked to LEFT at (${x}, ${y})`);
         } catch (error) {
           console.error("Failed to dock window:", error);
         }
@@ -373,6 +391,7 @@ export const useSettingsStore = create<SettingsStore>()(
         contactInfo: state.contactInfo,
         windowStyle: state.windowStyle,
         autoLockDelaySeconds: state.autoLockDelaySeconds,
+        discordRpcEnabled: state.discordRpcEnabled,
       }),
     }
   )

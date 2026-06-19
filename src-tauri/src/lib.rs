@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod constants;
+mod discord;
 mod logger;
 mod presets;
 mod single_instance;
@@ -64,6 +65,8 @@ pub fn run() -> RunResult {
             commands::pause_watching,
             commands::resume_watching,
             commands::reconnect,
+            commands::set_discord_rpc,
+            commands::get_discord_rpc,
             commands::get_connection_status,
             commands::get_player_loadout,
             commands::get_chat_messages,

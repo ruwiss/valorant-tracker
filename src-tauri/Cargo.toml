@@ -1,6 +1,6 @@
 [package]
 name = "valorant-tracker"
-version = "1.6.9"
+version = "1.7.0"
 description = "Valorant Match Tracker"
 authors = ["omerg"]
 edition = "2021"
@@ -40,6 +40,8 @@ tauri-plugin-shell = "2.3.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-dialog = "2"
 urlencoding = "2.1"
+# Discord Rich Presence (pure-Rust IPC, no external process needed)
+discord-rich-presence = "1.1"
 
 # Windows registry and utilities
 winreg = "0.55"

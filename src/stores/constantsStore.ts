@@ -28,7 +28,6 @@ export const useConstantsStore = create<ConstantsStore>((set, get) => ({
     try {
       const data = await invokeCommand<AppConstants>("get_app_constants");
       set({ constants: data, loaded: true });
-      console.log("[ConstantsStore] Loaded constants from Rust", data);
     } catch (e) {
       console.error("[ConstantsStore] Failed to load constants:", e);
     }

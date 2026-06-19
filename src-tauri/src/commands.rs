@@ -101,6 +101,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
     let auto_lock_agent = app.state::<AppState>().auto_lock_agent.clone();
     let auto_lock_delay_ms = app.state::<AppState>().auto_lock_delay_ms.clone();
     let map_agent_preferences = app.state::<AppState>().map_agent_preferences.clone();
+    let discord = app.state::<AppState>().discord.clone();
 
     tauri::async_runtime::spawn(async move {
         tracing::info!("[Supervisor] Started (connect + watch + reconnect + autolock)");
@@ -109,6 +110,12 @@ pub fn start_supervisor(app: tauri::AppHandle) {
         let autolock_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut backoff_ms: u64 = 1000;
         const MAX_BACKOFF_MS: u64 = 10_000;
+        // Count consecutive failed (re)connect attempts. While below the
+        // threshold we keep emitting "connecting" instead of "waiting_for_game"
+        // so a brief token/lockfile hiccup mid-match does NOT wipe the live
+        // pregame/ingame panel (the frontend resets gameState on WAITING_FOR_GAME).
+        let mut consecutive_connect_failures: u32 = 0;
+        const WAITING_AFTER_FAILURES: u32 = 3;
 
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -116,6 +123,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
             // 0. Respect user pause - stop watching but keep the task alive.
             if *app.state::<AppState>().is_paused.read() {
                 emit_connection(&app, &mut last_conn_json, "paused", "");
+                discord.update(&GameState::default(), "paused");
                 continue;
             }
 
@@ -129,20 +137,38 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 match api.initialize().await {
                     Ok(status) => {
                         backoff_ms = 1000;
+                        consecutive_connect_failures = 0;
                         tracing::info!("[Supervisor] Connected (region={})", status.region);
                         emit_connection(&app, &mut last_conn_json, "connected", &status.region);
+
+                        // Force the next poll to re-emit the current game state even
+                        // if it is unchanged. The frontend may have reset its panel to
+                        // "waiting" while we were reconnecting; without this the
+                        // identical-JSON guard below would suppress the re-emit and the
+                        // UI would stay stuck on the waiting screen until a manual
+                        // refresh.
+                        last_emitted_state_json.clear();
 
                         // Fresh token just arrived. If a preset is armed, apply it
                         // now — before the game reads its settings (~46s window).
                         try_apply_armed_preset(&app).await;
                     }
                     Err(e) => {
+                        consecutive_connect_failures += 1;
                         tracing::debug!(
-                            "[Supervisor] Connect failed: {} (retry in {}ms)",
+                            "[Supervisor] Connect failed (#{}): {} (retry in {}ms)",
+                            consecutive_connect_failures,
                             e,
                             backoff_ms
                         );
-                        emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                        // Only surface "waiting_for_game" (which wipes the live panel)
+                        // once failures persist - a transient hiccup keeps "connecting".
+                        if consecutive_connect_failures >= WAITING_AFTER_FAILURES {
+                            emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                            discord.update(&GameState::default(), "waiting_for_game");
+                        } else {
+                            emit_connection(&app, &mut last_conn_json, "connecting", "");
+                        }
                         tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
                         backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
                         continue;
@@ -174,6 +200,10 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     "connected",
                     &api.region.read().to_uppercase(),
                 );
+
+                // Mirror the live state into Discord Rich Presence (no-op when
+                // the feature is disabled or Discord isn't running).
+                discord.update(&current_state, "connected");
 
                     // 3. Autolock logic (if in pregame and not already running a sequence)
                     if current_state.state == "pregame"
@@ -350,12 +380,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     if !*api.connected.read() {
         return Ok(GameState {
             state: "disconnected".into(),
-            match_id: None,
-            map_name: None,
-            mode_name: None,
-            side: None,
-            allies: vec![],
-            enemies: vec![],
+            ..Default::default()
         });
     }
 
@@ -373,12 +398,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         *api.needs_reinit.write() = true;
         return Ok(GameState {
             state: "disconnected".into(),
-            match_id: None,
-            map_name: None,
-            mode_name: None,
-            side: None,
-            allies: vec![],
-            enemies: vec![],
+            ..Default::default()
         });
     }
 
@@ -390,12 +410,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
         return Ok(GameState {
             state: "disconnected".into(),
-            match_id: None,
-            map_name: None,
-            mode_name: None,
-            side: None,
-            allies: vec![],
-            enemies: vec![],
+            ..Default::default()
         });
     }
 
@@ -563,7 +578,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     mode_name: Some(mode_name),
                     side: Some(side.into()),
                     allies,
-                    enemies: vec![],
+                    ..Default::default()
                 });
             }
         }
@@ -655,6 +670,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
             *state.consecutive_idle_count.write() = 0;
             *state.last_known_state.write() = "ingame".to_string();
 
+            // Round score is only available via our own presence, not GLZ.
+            let (ally_score, enemy_score) = api.get_my_presence_score().await;
+
             return Ok(GameState {
                 state: "ingame".into(),
                 match_id: Some(match_id),
@@ -663,6 +681,8 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 side: None,
                 allies,
                 enemies,
+                ally_score,
+                enemy_score,
             });
         }
     }
@@ -679,12 +699,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         tracing::warn!("[get_game_state] In-game session with {} network errors, returning disconnected instead of idle", network_errors);
         return Ok(GameState {
             state: "disconnected".into(),
-            match_id: None,
-            map_name: None,
-            mode_name: None,
-            side: None,
-            allies: vec![],
-            enemies: vec![],
+            ..Default::default()
         });
     }
 
@@ -707,12 +722,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
             // Return the last known state to maintain UI stability
             return Ok(GameState {
                 state: last_state.clone(),
-                match_id: None,
-                map_name: None,
-                mode_name: None,
-                side: None,
-                allies: vec![],
-                enemies: vec![],
+                ..Default::default()
             });
         }
 
@@ -739,12 +749,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
     Ok(GameState {
         state: "idle".into(),
-        match_id: None,
-        map_name: None,
-        mode_name: None,
-        side: None,
-        allies: vec![],
-        enemies: vec![],
+        ..Default::default()
     })
 }
 
@@ -873,6 +878,19 @@ pub fn resume_watching(state: State<'_, AppState>) {
 pub fn reconnect(state: State<'_, AppState>) {
     *state.api.needs_reinit.write() = true;
     tracing::info!("[Command] reconnect requested");
+}
+
+/// Enable/disable the Discord Rich Presence integration. The supervisor pushes
+/// the live state to Discord on its next tick; disabling clears it immediately.
+#[tauri::command]
+pub fn set_discord_rpc(state: State<'_, AppState>, enabled: bool) {
+    state.discord.set_enabled(enabled);
+}
+
+/// Returns whether the Discord Rich Presence integration is currently enabled.
+#[tauri::command]
+pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
+    state.discord.is_enabled()
 }
 
 /// Initial-sync helper: returns the current connection status so the frontend
