@@ -33,11 +33,19 @@ struct DiscordState {
     enabled: bool,
     /// Dedup: the last activity signature we pushed, to avoid spamming IPC.
     last_signature: String,
+    /// When we last successfully pushed (unix secs). Drives the heartbeat that
+    /// re-pushes an unchanged activity so a silently-dropped IPC socket (which
+    /// happens when the game goes fullscreen) self-heals instead of vanishing.
+    last_push_secs: i64,
     /// Match start timestamp (unix secs) for the elapsed-time display.
     match_start: Option<i64>,
     /// The match_id the current `match_start` belongs to.
     timed_match_id: Option<String>,
 }
+
+/// Re-push the activity at least this often even if nothing changed, so a
+/// dead-but-not-reported IPC connection gets noticed and re-established.
+const HEARTBEAT_SECS: i64 = 15;
 
 impl DiscordPresence {
     pub fn new() -> Self {
@@ -46,6 +54,7 @@ impl DiscordPresence {
                 client: None,
                 enabled: false,
                 last_signature: String::new(),
+                last_push_secs: 0,
                 match_start: None,
                 timed_match_id: None,
             }),
@@ -120,60 +129,83 @@ impl DiscordPresence {
 
         // Dedup identical payloads (timer changes are continuous so we exclude it
         // from the signature - Discord keeps counting from the start timestamp).
+        // BUT still re-push every HEARTBEAT_SECS even when unchanged: the IPC
+        // socket can die silently when the game grabs the screen, and without a
+        // periodic re-push the presence would just vanish until the next state
+        // change. The heartbeat makes it self-heal.
+        let now = now_secs();
         let signature = format!("{details}|{state_line}|{image_key}");
-        if signature == st.last_signature {
-            return;
-        }
-
-        if !Self::ensure_connected(&mut st) {
+        let unchanged = signature == st.last_signature;
+        if unchanged && now - st.last_push_secs < HEARTBEAT_SECS {
             return;
         }
 
         let match_start = st.match_start;
-        let ok = {
-            let client = st.client.as_mut().unwrap();
-            // Hover text is always "VALORANT" (the map name already shows in
-            // `details`); the small logo brands the presence.
-            let assets = activity::Assets::new()
-                .large_image(&image_key)
-                .large_text(DEFAULT_LARGE_TEXT)
-                .small_image(DEFAULT_LARGE_IMAGE)
-                .small_text(DEFAULT_LARGE_TEXT);
 
-            let mut act = activity::Activity::new().assets(assets);
-
-            // Discord rejects empty state/details (must be >= 2 chars), so only
-            // attach them when non-empty.
-            if !details.is_empty() {
-                act = act.details(&details);
+        // Try to push; if the socket is dead, reconnect once and retry in the
+        // same tick so a drop costs zero visible downtime.
+        let mut pushed = false;
+        for attempt in 0..2 {
+            if !Self::ensure_connected(&mut st) {
+                break; // Discord not running / app id unset.
             }
-            if !state_line.is_empty() {
-                act = act.state(&state_line);
-            }
-
-            let ts;
-            if let Some(start) = match_start {
-                ts = activity::Timestamps::new().start(start);
-                act = act.timestamps(ts);
-            }
-
-            client.set_activity(act)
-        };
-
-        match ok {
-            Ok(_) => {
-                st.last_signature = signature;
-            }
-            Err(_) => {
-                // The socket likely dropped (Discord closed). Reset so we
-                // reconnect on the next update.
-                if let Some(client) = st.client.as_mut() {
-                    let _ = client.close();
+            let res = {
+                let client = st.client.as_mut().unwrap();
+                client.set_activity(Self::build_activity(&details, &state_line, &image_key, match_start))
+            };
+            match res {
+                Ok(_) => {
+                    pushed = true;
+                    break;
                 }
-                st.client = None;
-                st.last_signature.clear();
+                Err(_) => {
+                    // Socket likely dropped - close and let the next loop
+                    // iteration reconnect from scratch.
+                    if let Some(client) = st.client.as_mut() {
+                        let _ = client.close();
+                    }
+                    st.client = None;
+                    if attempt == 1 {
+                        // Both tries failed; reconnect on a later tick.
+                        st.last_signature.clear();
+                    }
+                }
             }
         }
+
+        if pushed {
+            st.last_signature = signature;
+            st.last_push_secs = now;
+        }
+    }
+
+    /// Build the activity payload. Discord rejects empty state/details
+    /// (must be >= 2 chars), so those are only attached when non-empty.
+    fn build_activity<'a>(
+        details: &'a str,
+        state_line: &'a str,
+        image_key: &'a str,
+        match_start: Option<i64>,
+    ) -> activity::Activity<'a> {
+        // Hover text is always "VALORANT" (the map name already shows in
+        // `details`); the small logo brands the presence.
+        let assets = activity::Assets::new()
+            .large_image(image_key)
+            .large_text(DEFAULT_LARGE_TEXT)
+            .small_image(DEFAULT_LARGE_IMAGE)
+            .small_text(DEFAULT_LARGE_TEXT);
+
+        let mut act = activity::Activity::new().assets(assets);
+        if !details.is_empty() {
+            act = act.details(details);
+        }
+        if !state_line.is_empty() {
+            act = act.state(state_line);
+        }
+        if let Some(start) = match_start {
+            act = act.timestamps(activity::Timestamps::new().start(start));
+        }
+        act
     }
 }
 
