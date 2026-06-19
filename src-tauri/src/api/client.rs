@@ -1290,13 +1290,12 @@ impl ValorantAPI {
                             if let Ok(pd) =
                                 serde_json::from_str::<PresencePrivate>(&json_str)
                             {
-                                // Only trust the score while actually ingame.
-                                if pd.session_loop_state.as_deref() == Some("INGAME") {
-                                    return (
-                                        pd.party_owner_match_score_ally_team,
-                                        pd.party_owner_match_score_enemy_team,
-                                    );
-                                }
+                                // This is only called from the coregame branch, so
+                                // we are already ingame; return the score directly.
+                                return (
+                                    pd.party_owner_match_score_ally_team,
+                                    pd.party_owner_match_score_enemy_team,
+                                );
                             }
                         }
                     }
