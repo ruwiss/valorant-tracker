@@ -11,6 +11,7 @@ export const COMPETITIVE_MAPS = [
   "Sunset",
   "Abyss",
   "Corrode",
+  "Summit",
 ] as const;
 
 export type CompetitiveMap = typeof COMPETITIVE_MAPS[number];
@@ -29,4 +30,5 @@ export const MAP_METADATA: Record<CompetitiveMap, { displayName: string; color: 
   "Sunset": { displayName: "Sunset", color: "#ff6b35" },
   "Abyss": { displayName: "Abyss", color: "#bd3fff" },
   "Corrode": { displayName: "Corrode", color: "#8b7355" },
+  "Summit": { displayName: "Summit", color: "#5da4e5" },
 };

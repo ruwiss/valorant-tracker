@@ -4,7 +4,7 @@ import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
 import { invokeCommand } from "../utils/ipc";
-import { previewLayer } from "../utils/crosshair";
+import { previewLayer, buildCrosshairCode } from "../utils/crosshair";
 import { MiniCrosshair } from "./MiniCrosshair";
 import type { PresetMeta, CrosshairProfileData } from "../lib/types";
 
@@ -24,16 +24,20 @@ function formatDate(unixSeconds: number, locale: string): string {
 
 export function PresetsTab() {
   const { t, locale } = useI18n();
-  const { presets, loading, applyingId, armedId, refresh, capture, remove, rename, arm, disarm, syncArmed } =
+  const { presets, loading, applyingId, armedId, refresh, capture, remove, rename, arm, closeAndArm, disarm, syncArmed } =
     usePresetsStore();
   const status = useGameStore((s) => s.status);
+
+  // Whether the VALORANT game process is currently running. Polled so the apply
+  // confirm can offer to close it (the game rewrites the cloud on exit, so a
+  // direct write while it runs would be lost).
+  const [gameRunning, setGameRunning] = useState(false);
 
   const setHoveredCrosshair = usePanelStore((s) => s.setHoveredCrosshair);
 
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<PresetMeta | null>(null);
-  const [makeBackup, setMakeBackup] = useState(true);
   // Crosshair accordion: which preset is expanded + its loaded profiles.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [crosshairs, setCrosshairs] = useState<CrosshairProfileData | null>(null);
@@ -49,6 +53,23 @@ export function PresetsTab() {
     refresh();
     syncArmed();
   }, [refresh, syncArmed]);
+
+  // Poll whether the game process is running, so the apply dialog reflects it.
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      const running = await invokeCommand<boolean>("get_game_running", undefined, {
+        suppressErrorToast: true,
+      });
+      if (active) setGameRunning(!!running);
+    };
+    check();
+    const interval = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   // Listen for the backend auto-applying an armed preset on game launch.
   useEffect(() => {
@@ -92,9 +113,16 @@ export function PresetsTab() {
     if (!confirmTarget) return;
     const target = confirmTarget;
     setConfirmTarget(null);
-    // Arm the preset: it auto-applies on the next game launch to whichever
-    // account signs in (fresh token), backing up that account's settings first.
-    await arm(target.id, makeBackup);
+    if (gameRunning) {
+      // Game is open: close the whole Riot stack, then arm. The supervisor
+      // re-applies on relaunch (a direct write now would be overwritten on exit).
+      await closeAndArm(target.id);
+    } else {
+      // Game is closed: arm so it auto-applies on the next launch to whichever
+      // account signs in (fresh token). The account's original settings are
+      // auto-backed-up once on the backend.
+      await arm(target.id);
+    }
   };
 
   const startRename = (p: PresetMeta) => {
@@ -128,6 +156,18 @@ export function PresetsTab() {
     );
     setLoadingXhairs(false);
     setCrosshairs(data ?? { currentProfile: 0, profiles: [] });
+  };
+
+  // Copy a profile's Valorant import code to the clipboard.
+  const copyCrosshairCode = async (prof: CrosshairProfileData["profiles"][number]) => {
+    const { toast } = await import("sonner");
+    try {
+      const code = buildCrosshairCode(previewLayer(prof));
+      await navigator.clipboard.writeText(code);
+      toast.success(t("presets.crosshairCopied"));
+    } catch {
+      toast.error(t("presets.crosshairCopyFailed"));
+    }
   };
 
   return (
@@ -279,7 +319,6 @@ export function PresetsTab() {
                           if (armedId === p.id) {
                             disarm();
                           } else {
-                            setMakeBackup(true);
                             setConfirmTarget(p);
                           }
                         }}
@@ -297,10 +336,12 @@ export function PresetsTab() {
                             <polyline points="12 7 12 12 15 14" />
                           </svg>
                         ) : (
+                          // Switch icon — applying a preset "switches" the active settings.
                           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 3v12" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <path d="M5 21h14" />
+                            <polyline points="17 3 21 7 17 11" />
+                            <path d="M21 7H7a4 4 0 0 0-4 4" />
+                            <polyline points="7 21 3 17 7 13" />
+                            <path d="M3 17h14a4 4 0 0 0 4-4" />
                           </svg>
                         )}
                       </button>
@@ -349,7 +390,9 @@ export function PresetsTab() {
                               })
                             }
                             onMouseLeave={() => setHoveredCrosshair(null)}
-                            className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-accent-cyan/10 cursor-default transition-colors"
+                            onClick={() => copyCrosshairCode(prof)}
+                            title={t("presets.copyCrosshairCode")}
+                            className="group/xh flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-accent-cyan/10 cursor-pointer transition-colors"
                           >
                             <MiniCrosshair layer={previewLayer(prof)} size={26} />
                             <span className="flex-1 min-w-0 text-[9px] text-secondary truncate">
@@ -360,6 +403,11 @@ export function PresetsTab() {
                                 {t("presets.currentProfile")}
                               </span>
                             )}
+                            {/* Copy hint — appears on hover. */}
+                            <svg className="shrink-0 w-3 h-3 text-dim/0 group-hover/xh:text-accent-cyan/70 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
                           </div>
                         ))}
                       </div>
@@ -377,21 +425,13 @@ export function PresetsTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-[300px] rounded-2xl border border-accent-cyan/20 bg-[#0a0e13] p-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <h3 className="text-[12px] font-black uppercase tracking-wide text-primary mb-2">
-              {t("presets.applyTitleArm")}
+              {gameRunning ? t("presets.applyTitleClose") : t("presets.applyTitleArm")}
             </h3>
             <p className="text-[10px] text-dim leading-relaxed mb-3">
-              {t("presets.applyBodyArm", { name: confirmTarget.name })}
+              {gameRunning
+                ? t("presets.applyBodyClose", { name: confirmTarget.name })
+                : t("presets.applyBodyArm", { name: confirmTarget.name })}
             </p>
-
-            <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={makeBackup}
-                onChange={(e) => setMakeBackup(e.target.checked)}
-                className="accent-accent-cyan w-3.5 h-3.5"
-              />
-              <span className="text-[10px] text-secondary">{t("presets.makeBackup")}</span>
-            </label>
 
             <div className="flex gap-2">
               <button
@@ -404,7 +444,7 @@ export function PresetsTab() {
                 onClick={handleConfirmApply}
                 className="flex-1 h-8 rounded text-[10px] font-bold uppercase bg-accent-cyan text-dark hover:shadow-lg hover:shadow-accent-cyan/20 transition-all"
               >
-                {t("presets.confirm")}
+                {gameRunning ? t("presets.confirmClose") : t("presets.confirm")}
               </button>
             </div>
           </div>

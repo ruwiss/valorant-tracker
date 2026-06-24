@@ -16,8 +16,11 @@ interface PresetsStore {
   capture: (name: string) => Promise<boolean>;
   remove: (id: string) => Promise<void>;
   rename: (id: string, name: string) => Promise<boolean>;
-  apply: (id: string, makeBackup: boolean) => Promise<boolean>;
-  arm: (id: string, makeBackup: boolean) => Promise<void>;
+  apply: (id: string) => Promise<boolean>;
+  arm: (id: string) => Promise<void>;
+  // Close the Riot stack (game + client) and arm the preset; it auto-applies
+  // on relaunch. Used when the game is open and a direct write is unsafe.
+  closeAndArm: (id: string) => Promise<boolean>;
   disarm: () => Promise<void>;
   syncArmed: () => Promise<void>;
 }
@@ -87,12 +90,14 @@ export const usePresetsStore = create<PresetsStore>((set, get) => ({
     }
   },
 
-  apply: async (id: string, makeBackup: boolean) => {
+  apply: async (id: string) => {
     set({ applyingId: id });
     try {
+      // Backup is automatic and one-per-account on the backend; we always pass a
+      // label so the first apply to an account can name its safety backup.
       await invokeCommand(
         "apply_preset",
-        { id, makeBackup, backupLabel: makeBackup ? backupLabel() : null },
+        { id, backupLabel: backupLabel() },
         { successMessage: t("presets.applied"), suppressErrorToast: true },
       );
       await get().refresh();
@@ -103,7 +108,6 @@ export const usePresetsStore = create<PresetsStore>((set, get) => ({
       let msg = raw;
       if (raw.includes("GAME_RUNNING")) msg = t("presets.gameRunning");
       else if (raw.includes("STALE_TOKEN")) msg = t("presets.staleToken");
-      else if (raw.startsWith("BACKUP_FAILED")) msg = t("presets.backupFailed");
       const { toast } = await import("sonner");
       toast.error(msg);
       return false;
@@ -113,13 +117,33 @@ export const usePresetsStore = create<PresetsStore>((set, get) => ({
   },
 
   // Arm a preset to auto-apply on the next game launch / account login.
-  arm: async (id: string, makeBackup: boolean) => {
+  arm: async (id: string) => {
     await invokeCommand(
       "arm_preset",
-      { id, makeBackup, backupLabel: makeBackup ? backupLabel() : null },
+      { id, backupLabel: backupLabel() },
       { successMessage: t("presets.armed") },
     );
     set({ armedId: id });
+  },
+
+  // Force-close Valorant + Riot Client, then arm the preset so it applies on the
+  // next launch. The backend kills the stack and drops tokens; the supervisor
+  // re-applies on the fresh connection.
+  closeAndArm: async (id: string) => {
+    set({ applyingId: id });
+    try {
+      await invokeCommand(
+        "close_riot_and_arm_preset",
+        { id, backupLabel: backupLabel() },
+        { successMessage: t("presets.closedAndArmed") },
+      );
+      set({ armedId: id });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      set({ applyingId: null });
+    }
   },
 
   disarm: async () => {

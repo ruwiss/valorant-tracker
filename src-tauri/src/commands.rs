@@ -68,7 +68,7 @@ async fn try_apply_armed_preset(app: &tauri::AppHandle) {
 
     tracing::info!("[ArmedPreset] Applying armed preset to fresh connection");
     let api = state.api.clone();
-    let result = run_apply(&api, &store, &preset, armed.make_backup, &armed.backup_label).await;
+    let result = run_apply(&api, &store, &preset, &armed.backup_label).await;
 
     let ev = match &result {
         Ok(_) => {
@@ -1263,15 +1263,13 @@ fn preset_store(
 /// True if the VALORANT game process (not just Riot Client) is running.
 /// Applying settings while the game is open would let the game overwrite the
 /// cloud from its in-memory state, so apply is blocked when this is true.
+///
+/// Uses the native Toolhelp snapshot (see `crate::process`) instead of parsing
+/// `tasklist`, so it answers identically regardless of Windows display language
+/// or PATH — the previous string-parse was the source of cross-machine
+/// inconsistency in when presets could be applied.
 fn is_game_running() -> bool {
-    std::process::Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq VALORANT-Win64-Shipping.exe", "/NH"])
-        .output()
-        .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout).contains("VALORANT-Win64-Shipping.exe")
-        })
-        .unwrap_or(false)
+    crate::process::is_game_running()
 }
 
 /// Whether the VALORANT game process is currently running. The frontend uses
@@ -1374,17 +1372,45 @@ pub async fn rename_preset(
     store.rename(&id, name)
 }
 
-/// Apply a preset to the currently signed-in account's cloud settings.
-/// If `make_backup` is true, the current cloud settings are first saved as an
-/// auto-backup preset (pruned to the newest 5). Blocked while the game runs.
+/// Ensure a one-time safety backup of the signed-in account's current settings
+/// exists before we overwrite them. Backup is always automatic (no user opt-in),
+/// but kept to **one per account**: the very first apply to an account snapshots
+/// its original settings; later applies skip backup so we never overwrite that
+/// snapshot with an already-modified state. No-op if a backup already exists.
+async fn ensure_account_backup(
+    api: &std::sync::Arc<crate::api::ValorantAPI>,
+    store: &std::sync::Arc<crate::presets::PresetStore>,
+    backup_label: &str,
+) -> Result<(), String> {
+    let puuid = api.puuid.read().clone();
+    // Already have the original for this account — leave it untouched.
+    if store.has_account_backup(&puuid) {
+        return Ok(());
+    }
+    let current = api.fetch_cloud_settings_raw().await?;
+    let label = if backup_label.trim().is_empty() {
+        "Backup".to_string()
+    } else {
+        backup_label.trim().to_string()
+    };
+    let backup = crate::presets::new_preset(label, puuid, true, current);
+    if let Err(e) = store.add(backup) {
+        // A failed backup shouldn't block applying; just log it.
+        tracing::warn!("[ensure_account_backup] backup failed: {}", e);
+    }
+    Ok(())
+}
+
+/// Apply a preset to the currently signed-in account's cloud settings. The
+/// account's original settings are auto-backed-up once (see
+/// [`ensure_account_backup`]). Blocked while the game runs.
 #[tauri::command]
 pub async fn apply_preset(
     state: State<'_, AppState>,
     id: String,
-    make_backup: bool,
     backup_label: Option<String>,
 ) -> Result<(), String> {
-    tracing::info!("[Command] apply_preset(id={}, make_backup={})", id, make_backup);
+    tracing::info!("[Command] apply_preset(id={})", id);
 
     if is_game_running() {
         return Err("GAME_RUNNING".into());
@@ -1393,64 +1419,20 @@ pub async fn apply_preset(
     let store = preset_store(&state)?;
     let preset = store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
 
-    // Save current cloud settings as an auto-backup before overwriting.
-    if make_backup {
-        match state.api.fetch_cloud_settings_raw().await {
-            Ok(current) => {
-                let puuid = state.api.puuid.read().clone();
-                // Frontend supplies a localized, readable label (e.g. "Yedek").
-                let label = backup_label
-                    .as_deref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("Backup")
-                    .to_string();
-                let backup = crate::presets::new_preset(label, puuid, true, current);
-                if let Err(e) = store.add(backup) {
-                    tracing::warn!("[apply_preset] backup failed: {}", e);
-                } else {
-                    let _ = store.prune_auto_backups(5);
-                }
-            }
-            Err(e) => {
-                // Don't silently apply without a backup the user asked for.
-                return Err(format!("BACKUP_FAILED:{}", e));
-            }
-        }
-    }
-
+    ensure_account_backup(&state.api, &store, backup_label.as_deref().unwrap_or("")).await?;
     state.api.apply_player_settings(&preset.data).await
 }
 
 /// Core apply routine shared by the manual command and the auto-apply hook:
-/// optionally back up the current cloud settings, then write the preset.
+/// back up the account's original settings once, then write the preset.
 /// Assumes a live connection (caller ensures tokens are fresh).
 pub async fn run_apply(
     api: &std::sync::Arc<crate::api::ValorantAPI>,
     store: &std::sync::Arc<crate::presets::PresetStore>,
     preset: &crate::presets::SettingsPreset,
-    make_backup: bool,
     backup_label: &str,
 ) -> Result<(), String> {
-    if make_backup {
-        match api.fetch_cloud_settings_raw().await {
-            Ok(current) => {
-                let puuid = api.puuid.read().clone();
-                let label = if backup_label.trim().is_empty() {
-                    "Backup".to_string()
-                } else {
-                    backup_label.trim().to_string()
-                };
-                let backup = crate::presets::new_preset(label, puuid, true, current);
-                if let Err(e) = store.add(backup) {
-                    tracing::warn!("[run_apply] backup failed: {}", e);
-                } else {
-                    let _ = store.prune_auto_backups(5);
-                }
-            }
-            Err(e) => return Err(format!("BACKUP_FAILED:{}", e)),
-        }
-    }
+    ensure_account_backup(api, store, backup_label).await?;
     api.apply_player_settings(&preset.data).await
 }
 
@@ -1462,7 +1444,6 @@ pub async fn run_apply(
 pub async fn arm_preset(
     state: State<'_, AppState>,
     id: String,
-    make_backup: bool,
     backup_label: Option<String>,
 ) -> Result<(), String> {
     // Validate the preset exists before arming.
@@ -1471,11 +1452,47 @@ pub async fn arm_preset(
 
     *state.armed_preset.write() = Some(crate::state::ArmedPreset {
         id,
-        make_backup,
         backup_label: backup_label.unwrap_or_default(),
     });
     tracing::info!("[Command] arm_preset armed");
     Ok(())
+}
+
+/// Force-close the Riot stack (game + client + Vanguard tray) and arm a preset
+/// so it auto-applies the moment the user relaunches Valorant.
+///
+/// This backs the "Uygula" button when the game is open: the game owns the
+/// in-memory settings and rewrites the cloud on exit, so we cannot safely write
+/// while it runs. Killing the client too drops our local tokens — the supervisor
+/// then re-applies the armed preset on the next fresh connection (relaunch),
+/// before the game reads its settings. Returns the number of processes killed.
+#[tauri::command]
+pub async fn close_riot_and_arm_preset(
+    state: State<'_, AppState>,
+    id: String,
+    backup_label: Option<String>,
+) -> Result<u32, String> {
+    tracing::info!("[Command] close_riot_and_arm_preset(id={})", id);
+
+    // Validate the preset exists before doing anything destructive.
+    let store = preset_store(&state)?;
+    store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+
+    // Arm first so that even if the kill races a relaunch, the preset is pending.
+    *state.armed_preset.write() = Some(crate::state::ArmedPreset {
+        id,
+        backup_label: backup_label.unwrap_or_default(),
+    });
+
+    // Kill the whole stack so the relaunch starts clean and re-issues tokens.
+    let killed = crate::process::kill_riot_stack();
+    tracing::info!("[close_riot_and_arm_preset] killed {} process(es)", killed);
+
+    // Our tokens are now invalid; force the supervisor to reconnect (and pick up
+    // the armed preset) on the next fresh connection.
+    *state.api.needs_reinit.write() = true;
+
+    Ok(killed)
 }
 
 /// Cancel a pending armed preset.

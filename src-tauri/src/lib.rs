@@ -4,6 +4,7 @@ mod constants;
 mod discord;
 mod logger;
 mod presets;
+mod process;
 mod single_instance;
 mod state;
 
@@ -85,6 +86,7 @@ pub fn run() -> RunResult {
             commands::apply_preset,
             commands::rename_preset,
             commands::arm_preset,
+            commands::close_riot_and_arm_preset,
             commands::disarm_preset,
             commands::get_armed_preset,
             commands::get_game_running,

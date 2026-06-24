@@ -156,28 +156,19 @@ impl PresetStore {
         self.persist(&guard)
     }
 
-    /// Keep only the newest `keep` auto-backup presets, deleting older ones.
-    pub fn prune_auto_backups(&self, keep: usize) -> Result<(), String> {
-        let mut guard = self.inner.lock();
-        let mut backups: Vec<(usize, i64)> = guard
+    /// True if an auto-backup already exists for this account (puuid). We keep at
+    /// most one backup per account — the original settings captured the first
+    /// time a preset was applied to it — so repeated applies don't overwrite the
+    /// user's real settings with an already-modified state.
+    pub fn has_account_backup(&self, puuid: &str) -> bool {
+        if puuid.is_empty() {
+            return false;
+        }
+        self.inner
+            .lock()
             .presets
             .iter()
-            .enumerate()
-            .filter(|(_, p)| p.auto_backup)
-            .map(|(i, p)| (i, p.created_at))
-            .collect();
-        if backups.len() <= keep {
-            return Ok(());
-        }
-        // Sort by created_at desc; drop everything past `keep`.
-        backups.sort_by(|a, b| b.1.cmp(&a.1));
-        let drop_ids: std::collections::HashSet<String> = backups
-            .into_iter()
-            .skip(keep)
-            .map(|(i, _)| guard.presets[i].id.clone())
-            .collect();
-        guard.presets.retain(|p| !drop_ids.contains(&p.id));
-        self.persist(&guard)
+            .any(|p| p.auto_backup && p.source_puuid == puuid)
     }
 }
 

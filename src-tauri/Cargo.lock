@@ -5513,7 +5513,7 @@ dependencies = [
 
 [[package]]
 name = "valorant-tracker"
-version = "1.7.0"
+version = "1.8.1"
 dependencies = [
  "base64 0.22.1",
  "discord-rich-presence",

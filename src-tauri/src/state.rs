@@ -47,7 +47,7 @@ pub struct AppState {
     // Settings presets store. Lazy-initialized in setup() once app_data_dir is known.
     pub presets: RwLock<Option<Arc<crate::presets::PresetStore>>>,
     // A preset "armed" to auto-apply on the next fresh connection (next game
-    // launch / account login). Holds (preset_id, make_backup, backup_label).
+    // launch / account login). Holds (preset_id, backup_label).
     pub armed_preset: RwLock<Option<crate::state::ArmedPreset>>,
 
     // Discord Rich Presence integration (mirrors map/score into Discord profile).
@@ -57,7 +57,6 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct ArmedPreset {
     pub id: String,
-    pub make_backup: bool,
     pub backup_label: String,
 }
 

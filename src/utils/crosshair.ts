@@ -129,3 +129,114 @@ export function drawCrosshair(
 export function previewLayer(profile: CrosshairProfile): CrosshairLayer {
   return profile.primary;
 }
+
+// ===== Valorant share-code generation =====
+//
+// Encodes a layer into the "profile code" string Valorant accepts in its
+// "Import Profile Code" box (e.g. `0;P;c;5;0l;4;0o;2`). Format reverse-
+// engineered by the community: a leading `0` version marker, a `P` (primary)
+// section marker, then flat `key;value` pairs. Inner-line keys are prefixed
+// `0`, outer-line keys `1`. Crucially, Valorant OMITS any key whose value equals
+// its default — emitting defaults can produce a non-canonical/garbled import, so
+// every field below is only pushed when it differs from the documented default.
+
+// Built-in color presets, in index order. Index 8 means "custom" (color in `u`).
+const PRESET_COLORS: ReadonlyArray<[number, number, number]> = [
+  [255, 255, 255], // 0 white (default)
+  [0, 255, 0], // 1 green
+  [127, 255, 0], // 2 yellow-green
+  [223, 255, 0], // 3 green-yellow
+  [255, 255, 0], // 4 yellow
+  [0, 255, 255], // 5 cyan
+  [255, 0, 255], // 6 pink
+  [255, 0, 0], // 7 red
+];
+
+// Format a float the way Valorant does: shortest decimal, no forced trailing
+// zeros ("1" not "1.0", "0.35" not "0.350").
+function num(n: number): string {
+  return String(Math.round(n * 1000) / 1000);
+}
+
+function hex2(n: number): string {
+  return Math.max(0, Math.min(255, Math.round(n))).toString(16).toUpperCase().padStart(2, "0");
+}
+
+function colorMatchesPreset(c: CrosshairColor): number {
+  return PRESET_COLORS.findIndex(([r, g, b]) => r === c.r && g === c.g && b === c.b);
+}
+
+// Push line-group keys for one layer (inner: prefix "0", outer: prefix "1").
+// Defaults differ between inner and outer, so they're passed in.
+function pushLines(
+  out: string[],
+  prefix: "0" | "1",
+  lines: CrosshairLayer["innerLines"],
+  defs: { show: boolean; thickness: number; length: number; offset: number; opacity: number },
+) {
+  // Turning lines off collapses the whole group to "<prefix>b;0".
+  if (lines.bShowLines !== defs.show) {
+    out.push(`${prefix}b`, lines.bShowLines ? "1" : "0");
+    if (!lines.bShowLines) return;
+  }
+  if (lines.lineThickness !== defs.thickness) out.push(`${prefix}t`, num(lines.lineThickness));
+  if (lines.lineLength !== defs.length) out.push(`${prefix}l`, num(lines.lineLength));
+  // Vertical length only meaningful (and only encodable) when unlinked.
+  if (lines.bAllowVertScaling) {
+    out.push(`${prefix}v`, num(lines.lineLengthVertical), `${prefix}g`, "1");
+  }
+  if (lines.lineOffset !== defs.offset) out.push(`${prefix}o`, num(lines.lineOffset));
+  if (lines.opacity !== defs.opacity) out.push(`${prefix}a`, num(lines.opacity));
+}
+
+/**
+ * Build a Valorant import code for a single (primary) crosshair layer.
+ * Emits only non-default keys so the result matches what Valorant itself
+ * produces. Returns a string like `0;P;c;5;0l;4`.
+ */
+export function buildCrosshairCode(layer: CrosshairLayer): string {
+  const out: string[] = [];
+
+  // Color: omit when white preset (default); emit index for other presets;
+  // emit `c;8;u;RRGGBBAA` for a custom color.
+  const color = layerColor(layer);
+  const preset = layer.bUseCustomColor ? -1 : colorMatchesPreset(color);
+  if (preset > 0) {
+    out.push("c", String(preset));
+  } else if (preset === -1) {
+    out.push("c", "8", "u", `${hex2(color.r)}${hex2(color.g)}${hex2(color.b)}${hex2(color.a)}`);
+  }
+  // preset === 0 (white) → omit entirely.
+
+  // Outlines: default ON. Only emit when off, else emit thickness/opacity diffs.
+  if (!layer.bHasOutline) {
+    out.push("h", "0");
+  } else {
+    if (layer.outlineThickness !== 1) out.push("t", num(layer.outlineThickness));
+    if (layer.outlineOpacity !== 0.5) out.push("o", num(layer.outlineOpacity));
+  }
+
+  // Center dot: default OFF. Only emit the group when on.
+  if (layer.bDisplayCenterDot) {
+    out.push("d", "1");
+    if (layer.centerDotSize !== 2) out.push("z", num(layer.centerDotSize));
+    if (layer.centerDotOpacity !== 1) out.push("a", num(layer.centerDotOpacity));
+  }
+
+  pushLines(out, "0", layer.innerLines, {
+    show: true,
+    thickness: 2,
+    length: 6,
+    offset: 3,
+    opacity: 0.8,
+  });
+  pushLines(out, "1", layer.outerLines, {
+    show: true,
+    thickness: 2,
+    length: 2,
+    offset: 10,
+    opacity: 0.35,
+  });
+
+  return ["0", "P", ...out].join(";");
+}
