@@ -4,6 +4,7 @@ import { useGameStore } from "../stores/gameStore";
 import { SettingsPanel } from "./SettingsPanel";
 import { PlayerPanel } from "./PlayerPanel";
 import { PlayerStatsPanel } from "./PlayerStatsPanel";
+import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
 
 export function SidePanel() {
@@ -40,6 +41,8 @@ export function SidePanel() {
         return t("settings.title");
       case "stats":
         return t("stats.title");
+      case "shop":
+        return t("shop.title");
       default:
         return t("player.weaponSkins");
     }
@@ -69,6 +72,7 @@ export function SidePanel() {
         {panelType === "settings" && <SettingsPanel />}
         {panelType === "player" && <PlayerPanel />}
         {panelType === "stats" && <PlayerStatsPanel />}
+        {panelType === "shop" && <ShopPanel />}
       </div>
 
       {/* Bottom accent line */}

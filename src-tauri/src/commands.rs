@@ -1693,6 +1693,109 @@ pub async fn get_peak_rank(
     }
 }
 
+/// Get the logged-in user's storefront (daily shop + optional night market).
+#[tauri::command]
+pub async fn get_storefront(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::api::types::StorefrontData>, String> {
+    use crate::api::types::*;
+    let api = &state.api;
+
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+
+    let raw = match api.get_storefront().await {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    let vp = |c: &std::collections::HashMap<String, i64>| c.get(VP_CURRENCY_ID).copied().unwrap_or(0);
+
+    let daily_offers: Vec<ShopOffer> = raw
+        .skins_panel_layout
+        .single_item_store_offers
+        .iter()
+        .map(|o| {
+            let skin = o
+                .rewards
+                .first()
+                .map(|r| r.item_id.to_lowercase())
+                .unwrap_or_default();
+            ShopOffer {
+                offer_id: o.offer_id.clone(),
+                skin_level_id: skin,
+                vp_cost: vp(&o.cost),
+            }
+        })
+        .collect();
+
+    let (night_market, nm_secs) = match &raw.bonus_store {
+        Some(bs) => {
+            let offers: Vec<NightMarketOffer> = bs
+                .bonus_store_offers
+                .iter()
+                .map(|b| {
+                    let skin = b
+                        .offer
+                        .rewards
+                        .first()
+                        .map(|r| r.item_id.to_lowercase())
+                        .unwrap_or_default();
+                    NightMarketOffer {
+                        offer_id: b.bonus_offer_id.clone(),
+                        skin_level_id: skin,
+                        vp_cost: vp(&b.offer.cost),
+                        discounted_cost: vp(&b.discount_costs),
+                        discount_percent: b.discount_percent,
+                        is_seen: b.is_seen,
+                    }
+                })
+                .collect();
+            (
+                Some(offers),
+                Some(bs.bonus_store_remaining_duration_in_seconds),
+            )
+        }
+        None => (None, None),
+    };
+
+    Ok(Some(StorefrontData {
+        daily_offers,
+        daily_remaining_seconds: raw
+            .skins_panel_layout
+            .single_item_offers_remaining_duration_in_seconds,
+        night_market,
+        night_market_remaining_seconds: nm_secs,
+    }))
+}
+
+/// Get the logged-in user's currency balances (VP / Radianite / Kingdom).
+#[tauri::command]
+pub async fn get_wallet(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::api::types::WalletData>, String> {
+    use crate::api::types::*;
+    let api = &state.api;
+
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+
+    let raw = match api.get_wallet().await {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    let bal = |id: &str| raw.balances.get(id).copied().unwrap_or(0);
+
+    Ok(Some(WalletData {
+        vp: bal(VP_CURRENCY_ID),
+        radianite: bal(RADIANITE_CURRENCY_ID),
+        kingdom: bal(KINGDOM_CURRENCY_ID),
+    }))
+}
+
 // ==================== License Commands (DEACTIVATED - APP IS FREE) ====================
 
 #[derive(serde::Serialize)]

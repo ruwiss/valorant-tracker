@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import type { PlayerData, CrosshairLayer } from "../lib/types";
 
-type PanelType = "settings" | "player" | "stats" | null;
+type PanelType = "settings" | "player" | "stats" | "shop" | null;
 
 const BASE_WIDTH = 380;
 const PANEL_WIDTH = 260;
@@ -16,6 +16,12 @@ export interface HoveredWeapon {
     name: string;
     icon: string;
   };
+  price?: {
+    vp: number;
+    discountPercent?: number;
+    discountedVp?: number;
+  };
+  tierColor?: string;
 }
 
 export interface HoveredAgent {
@@ -45,6 +51,7 @@ interface PanelStore {
   openSettings: () => Promise<void>;
   openPlayer: (player: PlayerData) => Promise<void>;
   openStats: (player: PlayerData) => Promise<void>;
+  openShop: () => Promise<void>;
   close: () => Promise<void>;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
   setHoveredAgent: (agent: HoveredAgent | null) => void;
@@ -98,6 +105,23 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       await waitForResize(targetWidth);
     }
     set({ isOpen: true, panelType: "settings", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
+  },
+
+  openShop: async () => {
+    const { isOpen, panelType } = get();
+
+    // Toggle: if shop already open, close it
+    if (isOpen && panelType === "shop") {
+      await get().close();
+      return;
+    }
+
+    if (!isOpen) {
+      const targetWidth = BASE_WIDTH + PANEL_WIDTH;
+      await resizeWindow(true);
+      await waitForResize(targetWidth);
+    }
+    set({ isOpen: true, panelType: "shop", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
   },
 
   openPlayer: async (player) => {

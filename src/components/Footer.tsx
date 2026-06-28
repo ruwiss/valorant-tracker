@@ -14,6 +14,7 @@ export function Footer() {
   const isOpen = usePanelStore((s) => s.isOpen);
   const panelType = usePanelStore((s) => s.panelType);
   const openSettings = usePanelStore((s) => s.openSettings);
+  const openShop = usePanelStore((s) => s.openShop);
   const close = usePanelStore((s) => s.close);
   const updateAvailable = useUpdateStore((s) => s.updateAvailable);
   const updateVersion = useUpdateStore((s) => s.updateVersion);
@@ -101,6 +102,17 @@ export function Footer() {
             )}
           </button>
         )}
+        <button
+          onClick={openShop}
+          className={`w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer border transition-all duration-300 shrink-0 ${isOpen && panelType === "shop" ? "text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]" : "text-dim hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"}`}
+          title={t("header.shop") || "Store"}
+        >
+          <svg className="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+            <path d="M3 6h18" />
+            <path d="M16 10a4 4 0 0 1-8 0" />
+          </svg>
+        </button>
         <button
           onClick={handleSettingsClick}
           className={`w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer border transition-all duration-300 shrink-0 ${isOpen && panelType === "settings" ? "text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]" : "text-dim hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"}`}

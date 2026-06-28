@@ -542,3 +542,104 @@ pub struct StringSetting {
     pub setting_enum: String,
     pub value: String,
 }
+
+// ---- Storefront / Shop ----
+// Currency UUIDs
+pub const VP_CURRENCY_ID: &str = "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741";
+pub const RADIANITE_CURRENCY_ID: &str = "e59aa87c-4cbf-517a-5983-6e81511be9b7";
+pub const KINGDOM_CURRENCY_ID: &str = "85ca954a-41f2-ce94-9b45-8ca3dd39a00d";
+
+// Riot raw storefront response (only the fields we need)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct StorefrontResponse {
+    pub skins_panel_layout: SkinsPanelLayout,
+    pub bonus_store: Option<BonusStore>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SkinsPanelLayout {
+    pub single_item_store_offers: Vec<StoreOffer>,
+    #[serde(rename = "SingleItemOffersRemainingDurationInSeconds")]
+    pub single_item_offers_remaining_duration_in_seconds: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct StoreOffer {
+    #[serde(rename = "OfferID")]
+    pub offer_id: String,
+    pub cost: std::collections::HashMap<String, i64>,
+    pub rewards: Vec<OfferReward>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OfferReward {
+    #[serde(rename = "ItemTypeID")]
+    #[allow(dead_code)]
+    pub item_type_id: String,
+    #[serde(rename = "ItemID")]
+    pub item_id: String,
+    #[allow(dead_code)]
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BonusStore {
+    pub bonus_store_offers: Vec<BonusOffer>,
+    #[serde(rename = "BonusStoreRemainingDurationInSeconds")]
+    pub bonus_store_remaining_duration_in_seconds: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BonusOffer {
+    #[serde(rename = "BonusOfferID")]
+    pub bonus_offer_id: String,
+    pub offer: StoreOffer,
+    pub discount_percent: i64,
+    pub discount_costs: std::collections::HashMap<String, i64>,
+    pub is_seen: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct WalletResponse {
+    pub balances: std::collections::HashMap<String, i64>,
+}
+
+// Frontend return structs (snake_case)
+#[derive(Debug, Clone, Serialize)]
+pub struct ShopOffer {
+    pub offer_id: String,
+    pub skin_level_id: String,
+    pub vp_cost: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NightMarketOffer {
+    pub offer_id: String,
+    pub skin_level_id: String,
+    pub vp_cost: i64,
+    pub discounted_cost: i64,
+    pub discount_percent: i64,
+    pub is_seen: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StorefrontData {
+    pub daily_offers: Vec<ShopOffer>,
+    pub daily_remaining_seconds: i64,
+    pub night_market: Option<Vec<NightMarketOffer>>,
+    pub night_market_remaining_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletData {
+    pub vp: i64,
+    pub radianite: i64,
+    pub kingdom: i64,
+}

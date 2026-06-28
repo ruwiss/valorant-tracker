@@ -1,6 +1,9 @@
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
 import { useState, useEffect, useRef } from "react";
+import { CachedImage } from "./CachedImage";
+
+const VP_ICON = "https://media.valorant-api.com/currencies/85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741/displayicon.png";
 
 export function WeaponOverlay() {
   const { hoveredWeapon, isOpen, panelType } = usePanelStore();
@@ -39,7 +42,7 @@ export function WeaponOverlay() {
     prevWeaponRef.current = currentKey;
   }, [hoveredWeapon?.weaponType, hoveredWeapon?.name]);
 
-  if (!hoveredWeapon || !isOpen || panelType !== "player") return null;
+  if (!hoveredWeapon || !isOpen || (panelType !== "player" && panelType !== "shop")) return null;
 
   const rgbOffset = glitchIntensity * 2;
 
@@ -52,13 +55,21 @@ export function WeaponOverlay() {
       <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
         {/* Weapon type */}
         <div className="mb-2">
-          <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-accent-cyan/60">{hoveredWeapon.weaponType}</span>
+          <span
+            className="text-[10px] font-bold uppercase tracking-[0.3em]"
+            style={{ color: hoveredWeapon.tierColor ? `${hoveredWeapon.tierColor}aa` : "rgba(0,212,170,0.6)" }}
+          >
+            {hoveredWeapon.weaponType}
+          </span>
         </div>
 
         {/* Weapon image */}
         <div className="relative w-full max-w-70 h-30 flex items-center justify-center mb-4">
-          {/* Glow effect */}
-          <div className="absolute inset-0 bg-accent-cyan/10 blur-3xl rounded-full" />
+          {/* Glow effect — tinted by rarity tier */}
+          <div
+            className="absolute inset-0 blur-3xl rounded-full"
+            style={{ background: hoveredWeapon.tierColor ? `${hoveredWeapon.tierColor}22` : "rgba(0,212,170,0.1)" }}
+          />
 
           {/* Scan line effect */}
           <div className="absolute inset-0 overflow-hidden opacity-30">
@@ -123,6 +134,29 @@ export function WeaponOverlay() {
         <h2 className="text-lg font-black text-primary tracking-wide transition-transform duration-75 ease-out" style={{ transform: isGlitching ? `translateX(${glitchIntensity * -1}px)` : "none" }}>
           {hoveredWeapon.name}
         </h2>
+
+        {/* Price (shop) */}
+        {hoveredWeapon.price && (
+          <div className="mt-3 flex items-center justify-center gap-2">
+            {hoveredWeapon.price.discountedVp != null ? (
+              <>
+                <span className="text-[12px] line-through text-dim/60 font-medium">{hoveredWeapon.price.vp.toLocaleString()}</span>
+                <span className="flex items-center gap-1.5 text-lg font-black text-accent-gold">
+                  <CachedImage src={VP_ICON} alt="" className="w-4 h-4 object-contain" />
+                  {hoveredWeapon.price.discountedVp.toLocaleString()}
+                </span>
+                {hoveredWeapon.price.discountPercent != null && hoveredWeapon.price.discountPercent > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-accent-gold/15 border border-accent-gold/40 text-[10px] font-bold text-accent-gold">-{hoveredWeapon.price.discountPercent}%</span>
+                )}
+              </>
+            ) : (
+              <span className="flex items-center gap-1.5 text-lg font-black text-accent-cyan">
+                <CachedImage src={VP_ICON} alt="" className="w-4 h-4 object-contain" />
+                {hoveredWeapon.price.vp.toLocaleString()}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Buddy section */}
         {hoveredWeapon.buddy && (

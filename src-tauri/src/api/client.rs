@@ -1606,6 +1606,69 @@ impl ValorantAPI {
         self.get_remote(&url).await
     }
 
+    /// Fetch the logged-in user's storefront (daily shop + optional night market).
+    /// Riot only returns the authenticated user's own store, so we use self puuid.
+    /// store/v3 requires POST with an empty JSON body (v2 GET was removed).
+    pub async fn get_storefront(&self) -> Option<StorefrontResponse> {
+        let puuid = self.puuid.read().clone();
+        if puuid.is_empty() {
+            tracing::warn!("[get_storefront] empty puuid");
+            return None;
+        }
+        let url = self.pd_url(&format!("/store/v3/storefront/{}", puuid));
+        let headers: HashMap<String, String> = self.remote_headers.read().clone();
+
+        let mut req = self.client.post(&url);
+        for (k, v) in headers.iter() {
+            req = req.header(k, v);
+        }
+
+        match req.json(&serde_json::json!({})).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.as_u16() == 401 || status.as_u16() == 403 {
+                    tracing::warn!("[get_storefront] auth error ({}), triggering reinit", status);
+                    *self.needs_reinit.write() = true;
+                    return None;
+                }
+                let body = resp.text().await.unwrap_or_default();
+                if !status.is_success() {
+                    tracing::warn!(
+                        "[get_storefront] HTTP {} body: {}",
+                        status,
+                        &body.chars().take(300).collect::<String>()
+                    );
+                    return None;
+                }
+                match serde_json::from_str::<StorefrontResponse>(&body) {
+                    Ok(data) => Some(data),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[get_storefront] parse error: {} | body: {}",
+                            e,
+                            &body.chars().take(500).collect::<String>()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[get_storefront] request error: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Fetch the logged-in user's currency balances (VP / Radianite / Kingdom).
+    pub async fn get_wallet(&self) -> Option<WalletResponse> {
+        let puuid = self.puuid.read().clone();
+        if puuid.is_empty() {
+            return None;
+        }
+        let url = self.pd_url(&format!("/store/v1/wallet/{}", puuid));
+        self.get_remote(&url).await
+    }
+
     /// Detect parties with player-level caching
     /// Only fetches match history for players in `players_to_fetch` (once per game session)
     /// `existing_cache` preserves party assignments from previous calls for consistency
