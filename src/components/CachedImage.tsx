@@ -1,21 +1,15 @@
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, memo, type CSSProperties, type ImgHTMLAttributes } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import clsx from "clsx";
 
-// --- Global Cache & Queue System ---
+// --- Global memory cache + concurrent download queue ---
 
-// Memory cache: URL -> base64 data
 const memoryCache = new Map<string, string>();
-
-// Track requests status
-// Map URL -> Promise (if pending)
-const pendingRequests = new Map<string, Promise<string | null>>();
-
-// Task Queue
+const pendingRequests = new Map<string, true>();
 const queue: string[] = [];
 let activeWorkers = 0;
-const MAX_CONCURRENT_WORKERS = 48; // Increased concurrency for faster loading
+const MAX_CONCURRENT_WORKERS = 48;
 
-// --- Singleton Notification System ---
 const listeners = new Map<string, ((data: string) => void)[]>();
 
 const notifyListeners = (url: string, data: string) => {
@@ -31,17 +25,11 @@ const addToQueue = (url: string) => {
     notifyListeners(url, memoryCache.get(url)!);
     return;
   }
-
-  // Prevent duplicate queueing
   if (queue.includes(url) || pendingRequests.has(url)) return;
 
-  // Mark as pending
-  // We store a dummy promise just to mark it as "in progress"
-  pendingRequests.set(url, Promise.resolve(null));
-
+  pendingRequests.set(url, true);
   queue.push(url);
 
-  // Custom process logic inside queue processing
   if (activeWorkers < MAX_CONCURRENT_WORKERS) {
     processNext();
   }
@@ -57,15 +45,13 @@ const processNext = () => {
 
   invoke<string | null>("get_cached_image", { url, checkOnly: false })
     .then((result) => {
-      // Prefer cached/base64 data; fall back to the original URL so a cache
-      // miss or download failure still paints (e.g. soft player-card banners).
+      // Prefer base64 from backend; fall back to raw URL so banners still paint.
       const resolved = result || url;
       memoryCache.set(url, resolved);
       notifyListeners(url, resolved);
     })
     .catch((e) => {
       console.error("Img Load Err:", e);
-      // Still resolve with the raw URL so silent banners don't stay blank forever.
       memoryCache.set(url, url);
       notifyListeners(url, url);
     })
@@ -75,23 +61,25 @@ const processNext = () => {
       processNext();
     });
 
-  processNext(); // Try to start more workers if possible
+  processNext();
 };
 
 // --- Component ---
 
-interface CachedImageProps {
+export interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> {
   src: string;
-  alt?: string;
-  className?: string;
-  style?: React.CSSProperties;
-  /** No shimmer skeleton while loading (for soft backgrounds). */
+  fallbackSrc?: string;
+  /** If true, only read disk cache — do not download. */
+  checkOnly?: boolean;
+  /** Hide shimmer/skeleton while loading (soft backgrounds). */
   silent?: boolean;
   /**
-   * Final opacity after the soft reveal (0–1). When set, uses a gentle fade
-   * instead of the full-opacity reveal animation (player-card banners).
+   * Final opacity (0–1) after soft reveal. When set, uses a gentle banner
+   * fade instead of the full-opacity reveal animation.
    */
   softOpacity?: number;
+  /** Extra class applied once loaded (non-soft mode). */
+  loadedClassName?: string;
 }
 
 export const CachedImage = memo(function CachedImage({
@@ -99,19 +87,29 @@ export const CachedImage = memo(function CachedImage({
   alt = "",
   className,
   style,
+  fallbackSrc,
+  checkOnly,
   silent,
   softOpacity,
+  loadedClassName,
+  ...rest
 }: CachedImageProps) {
-  // 1. Memory Cache Hit (Synchronous)
   const cached = memoryCache.get(src);
-
   const [displaySrc, setDisplaySrc] = useState<string | null>(cached || null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     if (!src) return;
 
-    // Reset state when src changes
+    let cancelled = false;
+
+    // Local / already-resolved sources skip the queue.
+    if (src.startsWith("data:") || src.startsWith("file:") || src.startsWith("/")) {
+      setDisplaySrc(src);
+      setError(false);
+      return;
+    }
+
     if (memoryCache.has(src)) {
       setDisplaySrc(memoryCache.get(src)!);
       setError(false);
@@ -121,65 +119,93 @@ export const CachedImage = memo(function CachedImage({
     setDisplaySrc(null);
     setError(false);
 
-    // Subscribe to load
+    // checkOnly: one-shot cache probe (no download queue).
+    if (checkOnly) {
+      invoke<string | null>("get_cached_image", { url: src, checkOnly: true })
+        .then((result) => {
+          if (cancelled) return;
+          if (result) {
+            memoryCache.set(src, result);
+            setDisplaySrc(result);
+          } else {
+            setDisplaySrc(fallbackSrc || null);
+            if (!fallbackSrc) setError(true);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setDisplaySrc(fallbackSrc || null);
+            if (!fallbackSrc) setError(true);
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const handler = (data: string) => {
-      setDisplaySrc(data);
+      if (!cancelled) setDisplaySrc(data);
     };
 
     if (!listeners.has(src)) {
       listeners.set(src, []);
     }
     listeners.get(src)!.push(handler);
-
-    // Trigger load
     addToQueue(src);
 
     return () => {
-      // Cleanup listener
+      cancelled = true;
       const list = listeners.get(src);
       if (list) {
         const idx = list.indexOf(handler);
         if (idx !== -1) list.splice(idx, 1);
       }
     };
-  }, [src]);
+  }, [src, checkOnly, fallbackSrc]);
 
-  // Loading State
   if (!displaySrc) {
     if (error || silent) return null;
     return (
-      <div className={`${className} bg-white/5 relative overflow-hidden`} style={{ ...style, minWidth: "100%", minHeight: "100%" }}>
+      <div
+        className={clsx(className, "bg-white/5 relative overflow-hidden")}
+        style={{ ...style, minWidth: "100%", minHeight: "100%" }}
+      >
         <div className="absolute inset-0 bg-linear-to-r from-transparent via-white/5 to-transparent shimmer-effect" />
       </div>
     );
   }
 
   const isSoft = typeof softOpacity === "number";
-  const animationName = isSoft ? "revealSoftImage" : "revealImage";
-  const animationStyle: React.CSSProperties = isSoft
+  const animationStyle: CSSProperties = isSoft
     ? {
         ...style,
-        // CSS variable drives the keyframe end opacity
         ["--soft-opacity" as string]: String(softOpacity),
-        animation: `${animationName} 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards`,
+        animation: "revealSoftImage 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards",
       }
     : {
         ...style,
-        animation: `${animationName} 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards`,
+        animation: "revealImage 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards",
       };
 
   return (
     <img
       src={displaySrc}
       alt={alt}
-      className={className}
+      className={clsx(className, !isSoft && loadedClassName)}
       style={animationStyle}
-      onError={() => setError(true)}
+      onError={() => {
+        setError(true);
+        if (fallbackSrc && displaySrc !== fallbackSrc) {
+          setDisplaySrc(fallbackSrc);
+          setError(false);
+        }
+      }}
+      {...rest}
     />
   );
 });
 
-// Add global style for reveal and shimmer
+// Global keyframes once
 if (typeof document !== "undefined" && !document.getElementById("cached-image-styles")) {
   const style = document.createElement("style");
   style.id = "cached-image-styles";
@@ -232,3 +258,5 @@ export function clearImageMemoryCache() {
   queue.length = 0;
   listeners.clear();
 }
+
+export default CachedImage;

@@ -117,11 +117,20 @@ pub fn start_supervisor(app: tauri::AppHandle) {
         let mut consecutive_connect_failures: u32 = 0;
         const WAITING_AFTER_FAILURES: u32 = 3;
 
+        // Adaptive poll interval: live match needs snappy ticks (autolock + score);
+        // menus / pause / waiting can sleep longer to cut CPU/API noise.
+        const POLL_LIVE_MS: u64 = 500; // pregame + ingame
+        const POLL_IDLE_MS: u64 = 2000; // menus / idle
+        const POLL_PAUSED_MS: u64 = 2000; // user paused watching
+        const POLL_WAITING_MS: u64 = 1500; // connecting / waiting for game
+        let mut poll_interval_ms: u64 = POLL_WAITING_MS;
+
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval_ms)).await;
 
             // 0. Respect user pause - stop watching but keep the task alive.
             if *app.state::<AppState>().is_paused.read() {
+                poll_interval_ms = POLL_PAUSED_MS;
                 emit_connection(&app, &mut last_conn_json, "paused", "");
                 discord.update(&GameState::default(), "paused");
                 continue;
@@ -133,6 +142,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
             let connected = *api.connected.read();
             let needs_reinit = *api.needs_reinit.read();
             if !connected || needs_reinit {
+                poll_interval_ms = POLL_WAITING_MS;
                 emit_connection(&app, &mut last_conn_json, "connecting", "");
                 match api.initialize().await {
                     Ok(status) => {
@@ -148,6 +158,8 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         // UI would stay stuck on the waiting screen until a manual
                         // refresh.
                         last_emitted_state_json.clear();
+                        // Next tick should be responsive so we pick up pregame ASAP.
+                        poll_interval_ms = POLL_LIVE_MS;
 
                         // Fresh token just arrived. If a preset is armed, apply it
                         // now — before the game reads its settings (~46s window).
@@ -187,6 +199,13 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         last_emitted_state_json = current_json;
                     }
                 }
+
+                // Pace the next tick from the phase we just observed.
+                poll_interval_ms = match current_state.state.as_str() {
+                    "pregame" | "ingame" => POLL_LIVE_MS,
+                    "disconnected" => POLL_WAITING_MS,
+                    _ => POLL_IDLE_MS, // idle / menus
+                };
 
                 // A disconnect detected mid-poll: reconnect on the next tick.
                 if current_state.state == "disconnected" {

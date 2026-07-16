@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CachedImage } from "./common/CachedImage";
+import { CachedImage } from "./CachedImage";
 import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
 import { useI18n } from "../lib/i18n";

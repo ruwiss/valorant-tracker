@@ -1,6 +1,5 @@
 import type { PlayerData } from "../lib/types";
-import { CachedImage as SoftCachedImage } from "./CachedImage";
-import { CachedImage } from "./common/CachedImage";
+import { CachedImage } from "./CachedImage";
 import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
 import { useI18n } from "../lib/i18n";
 import { useAssetsStore } from "../stores/assetsStore";
@@ -119,7 +118,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
                 : "opacity-[0.55] saturate-[0.7] brightness-95 group-hover/row:opacity-[0.7]"
             }`}
           >
-            <SoftCachedImage
+            <CachedImage
               src={cardBannerUrl}
               alt=""
               silent
