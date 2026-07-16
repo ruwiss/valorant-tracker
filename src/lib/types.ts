@@ -27,6 +27,8 @@ export interface PlayerData {
   previous_encounter?: number; // 1 = Last game, 2 = Two games ago
   previous_encounter_agent?: string;
   previous_encounter_was_enemy?: boolean;
+  /** Equipped player card UUID — used for soft banner art in the roster. */
+  player_card_id?: string | null;
 }
 
 export interface GameState {

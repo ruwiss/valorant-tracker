@@ -97,6 +97,7 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Player Card
     "player.level": "Lvl",
+    "player.anonymousSlot": "Player {n}",
     "player.hiddenProfile": "Hidden Profile",
     "player.copied": "Copied!",
     "player.weaponSkins": "Weapon Skins",
@@ -375,6 +376,7 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Player Card
     "player.level": "Svye",
+    "player.anonymousSlot": "{n}. Oyuncu",
     "player.hiddenProfile": "Gizli Profil",
     "player.copied": "Kopyalandı!",
     "player.weaponSkins": "Silah Skinleri",

@@ -57,12 +57,18 @@ const processNext = () => {
 
   invoke<string | null>("get_cached_image", { url, checkOnly: false })
     .then((result) => {
-      if (result) {
-        memoryCache.set(url, result);
-        notifyListeners(url, result);
-      }
+      // Prefer cached/base64 data; fall back to the original URL so a cache
+      // miss or download failure still paints (e.g. soft player-card banners).
+      const resolved = result || url;
+      memoryCache.set(url, resolved);
+      notifyListeners(url, resolved);
     })
-    .catch((e) => console.error("Img Load Err:", e)) // cache failed
+    .catch((e) => {
+      console.error("Img Load Err:", e);
+      // Still resolve with the raw URL so silent banners don't stay blank forever.
+      memoryCache.set(url, url);
+      notifyListeners(url, url);
+    })
     .finally(() => {
       activeWorkers--;
       pendingRequests.delete(url);
@@ -79,9 +85,23 @@ interface CachedImageProps {
   alt?: string;
   className?: string;
   style?: React.CSSProperties;
+  /** No shimmer skeleton while loading (for soft backgrounds). */
+  silent?: boolean;
+  /**
+   * Final opacity after the soft reveal (0–1). When set, uses a gentle fade
+   * instead of the full-opacity reveal animation (player-card banners).
+   */
+  softOpacity?: number;
 }
 
-export const CachedImage = memo(function CachedImage({ src, alt = "", className, style }: CachedImageProps) {
+export const CachedImage = memo(function CachedImage({
+  src,
+  alt = "",
+  className,
+  style,
+  silent,
+  softOpacity,
+}: CachedImageProps) {
   // 1. Memory Cache Hit (Synchronous)
   const cached = memoryCache.get(src);
 
@@ -126,7 +146,7 @@ export const CachedImage = memo(function CachedImage({ src, alt = "", className,
 
   // Loading State
   if (!displaySrc) {
-    if (error) return null;
+    if (error || silent) return null;
     return (
       <div className={`${className} bg-white/5 relative overflow-hidden`} style={{ ...style, minWidth: "100%", minHeight: "100%" }}>
         <div className="absolute inset-0 bg-linear-to-r from-transparent via-white/5 to-transparent shimmer-effect" />
@@ -134,15 +154,26 @@ export const CachedImage = memo(function CachedImage({ src, alt = "", className,
     );
   }
 
+  const isSoft = typeof softOpacity === "number";
+  const animationName = isSoft ? "revealSoftImage" : "revealImage";
+  const animationStyle: React.CSSProperties = isSoft
+    ? {
+        ...style,
+        // CSS variable drives the keyframe end opacity
+        ["--soft-opacity" as string]: String(softOpacity),
+        animation: `${animationName} 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards`,
+      }
+    : {
+        ...style,
+        animation: `${animationName} 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards`,
+      };
+
   return (
     <img
       src={displaySrc}
       alt={alt}
-      className={`${className}`}
-      style={{
-        ...style,
-        animation: "revealImage 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards",
-      }}
+      className={className}
+      style={animationStyle}
       onError={() => setError(true)}
     />
   );
@@ -161,6 +192,18 @@ if (typeof document !== "undefined" && !document.getElementById("cached-image-st
       }
       to {
         opacity: 1;
+        filter: blur(0) brightness(1);
+        transform: scale(1) translateZ(0);
+      }
+    }
+    @keyframes revealSoftImage {
+      from {
+        opacity: 0;
+        filter: blur(6px) brightness(0.7);
+        transform: scale(1.04) translateZ(0);
+      }
+      to {
+        opacity: var(--soft-opacity, 0.22);
         filter: blur(0) brightness(1);
         transform: scale(1) translateZ(0);
       }

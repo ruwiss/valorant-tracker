@@ -19,8 +19,8 @@ export function IngameState() {
         <span className="text-[10px] font-semibold text-accent-cyan">{t("ingame.allies")}</span>
       </div>
       <div className="space-y-1 mb-3">
-        {gameState.allies.map((player) => (
-          <PlayerCard key={player.puuid} player={player} />
+        {gameState.allies.map((player, i) => (
+          <PlayerCard key={player.puuid} player={player} slotIndex={i + 1} />
         ))}
       </div>
 
@@ -32,8 +32,8 @@ export function IngameState() {
         <span className="text-[10px] font-semibold text-accent-red">{t("ingame.enemies")}</span>
       </div>
       <div className="space-y-1">
-        {gameState.enemies.map((player) => (
-          <PlayerCard key={player.puuid} player={player} />
+        {gameState.enemies.map((player, i) => (
+          <PlayerCard key={player.puuid} player={player} slotIndex={i + 1} />
         ))}
       </div>
     </div>

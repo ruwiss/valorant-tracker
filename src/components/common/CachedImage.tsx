@@ -6,9 +6,21 @@ interface CachedImageProps extends ImgHTMLAttributes<HTMLImageElement> {
   src: string;
   fallbackSrc?: string;
   checkOnly?: boolean; // If true, only checks cache, doesn't download
+  /** When true, hide the pulse skeleton while loading (for soft backgrounds). */
+  silent?: boolean;
+  /** Extra opacity/transition classes applied once the image is ready. */
+  loadedClassName?: string;
 }
 
-export function CachedImage({ src, fallbackSrc, className, checkOnly, ...props }: CachedImageProps) {
+export function CachedImage({
+  src,
+  fallbackSrc,
+  className,
+  checkOnly,
+  silent,
+  loadedClassName,
+  ...props
+}: CachedImageProps) {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -61,9 +73,20 @@ export function CachedImage({ src, fallbackSrc, className, checkOnly, ...props }
   }, [src, checkOnly, fallbackSrc]);
 
   if (!imageSrc && loading) {
+    if (silent) return null;
     // Show a placeholder skeleton while loading
     return <div className={clsx("animate-pulse bg-white/5 rounded", className)} {...(props as any)} />;
   }
 
-  return <img src={imageSrc || fallbackSrc || src} className={clsx(className, "transition-opacity duration-300", loading ? "opacity-0" : "opacity-100")} {...props} />;
+  return (
+    <img
+      src={imageSrc || fallbackSrc || src}
+      className={clsx(
+        className,
+        "transition-opacity duration-500 ease-out",
+        loading ? "opacity-0" : loadedClassName || "opacity-100",
+      )}
+      {...props}
+    />
+  );
 }

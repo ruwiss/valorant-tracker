@@ -32,8 +32,11 @@ pub struct AppState {
     pub is_paused: RwLock<bool>,
     // Debounce: consecutive idle responses needed before transitioning from pregame/ingame to idle
     pub consecutive_idle_count: RwLock<u32>,
-    // Last known game state for debounce logic
+    // Last known game state string for debounce logic ("idle" | "pregame" | "ingame")
     pub last_known_state: RwLock<String>,
+    // Last full GameState snapshot (used during idle debounce so UI/Discord keep
+    // map+score instead of a blank "ingame" / 0-0 payload).
+    pub last_full_game_state: RwLock<Option<crate::api::types::GameState>>,
     pub map_agent_preferences: Arc<RwLock<HashMap<String, String>>>,
 
     // --- RECENT ENCOUNTER TRACKING ---
@@ -81,6 +84,7 @@ impl AppState {
             is_paused: RwLock::new(false),
             consecutive_idle_count: RwLock::new(0),
             last_known_state: RwLock::new("idle".to_string()),
+            last_full_game_state: RwLock::new(None),
             map_agent_preferences: Arc::new(RwLock::new(HashMap::new())),
 
             match_history: RwLock::new(VecDeque::with_capacity(2)),

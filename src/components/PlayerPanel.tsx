@@ -386,6 +386,10 @@ export function PlayerPanel() {
 	const [, rankColor] = RANK_TIERS[selectedPlayer.rank_tier] || ["", "#768079"];
 	const rankName = getLocalizedRank(selectedPlayer.rank_tier);
 
+	const cardBannerUrl = selectedPlayer.player_card_id
+		? `https://media.valorant-api.com/playercards/${selectedPlayer.player_card_id}/wideart.png`
+		: null;
+
 	// Group skins by category - lowercase keys for case-insensitive matching
 	const skinsByWeaponId = new Map(
 		skins.map((s) => [s.weapon_id.toLowerCase(), s]),
@@ -518,144 +522,170 @@ export function PlayerPanel() {
 
 	return (
 		<div className="flex flex-col h-full">
-			{/* Player Header - Compact */}
-			<div className="p-2.5 border-b border-border/50 bg-linear-to-b from-[#0d1117] to-transparent">
-				<div className="flex items-center gap-2.5">
-					{agentIcon ? (
-						<img
-							src={agentIcon}
+			{/* Player Header — card banner behind name/rank */}
+			<div className="relative overflow-hidden border-b border-border/50">
+				{cardBannerUrl && (
+					<>
+						<CachedImage
+							src={cardBannerUrl}
 							alt=""
-							className="w-10 h-10 rounded-full object-cover"
-							style={{
-								boxShadow: `0 0 12px ${agentColor}40`,
-								border: `2px solid ${agentColor}`,
-							}}
+							silent
+							softOpacity={0.48}
+							className="pointer-events-none absolute inset-0 h-full w-full object-cover object-[center_30%] select-none saturate-[0.85] brightness-95"
 						/>
-					) : (
-						<div className="w-10 h-10 rounded-full bg-card border border-border" />
-					)}
-					<div className="flex-1 min-w-0">
-						<div className="flex items-center gap-2">
-							<button
-								onClick={copyName}
-								className="text-xs font-bold text-primary hover:text-accent-cyan transition-colors truncate text-left max-w-30"
-							>
-								{selectedPlayer.name}
-							</button>
+						{/* Left-heavy wash so name stays readable; right shows more art */}
+						<div
+							className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1117]/92 via-[#0d1117]/55 to-[#0d1117]/30"
+							aria-hidden
+						/>
+						<div
+							className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#0d1117]/70"
+							aria-hidden
+						/>
+					</>
+				)}
+				{!cardBannerUrl && (
+					<div className="absolute inset-0 bg-linear-to-b from-[#0d1117] to-transparent" />
+				)}
 
-							{/* Recent Encounter Badge */}
-							{selectedPlayer.previous_encounter && (
-								<div
-									className="px-1.5 py-0.5 rounded-[4px] bg-accent-cyan/10 border border-accent-cyan/30 flex items-center gap-1 shrink-0 animate-pulse"
-									title={`${t(`player.recentEncounter${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
+				<div className="relative z-10 p-2.5">
+					<div className="flex items-center gap-2.5">
+						{agentIcon ? (
+							<img
+								src={agentIcon}
+								alt=""
+								className="w-10 h-10 rounded-full object-cover shrink-0"
+								style={{
+									boxShadow: `0 0 12px ${agentColor}40`,
+									border: `2px solid ${agentColor}`,
+								}}
+							/>
+						) : (
+							<div className="w-10 h-10 rounded-full bg-card border border-border shrink-0" />
+						)}
+						<div className="flex-1 min-w-0">
+							<div className="flex items-center gap-2">
+								<button
+									onClick={copyName}
+									className="text-xs font-bold text-primary hover:text-accent-cyan transition-colors truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
 								>
-									<div className="w-1 h-1 rounded-full bg-accent-cyan" />
-									<span className="text-[7px] font-bold text-accent-cyan uppercase tracking-tighter">
-										{`${t(`player.recentEncounterShort${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
-									</span>
+									{selectedPlayer.name}
+								</button>
+
+								{/* Recent Encounter Badge */}
+								{selectedPlayer.previous_encounter && (
+									<div
+										className="px-1.5 py-0.5 rounded-[4px] bg-accent-cyan/10 border border-accent-cyan/30 flex items-center gap-1 shrink-0 animate-pulse backdrop-blur-[2px]"
+										title={`${t(`player.recentEncounter${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
+									>
+										<div className="w-1 h-1 rounded-full bg-accent-cyan" />
+										<span className="text-[7px] font-bold text-accent-cyan uppercase tracking-tighter">
+											{`${t(`player.recentEncounterShort${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
+										</span>
+									</div>
+								)}
+
+								{/* Translate Button */}
+								<button
+									onClick={handleTranslate}
+									className={`p-1 rounded-full transition-colors ${isTranslating ? "text-accent-cyan cursor-wait" : translatedName ? "text-success cursor-default" : "text-dim hover:text-accent-cyan hover:bg-card-hover/60"}`}
+									title={translatedName ? "Translated" : "Translate Name"}
+								>
+									{isTranslating ? (
+										<svg
+											className="w-3 h-3 animate-spin"
+											viewBox="0 0 24 24"
+											fill="none"
+										>
+											<circle
+												className="opacity-25"
+												cx="12"
+												cy="12"
+												r="10"
+												stroke="currentColor"
+												strokeWidth="4"
+											></circle>
+											<path
+												className="opacity-75"
+												fill="currentColor"
+												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+											></path>
+										</svg>
+									) : (
+										<svg
+											className="w-3 h-3"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+											strokeWidth="2"
+										>
+											<path
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"
+											/>
+										</svg>
+									)}
+								</button>
+							</div>
+
+							{translatedName && (
+								<div className="text-[10px] text-accent-gold/80 italic -mt-0.5 truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+									{translatedName}
+									{detectedLang && (
+										<span className="not-italic text-dim/60 font-normal ml-1">
+											({langDisplayName(detectedLang, locale)})
+										</span>
+									)}
 								</div>
 							)}
 
-							{/* Translate Button */}
-							<button
-								onClick={handleTranslate}
-								className={`p-1 rounded-full transition-colors ${isTranslating ? "text-accent-cyan cursor-wait" : translatedName ? "text-success cursor-default" : "text-dim hover:text-accent-cyan hover:bg-card-hover"}`}
-								title={translatedName ? "Translated" : "Translate Name"}
-							>
-								{isTranslating ? (
-									<svg
-										className="w-3 h-3 animate-spin"
-										viewBox="0 0 24 24"
-										fill="none"
-									>
-										<circle
-											className="opacity-25"
-											cx="12"
-											cy="12"
-											r="10"
-											stroke="currentColor"
-											strokeWidth="4"
-										></circle>
-										<path
-											className="opacity-75"
-											fill="currentColor"
-											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-										></path>
-									</svg>
-								) : (
-									<svg
-										className="w-3 h-3"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-										strokeWidth="2"
-									>
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"
-										/>
-									</svg>
-								)}
-							</button>
-						</div>
+							{copied && (
+								<span className="text-[8px] text-success block -mt-0.5">
+									{t("player.copied")}
+								</span>
+							)}
 
-						{translatedName && (
-							<div className="text-[10px] text-accent-gold/80 italic -mt-0.5 truncate">
-								{translatedName}
-								{detectedLang && (
-									<span className="not-italic text-dim/60 font-normal ml-1">
-										({langDisplayName(detectedLang, locale)})
+							<div className="flex items-center gap-1.5 mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+								{selectedPlayer.agent && (
+									<span
+										className="text-[9px] font-semibold"
+										style={{ color: agentColor }}
+									>
+										{selectedPlayer.agent.charAt(0).toUpperCase() +
+											selectedPlayer.agent.slice(1)}
 									</span>
 								)}
-							</div>
-						)}
-
-						{copied && (
-							<span className="text-[8px] text-success block -mt-0.5">
-								{t("player.copied")}
-							</span>
-						)}
-
-						<div className="flex items-center gap-1.5 mt-0.5">
-							{selectedPlayer.agent && (
-								<span
-									className="text-[9px] font-semibold"
-									style={{ color: agentColor }}
-								>
-									{selectedPlayer.agent.charAt(0).toUpperCase() +
-										selectedPlayer.agent.slice(1)}
-								</span>
-							)}
-							{selectedPlayer.rank_tier > 0 && (
-								<span
-									className="text-[9px] font-medium"
-									style={{ color: rankColor }}
-								>
-									{rankName}
-								</span>
-							)}
-
-							{/* Peak Rank Compact Display */}
-							{peakRank && peakRank.tier > selectedPlayer.rank_tier && (
-								<>
-									<span className="text-[8px] text-dim/50">•</span>
-									<div
-										className="flex items-center gap-1"
-										title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier)}`}
+								{selectedPlayer.rank_tier > 0 && (
+									<span
+										className="text-[9px] font-medium"
+										style={{ color: rankColor }}
 									>
-										<span className="text-[8px] font-bold text-dim uppercase tracking-wider">
-											{t("player.peak")}
-										</span>
-										<span
-											className="text-[9px] font-bold"
-											style={{ color: peakRank.rank_color }}
+										{rankName}
+									</span>
+								)}
+
+								{/* Peak Rank Compact Display */}
+								{peakRank && peakRank.tier > selectedPlayer.rank_tier && (
+									<>
+										<span className="text-[8px] text-dim/50">•</span>
+										<div
+											className="flex items-center gap-1"
+											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier)}`}
 										>
-											{getLocalizedRank(peakRank.tier)}
-										</span>
-									</div>
-								</>
-							)}
+											<span className="text-[8px] font-bold text-dim uppercase tracking-wider">
+												{t("player.peak")}
+											</span>
+											<span
+												className="text-[9px] font-bold"
+												style={{ color: peakRank.rank_color }}
+											>
+												{getLocalizedRank(peakRank.tier)}
+											</span>
+										</div>
+									</>
+								)}
+							</div>
 						</div>
 					</div>
 				</div>

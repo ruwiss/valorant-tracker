@@ -1,4 +1,5 @@
 import type { PlayerData } from "../lib/types";
+import { CachedImage as SoftCachedImage } from "./CachedImage";
 import { CachedImage } from "./common/CachedImage";
 import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
 import { useI18n } from "../lib/i18n";
@@ -9,9 +10,11 @@ import { useState, useEffect } from "react";
 
 interface Props {
   player: PlayerData;
+  /** 1-based team slot (for anonymous "Player N" labels). */
+  slotIndex?: number;
 }
 
-export function PlayerCard({ player }: Props) {
+export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const { t } = useI18n();
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
@@ -35,6 +38,23 @@ export function PlayerCard({ player }: Props) {
   const stats = getStats(player.puuid);
   const loading = isLoading(player.puuid);
   const hasStats = !!stats;
+
+  // Soft player-card banner (wide art) behind the row — does not cover names.
+  // Media path is wideart.png (not wide.png) per valorant-api.
+  const cardBannerUrl = player.player_card_id
+    ? `https://media.valorant-api.com/playercards/${player.player_card_id}/wideart.png`
+    : null;
+
+  // Hidden Riot ID: backend uses agent name when known; before agent select
+  // the name is empty — match in-game "Player 1" / "1. Oyuncu" labeling.
+  const displayName = (() => {
+    const raw = (player.name || "").trim();
+    if (raw) return raw;
+    if (player.agent) {
+      return player.agent.charAt(0).toUpperCase() + player.agent.slice(1);
+    }
+    return t("player.anonymousSlot", { n: slotIndex });
+  })();
 
   // Rate limit logic (force re-render every second if active to update tooltip/state)
   const now = Date.now();
@@ -78,15 +98,63 @@ export function PlayerCard({ player }: Props) {
   };
 
   return (
-    <div className={`relative flex items-center h-10 px-2 rounded-md transition-colors cursor-pointer ${
-      isSelected ? "bg-accent-cyan/20 ring-1 ring-accent-cyan/40" :
-      player.is_me ? "bg-[#1e2a36]" : "bg-card hover:bg-card-hover"
-    }`} onClick={() => openPlayer(player)}>
+    <div
+      className={`group/row relative flex items-center h-10 px-2 rounded-md overflow-hidden transition-colors cursor-pointer ${
+        isSelected
+          ? "bg-accent-cyan/20 ring-1 ring-accent-cyan/40"
+          : player.is_me
+            ? "bg-[#1e2a36]"
+            : "bg-card hover:bg-card-hover"
+      }`}
+      onClick={() => openPlayer(player)}
+    >
+      {/* Soft player-card banner — stronger wash when this row is selected.
+          Parent opacity multiplies softOpacity so selection updates without remount. */}
+      {cardBannerUrl && (
+        <>
+          <div
+            className={`pointer-events-none absolute inset-0 transition-[opacity,filter] duration-300 ${
+              isSelected
+                ? "opacity-100 saturate-[0.95] brightness-105"
+                : "opacity-[0.55] saturate-[0.7] brightness-95 group-hover/row:opacity-[0.7]"
+            }`}
+          >
+            <SoftCachedImage
+              src={cardBannerUrl}
+              alt=""
+              silent
+              softOpacity={0.4}
+              className="absolute inset-0 h-full w-full object-cover object-[center_30%] select-none"
+            />
+          </div>
+          {/* Tint toward panel colors — lighter when selected so art reads more clearly */}
+          <div
+            className={`pointer-events-none absolute inset-0 bg-gradient-to-r transition-colors duration-300 ${
+              isSelected
+                ? "from-[#1a242d]/65 via-[#1a242d]/42 to-[#1a242d]/22"
+                : "from-[#1a242d]/88 via-[#1a242d]/72 to-[#1a242d]/55"
+            }`}
+            aria-hidden
+          />
+          <div
+            className={`pointer-events-none absolute inset-0 transition-colors duration-300 ${
+              isSelected ? "bg-[#0f1923]/05" : "bg-[#0f1923]/18"
+            }`}
+            aria-hidden
+          />
+        </>
+      )}
+
       {/* Party indicator */}
-      {partyColor && <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-0.75 h-7 rounded-sm" style={{ backgroundColor: partyColor }} />}
+      {partyColor && (
+        <div
+          className="absolute left-0.5 top-1/2 z-10 -translate-y-1/2 w-0.75 h-7 rounded-sm"
+          style={{ backgroundColor: partyColor }}
+        />
+      )}
 
       {/* Agent icon or status dot */}
-      <div className="w-7 h-7 flex items-center justify-center ml-1">
+      <div className="relative z-10 w-7 h-7 flex items-center justify-center ml-1">
         {agentIcon ? (
           <CachedImage
             src={agentIcon}
@@ -103,21 +171,30 @@ export function PlayerCard({ player }: Props) {
       </div>
 
       {/* Agent name */}
-      <span className="w-14 ml-1 text-[10px] font-semibold truncate" style={{ color: player.agent ? agentColor : "#4a5568" }}>
+      <span
+        className="relative z-10 w-14 ml-1 text-[10px] font-semibold truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+        style={{ color: player.agent ? agentColor : "#4a5568" }}
+      >
         {player.agent ? player.agent.charAt(0).toUpperCase() + player.agent.slice(1) : "—"}
       </span>
 
       {/* Name */}
       <span
-        className={`flex-1 min-w-0 text-xs font-semibold truncate ${player.is_me ? "text-accent-gold" : "text-primary"}`}
-        title={player.name}
+        className={`relative z-10 flex-1 min-w-0 text-xs font-semibold truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
+          player.is_me
+            ? "text-accent-gold"
+            : !player.name?.trim() && !player.agent
+              ? "text-secondary italic"
+              : "text-primary"
+        }`}
+        title={displayName}
       >
-        {player.name}
+        {displayName}
       </span>
 
       {/* Level - left of stats button, tries initial data then stats data */}
       {(player.level > 0 || (stats?.accountLevel ?? 0) > 0) && (
-        <span className="text-[10px] text-dim mr-2 group-hover:text-primary transition-colors">
+        <span className="relative z-10 text-[10px] text-dim mr-2 group-hover/row:text-primary transition-colors drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
           {t("player.level")} {player.level > 0 ? player.level : (stats?.accountLevel ?? 0)}
         </span>
       )}
@@ -125,7 +202,7 @@ export function PlayerCard({ player }: Props) {
       {/* Previous encounter agent */}
       {player.previous_encounter && previousAgentIcon && previousAgentName && (
         <div
-          className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent-cyan/35 bg-black/30 shadow-[0_0_10px_rgba(0,212,170,0.18)]"
+          className="relative z-10 mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent-cyan/35 bg-black/30 shadow-[0_0_10px_rgba(0,212,170,0.18)]"
           title={`${t(`player.recentEncounter${player.previous_encounter}`)}${player.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""} • ${t("player.previousAgent", { agent: previousAgentName })}`}
         >
           <CachedImage
@@ -140,33 +217,69 @@ export function PlayerCard({ player }: Props) {
       <button
         onClick={handleStatsClick}
         disabled={isPrivate || loading || isRateLimited}
-        className={`p-1 mr-1 rounded transition-colors group flex items-center justify-center ${
-          loading ? "cursor-wait opacity-70" : isRateLimited ? "opacity-50 cursor-not-allowed text-warning" : isPrivate ? "opacity-30 cursor-not-allowed" : hasStats ? "hover:bg-accent-cyan/20 cursor-pointer" : "opacity-50 hover:opacity-100 hover:bg-accent-cyan/20 cursor-pointer"
+        className={`relative z-10 p-1 mr-1 rounded transition-colors group flex items-center justify-center ${
+          loading
+            ? "cursor-wait opacity-70"
+            : isRateLimited
+              ? "opacity-50 cursor-not-allowed text-warning"
+              : isPrivate
+                ? "opacity-30 cursor-not-allowed"
+                : hasStats
+                  ? "hover:bg-accent-cyan/20 cursor-pointer"
+                  : "opacity-50 hover:opacity-100 hover:bg-accent-cyan/20 cursor-pointer"
         }`}
-        title={loading ? t("stats.loading") : isRateLimited ? `Rate Limit! Wait ${rateLimitRemaining}s` : isPrivate ? t("player.hiddenProfile") : t("stats.title")}
+        title={
+          loading
+            ? t("stats.loading")
+            : isRateLimited
+              ? `Rate Limit! Wait ${rateLimitRemaining}s`
+              : isPrivate
+                ? t("player.hiddenProfile")
+                : t("stats.title")
+        }
       >
         {loading ? (
           <svg className="w-3.5 h-3.5 animate-spin text-dim" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            ></path>
           </svg>
         ) : isRateLimited ? (
           <span className="text-[9px] font-bold text-warning">429</span>
         ) : (
-          <svg className={`w-3.5 h-3.5 transition-colors ${
-            fetchError ? "text-red-500" :
-            isPrivate ? "text-dim" :
-            hasStats ? "text-accent-cyan group-hover:text-accent-cyan/80" :
-            "text-dim group-hover:text-accent-cyan/80"
-          }`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          <svg
+            className={`w-3.5 h-3.5 transition-colors ${
+              fetchError
+                ? "text-red-500"
+                : isPrivate
+                  ? "text-dim"
+                  : hasStats
+                    ? "text-accent-cyan group-hover:text-accent-cyan/80"
+                    : "text-dim group-hover:text-accent-cyan/80"
+            }`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2.5"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+            />
           </svg>
         )}
       </button>
 
       {/* Rank */}
       {player.rank_tier > 0 && (
-        <span className="text-[11px] font-medium" style={{ color: rankColor }}>
+        <span
+          className="relative z-10 text-[11px] font-medium drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+          style={{ color: rankColor }}
+        >
           {rankName}
         </span>
       )}

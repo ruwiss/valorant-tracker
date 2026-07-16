@@ -69,7 +69,17 @@ pub struct PregamePlayerInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PlayerIdentity {
+    #[serde(default)]
     pub account_level: i32,
+    /// Equipped player card UUID (used for banner art via valorant-api media).
+    /// Riot sends `PlayerCardID` (all-caps ID); accept a few aliases just in case.
+    #[serde(
+        default,
+        rename = "PlayerCardID",
+        alias = "PlayerCardId",
+        alias = "playerCardId"
+    )]
+    pub player_card_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +159,9 @@ pub struct PlayerData {
     pub previous_encounter: Option<u32>, // 1 = Last game, 2 = Two games ago
     pub previous_encounter_agent: Option<String>,
     pub previous_encounter_was_enemy: Option<bool>,
+    /// Equipped player card UUID for soft banner background in the roster.
+    #[serde(default)]
+    pub player_card_id: Option<String>,
 }
 
 // Presence types for party detection
@@ -172,6 +185,23 @@ pub struct PresencePrivate {
     pub session_loop_state: Option<String>, // "MENUS" | "PREGAME" | "INGAME"
     pub party_owner_match_score_ally_team: Option<i32>,
     pub party_owner_match_score_enemy_team: Option<i32>,
+}
+
+/// Parsed view of *our* Riot presence (session phase + live score).
+#[derive(Debug, Clone, Default)]
+pub struct MyPresence {
+    /// "MENUS" | "PREGAME" | "INGAME" (as reported by the client).
+    pub session_loop_state: Option<String>,
+    pub ally_score: Option<i32>,
+    pub enemy_score: Option<i32>,
+}
+
+impl MyPresence {
+    pub fn is_menus(&self) -> bool {
+        self.session_loop_state
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case("MENUS"))
+    }
 }
 
 // Party types

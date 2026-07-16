@@ -1258,11 +1258,15 @@ impl ValorantAPI {
         party_map
     }
 
-    /// Read our OWN presence to extract the live round score. The GLZ match
-    /// endpoints do not expose the score, but the Riot client publishes it in
-    /// our private presence as partyOwnerMatchScoreAllyTeam/EnemyTeam.
-    /// Returns (ally_score, enemy_score), each None if unavailable/not ingame.
-    pub async fn get_my_presence_score(&self) -> (Option<i32>, Option<i32>) {
+    /// Read our OWN presence: session loop phase + live round score.
+    ///
+    /// The GLZ match endpoints do not expose the score; the Riot client
+    /// publishes it in private presence as partyOwnerMatchScoreAllyTeam/EnemyTeam.
+    ///
+    /// After a match ends the client flips `sessionLoopState` to `MENUS` and
+    /// resets the scores to 0-0 *before* the core-game endpoint always drops
+    /// the residual match — callers must treat `MENUS` as "not in a match".
+    pub async fn get_my_presence(&self) -> Option<MyPresence> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
         let my_puuid = self.puuid.read().clone();
@@ -1276,7 +1280,7 @@ impl ValorantAPI {
             .await
         {
             Ok(r) => r,
-            Err(_) => return (None, None),
+            Err(_) => return None,
         };
 
         if let Ok(data) = resp.json::<PresencesResponse>().await {
@@ -1290,12 +1294,26 @@ impl ValorantAPI {
                             if let Ok(pd) =
                                 serde_json::from_str::<PresencePrivate>(&json_str)
                             {
-                                // This is only called from the coregame branch, so
-                                // we are already ingame; return the score directly.
-                                return (
-                                    pd.party_owner_match_score_ally_team,
-                                    pd.party_owner_match_score_enemy_team,
-                                );
+                                // Scores are only meaningful while actually INGAME.
+                                // In MENUS the client resets them to 0-0 — returning
+                                // those would make Discord show a fake "Map 0-0".
+                                let ingame = pd
+                                    .session_loop_state
+                                    .as_deref()
+                                    .is_some_and(|s| s.eq_ignore_ascii_case("INGAME"));
+                                return Some(MyPresence {
+                                    session_loop_state: pd.session_loop_state,
+                                    ally_score: if ingame {
+                                        pd.party_owner_match_score_ally_team
+                                    } else {
+                                        None
+                                    },
+                                    enemy_score: if ingame {
+                                        pd.party_owner_match_score_enemy_team
+                                    } else {
+                                        None
+                                    },
+                                });
                             }
                         }
                     }
@@ -1303,7 +1321,7 @@ impl ValorantAPI {
                 break;
             }
         }
-        (None, None)
+        None
     }
 
     /// Get my party info - returns (party_id, member_puuids)

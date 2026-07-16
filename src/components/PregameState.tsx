@@ -30,8 +30,8 @@ export function PregameState() {
 
       {/* Players */}
       <div className="space-y-1">
-        {gameState.allies.map((player) => (
-          <PlayerCard key={player.puuid} player={player} />
+        {gameState.allies.map((player, i) => (
+          <PlayerCard key={player.puuid} player={player} slotIndex={i + 1} />
         ))}
       </div>
     </div>

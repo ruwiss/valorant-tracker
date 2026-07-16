@@ -235,7 +235,12 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
 
     match gs.state.as_str() {
         "ingame" => {
-            let map = gs.map_name.clone().unwrap_or_else(|| "Bilinmeyen".into());
+            // Incomplete/stale payload (e.g. empty debounce fallback): don't claim
+            // "Maçta" with a blank map or a fake 0-0 — fall back to lobby text.
+            let map = gs.map_name.clone().filter(|m| !m.is_empty());
+            let Some(map) = map else {
+                return ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false);
+            };
             let details = match (gs.ally_score, gs.enemy_score) {
                 (Some(a), Some(e)) => format!("{map}  {a} - {e}"),
                 _ => map.clone(),
@@ -247,6 +252,7 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
             let image = map_image_key(&map);
             ("Ajan seçimi".into(), map, image, false)
         }
+        // idle / disconnected / unknown → lobby presence (not a live match)
         _ => ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false),
     }
 }

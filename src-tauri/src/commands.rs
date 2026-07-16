@@ -537,7 +537,13 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         previous_encounter_agent,
                         previous_encounter_was_enemy,
                     ) = get_encounter_data(&p.subject);
-                    let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
+                    let (level, player_card_id) = match p.player_identity {
+                        Some(id) => (
+                            id.account_level,
+                            id.player_card_id.filter(|s| !s.is_empty()),
+                        ),
+                        None => (0, None),
+                    };
                     let party = parties
                         .get(&p.subject)
                         .cloned()
@@ -564,6 +570,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         previous_encounter,
                         previous_encounter_agent,
                         previous_encounter_was_enemy,
+                        player_card_id,
                     });
                 }
 
@@ -571,7 +578,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 *state.consecutive_idle_count.write() = 0;
                 *state.last_known_state.write() = "pregame".to_string();
 
-                return Ok(GameState {
+                let gs = GameState {
                     state: "pregame".into(),
                     match_id: Some(match_id),
                     map_name: Some(map_name),
@@ -579,14 +586,29 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     side: Some(side.into()),
                     allies,
                     ..Default::default()
-                });
+                };
+                *state.last_full_game_state.write() = Some(gs.clone());
+                return Ok(gs);
             }
         }
     }
 
+    // Presence MENUS is a hard signal that the client left the match loop.
+    // Core-game can still expose a residual match id + 0-0 scores after that;
+    // when we see MENUS we skip the ingame branch and (below) skip idle debounce.
+    let mut presence_confirms_menus = false;
+
     // Check coregame
     if let Some(match_id) = api.get_coregame_match_id().await {
-        if let Some(match_data) = api.get_coregame_match(&match_id).await {
+        let my_presence = api.get_my_presence().await;
+        if my_presence.as_ref().is_some_and(|p| p.is_menus()) {
+            presence_confirms_menus = true;
+            tracing::info!(
+                "[get_game_state] Presence is MENUS while coregame id {} still present; treating match as ended",
+                match_id
+            );
+            // Fall through to idle transition below (no debounce — MENUS is authoritative).
+        } else if let Some(match_data) = api.get_coregame_match(&match_id).await {
             let map_name = MAP_NAMES
                 .get(match_data.map_id.as_str())
                 .map(|s| s.to_string())
@@ -629,7 +651,13 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                 let (previous_encounter, previous_encounter_agent, previous_encounter_was_enemy) =
                     get_encounter_data(&p.subject);
-                let level = p.player_identity.map(|i| i.account_level).unwrap_or(0);
+                let (level, player_card_id) = match p.player_identity {
+                    Some(id) => (
+                        id.account_level,
+                        id.player_card_id.filter(|s| !s.is_empty()),
+                    ),
+                    None => (0, None),
+                };
                 let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
                 let party = parties
                     .get(&p.subject)
@@ -657,6 +685,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     previous_encounter,
                     previous_encounter_agent,
                     previous_encounter_was_enemy,
+                    player_card_id,
                 };
 
                 if p.team_id == my_team {
@@ -671,9 +700,13 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
             *state.last_known_state.write() = "ingame".to_string();
 
             // Round score is only available via our own presence, not GLZ.
-            let (ally_score, enemy_score) = api.get_my_presence_score().await;
+            // get_my_presence already blanks scores when not INGAME.
+            let (ally_score, enemy_score) = match my_presence {
+                Some(p) => (p.ally_score, p.enemy_score),
+                None => (None, None),
+            };
 
-            return Ok(GameState {
+            let gs = GameState {
                 state: "ingame".into(),
                 match_id: Some(match_id),
                 map_name: Some(map_name),
@@ -683,7 +716,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 enemies,
                 ally_score,
                 enemy_score,
-            });
+            };
+            *state.last_full_game_state.write() = Some(gs.clone());
+            return Ok(gs);
         }
     }
 
@@ -706,33 +741,47 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // DEBOUNCE: If we were in pregame/ingame, require 3 consecutive idle responses
     // before actually transitioning to idle. This prevents false idle transitions
     // when API temporarily fails to return match data.
+    // Skip debounce when Riot presence already reports MENUS — that is a real
+    // match end (and the source of the Discord "stuck at 0-0" bug).
     const IDLE_DEBOUNCE_THRESHOLD: u32 = 3;
 
     if last_state == "pregame" || last_state == "ingame" {
-        let mut idle_count = state.consecutive_idle_count.write();
-        *idle_count += 1;
-
-        if *idle_count < IDLE_DEBOUNCE_THRESHOLD {
-            tracing::debug!(
-                "[get_game_state] Idle debounce: {} (was {}), waiting for {} more confirmations",
-                *idle_count,
-                last_state,
-                IDLE_DEBOUNCE_THRESHOLD - *idle_count
+        if presence_confirms_menus {
+            tracing::info!(
+                "[get_game_state] Presence MENUS confirmed, transitioning {} -> idle immediately",
+                last_state
             );
-            // Return the last known state to maintain UI stability
-            return Ok(GameState {
-                state: last_state.clone(),
-                ..Default::default()
-            });
-        }
+            *state.consecutive_idle_count.write() = 0;
+        } else {
+            let mut idle_count = state.consecutive_idle_count.write();
+            *idle_count += 1;
 
-        // Threshold reached - this is a real transition
-        tracing::info!(
-            "[get_game_state] Idle confirmed after {} checks, transitioning {} -> idle",
-            *idle_count,
-            last_state
-        );
-        *idle_count = 0;
+            if *idle_count < IDLE_DEBOUNCE_THRESHOLD {
+                tracing::debug!(
+                    "[get_game_state] Idle debounce: {} (was {}), waiting for {} more confirmations",
+                    *idle_count,
+                    last_state,
+                    IDLE_DEBOUNCE_THRESHOLD - *idle_count
+                );
+                // Prefer the last full snapshot so Discord keeps the real map/score
+                // instead of a blank "ingame" / fake 0-0 payload.
+                if let Some(cached) = state.last_full_game_state.read().clone() {
+                    return Ok(cached);
+                }
+                return Ok(GameState {
+                    state: last_state.clone(),
+                    ..Default::default()
+                });
+            }
+
+            // Threshold reached - this is a real transition
+            tracing::info!(
+                "[get_game_state] Idle confirmed after {} checks, transitioning {} -> idle",
+                *idle_count,
+                last_state
+            );
+            *idle_count = 0;
+        }
     }
 
     // Clear party cache when idle (no match) - only if we were in a game session
@@ -744,8 +793,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         *state.in_game_session.write() = false;
     }
 
-    // Update last known state to idle
+    // Update last known state to idle and drop the match snapshot so Discord
+    // stops advertising the previous map/score.
     *state.last_known_state.write() = "idle".to_string();
+    *state.last_full_game_state.write() = None;
 
     Ok(GameState {
         state: "idle".into(),
