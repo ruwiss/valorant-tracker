@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
@@ -39,7 +39,7 @@ type Tab = "autolock" | "presets" | "general";
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
   const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled } = useSettingsStore();
-  const { getAgentIcon, getAgentAsset, getMapSplash } = useAssetsStore();
+  const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
   const { constants } = useConstantsStore();
@@ -51,18 +51,41 @@ export function SettingsPanel() {
   const [appVersion, setAppVersion] = useState("...");
   const [expandedMap, setExpandedMap] = useState<CompetitiveMap | null>(null);
   const [hoveredAgents, setHoveredAgents] = useState<Record<string, string | null>>({});
+  /** Debounce map-only restore so agent-to-agent moves don't flash the map title. */
+  const mapOnlyRestoreRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     getVersion().then(setAppVersion);
+  }, []);
+
+  // If a previous failed load left us with empty icons, retry when settings opens
+  useEffect(() => {
+    if (assetAgents.size === 0) {
+      void loadAssets();
+    }
+  }, [assetAgents.size, loadAssets]);
+
+  useEffect(() => {
+    return () => {
+      if (mapOnlyRestoreRef.current) clearTimeout(mapOnlyRestoreRef.current);
+    };
   }, []);
 
   const handleHover = (context: string, agent: string | null) => {
     setHoveredAgents((prev) => ({ ...prev, [context]: agent }));
   };
 
+  const cancelMapOnlyRestore = useCallback(() => {
+    if (mapOnlyRestoreRef.current) {
+      clearTimeout(mapOnlyRestoreRef.current);
+      mapOnlyRestoreRef.current = null;
+    }
+  }, []);
+
   // Handle agent hover for overlay - global agents (no map context)
   const handleAgentHoverEnter = useCallback(
     (agentName: string, mapContext?: { mapName: string; mapSplash: string | null; mapColor: string }) => {
+      cancelMapOnlyRestore();
       const agentAsset = getAgentAsset(agentName);
       if (agentAsset) {
         setHoveredAgent({
@@ -70,15 +93,50 @@ export function SettingsPanel() {
           displayIcon: agentAsset.displayIcon,
           bustPortrait: agentAsset.bustPortrait,
           mapContext,
+          mapOnly: false,
         });
       }
     },
-    [getAgentAsset, setHoveredAgent],
+    [getAgentAsset, setHoveredAgent, cancelMapOnlyRestore],
   );
 
   const handleAgentHoverLeave = useCallback(() => {
+    cancelMapOnlyRestore();
     setHoveredAgent(null);
-  }, [setHoveredAgent]);
+  }, [setHoveredAgent, cancelMapOnlyRestore]);
+
+  /** Left panel: map splash only (no agent). Used when hovering a map row. */
+  const handleMapHoverEnter = useCallback(
+    (mapName: string, mapSplash: string | null, mapColor: string) => {
+      cancelMapOnlyRestore();
+      setHoveredAgent({
+        name: mapName,
+        displayIcon: "",
+        bustPortrait: null,
+        mapContext: { mapName, mapSplash, mapColor },
+        mapOnly: true,
+      });
+    },
+    [setHoveredAgent, cancelMapOnlyRestore],
+  );
+
+  /** Delayed map-only — only fires if we didn't enter another agent quickly. */
+  const scheduleMapOnlyRestore = useCallback(
+    (mapName: string, mapSplash: string | null, mapColor: string) => {
+      cancelMapOnlyRestore();
+      mapOnlyRestoreRef.current = setTimeout(() => {
+        mapOnlyRestoreRef.current = null;
+        setHoveredAgent({
+          name: mapName,
+          displayIcon: "",
+          bustPortrait: null,
+          mapContext: { mapName, mapSplash, mapColor },
+          mapOnly: true,
+        });
+      }, 180);
+    },
+    [setHoveredAgent, cancelMapOnlyRestore],
+  );
 
   const startRecording = useCallback(async () => {
     await pauseHotkey();
@@ -183,7 +241,7 @@ export function SettingsPanel() {
                 )}
               </div>
 
-              <div className="grid grid-cols-6 gap-2 bg-dark/60 p-2.5 rounded-xl border border-white/5">
+              <div className="grid grid-cols-4 gap-3 bg-dark/60 p-3.5 rounded-xl border border-white/5">
                 {(constants?.agents || []).map((agentData) => {
                   const isSelected = autoLockAgent === agentData.uuid;
                   const icon = getAgentIcon(agentData.name);
@@ -200,10 +258,14 @@ export function SettingsPanel() {
                         handleHover("global", null);
                         handleAgentHoverLeave();
                       }}
-                      className={`group relative aspect-square rounded-lg overflow-hidden transition-all duration-300 ${isSelected ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark scale-105 z-10" : "grayscale opacity-40 hover:grayscale-0 hover:opacity-100 hover:scale-110"}`}
+                      className={`group relative aspect-square rounded-xl overflow-hidden border transition-all duration-200 cursor-pointer ${
+                        isSelected
+                          ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark border-accent-cyan/40 z-10"
+                          : "border-white/[0.04] grayscale opacity-50 hover:grayscale-0 hover:opacity-100 hover:border-white/25 hover:bg-white/5 active:scale-95"
+                      }`}
                     >
-                      {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agentData.name[0].toUpperCase()}</div>}
-                      {isSelected && <div className="absolute inset-0 bg-accent-cyan/10" />}
+                      {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] font-black">{agentData.name[0].toUpperCase()}</div>}
+                      {isSelected && <div className="absolute inset-0 bg-accent-cyan/10 pointer-events-none" />}
                     </button>
                   );
                 })}
@@ -238,55 +300,118 @@ export function SettingsPanel() {
               <div className="space-y-2.5">
                 {COMPETITIVE_MAPS.map((map) => {
                   const selectedAgent = mapAgentPreferences[map];
+                  const isMapOverride = !!selectedAgent;
+                  // Map override wins; otherwise fall back to global default for display.
+                  const displayAgentUuid = selectedAgent || autoLockAgent;
+                  const displayAgent = displayAgentUuid
+                    ? constants?.agents.find((a) => a.uuid === displayAgentUuid)
+                    : undefined;
+                  const displayIcon = displayAgent ? getAgentIcon(displayAgent.name) : null;
                   const isExpanded = expandedMap === map;
                   const splash = getMapSplash(map);
 
+                  const mapColor = MAP_METADATA[map]?.color || "#00d4aa";
+                  const mapCtx = { mapName: map, mapSplash: splash, mapColor };
+
                   return (
-                    <div key={map} className={`group border rounded-2xl overflow-hidden transition-all duration-500 ${isExpanded ? "border-accent-cyan shadow-2xl shadow-accent-cyan/10" : "border-white/5 hover:border-white/20"}`}>
+                    <div
+                      key={map}
+                      className={`group border rounded-2xl overflow-hidden transition-all duration-500 ${isExpanded ? "border-accent-cyan shadow-2xl shadow-accent-cyan/10" : "border-white/5 hover:border-white/20"}`}
+                      onMouseEnter={() => handleMapHoverEnter(map, splash, mapColor)}
+                      onMouseLeave={handleAgentHoverLeave}
+                    >
                       {/* Map Header with Background */}
                       <button
                         onClick={() => {
                           setExpandedMap(isExpanded ? null : map);
                         }}
-                        className="relative w-full h-15 overflow-hidden flex items-center px-4"
+                        className="relative w-full h-16 overflow-hidden"
                       >
-                        {/* Background Splash */}
+                        {/* Background Splash — darken center so splash art agents don't fight the badge */}
                         <div className={`absolute inset-0 transition-all duration-700 ${isExpanded ? "scale-105" : "group-hover:scale-110"}`}>
-                          {splash ? <CachedImage src={splash} alt="" className={`w-full h-full object-cover transition-all duration-700 ${isExpanded ? "grayscale-0 brightness-[0.7]" : "grayscale-[0.5] brightness-[0.4]"}`} /> : <div className="w-full h-full bg-card" />}
-                          <div className={`absolute inset-0 bg-linear-to-r from-dark transition-all duration-700 ${isExpanded ? "via-dark/30" : "via-dark/60"} to-transparent`} />
+                          {splash ? (
+                            <CachedImage
+                              src={splash}
+                              alt=""
+                              className={`w-full h-full object-cover object-left transition-all duration-700 ${isExpanded ? "grayscale-0 brightness-[0.65]" : "grayscale-[0.4] brightness-[0.35]"}`}
+                            />
+                          ) : (
+                            <div className="w-full h-full bg-card" />
+                          )}
+                          <div className={`absolute inset-0 bg-linear-to-r from-dark via-dark/75 to-dark/45 transition-all duration-700 ${isExpanded ? "via-dark/40 to-dark/25" : ""}`} />
+                          <div className="absolute inset-0 bg-linear-to-t from-dark/70 via-transparent to-transparent" />
                         </div>
 
-                        {/* Content */}
-                        <div className="relative flex items-center justify-between w-full">
-                          <div className="flex flex-col items-start translate-x-0 group-hover:translate-x-1 transition-transform">
-                            <span className="text-[12px] font-black text-white uppercase tracking-wider">{map}</span>
-                            <div className="h-3 flex items-center">{hoveredAgents[map] && <span className="text-[9px] text-accent-cyan font-black animate-in fade-in slide-in-from-left-1 duration-200 uppercase tracking-tighter">{hoveredAgents[map]}</span>}</div>
-                          </div>
+                        {/* Map name — top-left */}
+                        <div className="absolute top-2.5 left-3.5 z-10 flex flex-col items-start">
+                          <span className="text-[12px] font-black text-white uppercase tracking-wider drop-shadow-md">{map}</span>
+                          {hoveredAgents[map] && (
+                            <span className="text-[9px] text-accent-cyan font-black animate-in fade-in slide-in-from-left-1 duration-200 uppercase tracking-tighter">
+                              {hoveredAgents[map]}
+                            </span>
+                          )}
+                        </div>
 
-                          <div className="flex items-center gap-3">
-                            {selectedAgent && (() => {
-                              const agentInfo = constants?.agents.find((a) => a.uuid === selectedAgent);
-                              if (!agentInfo) return null;
-                              return (
-                                <div className="flex items-center gap-2 bg-dark/80 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/10 animate-in zoom-in-90 duration-300">
-                                  {getAgentIcon(agentInfo.name) && <CachedImage src={getAgentIcon(agentInfo.name)!} className="w-4 h-4 rounded-full" />}
-                                  <span className="text-[9px] font-black text-accent-cyan uppercase">{agentInfo.name}</span>
+                        {/* Expand chevron — top-right */}
+                        <svg
+                          className={`absolute top-3 right-3 z-10 w-4 h-4 transition-all duration-500 ${isExpanded ? "rotate-180 text-accent-cyan" : "text-dim/80 group-hover:text-primary"}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                        </svg>
+
+                        {/* Soft agent chip — bottom-right.
+                            Map override: icon + name (clear).
+                            Inherited default: icon only (quiet, no "Varsayılan" spam). */}
+                        {displayAgent && (
+                          isMapOverride ? (
+                            <div className="absolute bottom-1.5 right-2.5 z-10 flex items-center gap-1.5 pl-0.5 pr-2 py-0.5 rounded-full bg-black/50 backdrop-blur-md border border-accent-cyan/35 shadow-[0_4px_14px_rgba(0,0,0,0.35)] pointer-events-none animate-in fade-in zoom-in-95 duration-300">
+                              {displayIcon ? (
+                                <CachedImage
+                                  src={displayIcon}
+                                  alt={displayAgent.name}
+                                  className="w-5 h-5 rounded-full object-cover ring-1 ring-accent-cyan/45"
+                                />
+                              ) : (
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black bg-accent-cyan/20 text-accent-cyan">
+                                  {displayAgent.name[0]?.toUpperCase()}
                                 </div>
-                              );
-                            })()}
-                            <svg className={`w-4 h-4 text-dim transition-all duration-500 ${isExpanded ? "rotate-180 text-accent-cyan" : "group-hover:text-primary"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                        </div>
+                              )}
+                              <span className="text-[8px] font-bold uppercase tracking-wide leading-none text-accent-cyan">
+                                {displayAgent.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <div
+                              className="absolute bottom-1.5 right-2.5 z-10 pointer-events-none animate-in fade-in duration-300"
+                              title={locale === "tr" ? `Varsayılan: ${displayAgent.name}` : `Default: ${displayAgent.name}`}
+                            >
+                              {displayIcon ? (
+                                <CachedImage
+                                  src={displayIcon}
+                                  alt={displayAgent.name}
+                                  className="w-6 h-6 rounded-full object-cover opacity-55 ring-1 ring-white/15 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+                                />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black bg-black/40 text-white/40 ring-1 ring-white/10">
+                                  {displayAgent.name[0]?.toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        )}
                       </button>
 
-                      {/* Agent Grid (Expanded) */}
+                      {/* Agent Grid (Expanded) — 4 cols, airy spacing */}
                       {isExpanded && (
-                        <div className="p-3 bg-dark/40 backdrop-blur-xl border-t border-white/5 animate-in slide-in-from-top-2 duration-300">
-                          <div className="grid grid-cols-6 gap-2">
+                        <div className="p-3.5 bg-dark/40 backdrop-blur-xl border-t border-white/5 animate-in slide-in-from-top-2 duration-300">
+                          <div className="grid grid-cols-4 gap-3">
                             {(constants?.agents || []).map((agentData) => {
                               const isSelected = selectedAgent === agentData.uuid;
+                              // Soft-select global default when this map has no override
+                              const isDefaultPreview = !selectedAgent && autoLockAgent === agentData.uuid;
                               const icon = getAgentIcon(agentData.name);
 
                               return (
@@ -295,21 +420,40 @@ export function SettingsPanel() {
                                   onClick={() => setAutoLock(isSelected ? null : agentData.uuid, map)}
                                   onMouseEnter={() => {
                                     handleHover(map, agentData.name);
-                                    handleAgentHoverEnter(agentData.name, {
-                                      mapName: map,
-                                      mapSplash: splash,
-                                      mapColor: MAP_METADATA[map]?.color || "#00d4aa",
-                                    });
+                                    // Agent + map background (cancels pending map-only restore)
+                                    handleAgentHoverEnter(agentData.name, mapCtx);
                                   }}
                                   onMouseLeave={() => {
                                     handleHover(map, null);
-                                    handleAgentHoverLeave();
+                                    // Debounced: only restore map-only if we didn't hop to another agent
+                                    scheduleMapOnlyRestore(map, splash, mapColor);
                                   }}
-                                  className={`group relative aspect-square rounded-lg overflow-hidden transition-all duration-300 ${isSelected ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark scale-105 z-10" : "grayscale opacity-40 hover:grayscale-0 hover:opacity-100 hover:scale-110"}`}
-                                  title={agentData.name.toUpperCase()}
+                                  className={`group relative aspect-square rounded-xl overflow-hidden border transition-all duration-200 cursor-pointer ${
+                                    isSelected
+                                      ? "ring-2 ring-accent-cyan ring-offset-2 ring-offset-dark border-accent-cyan/40 z-10"
+                                      : isDefaultPreview
+                                        ? "ring-1 ring-white/25 border-white/15 opacity-85 grayscale-0"
+                                        : "border-white/[0.04] grayscale opacity-50 hover:grayscale-0 hover:opacity-100 hover:border-white/25 hover:bg-white/5 active:scale-95"
+                                  }`}
+                                  title={
+                                    isDefaultPreview
+                                      ? `${agentData.name.toUpperCase()} (${locale === "tr" ? "Varsayılan" : "Default"})`
+                                      : agentData.name.toUpperCase()
+                                  }
                                 >
-                                  {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[8px] font-black">{agentData.name[0].toUpperCase()}</div>}
-                                  {isSelected && <div className="absolute inset-0 bg-accent-cyan/10" />}
+                                  {icon ? (
+                                    <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] font-black">
+                                      {agentData.name[0].toUpperCase()}
+                                    </div>
+                                  )}
+                                  {isSelected && <div className="absolute inset-0 bg-accent-cyan/10 pointer-events-none" />}
+                                  {isDefaultPreview && !isSelected && (
+                                    <div className="absolute inset-x-0 bottom-0 py-0.5 bg-black/55 text-[7px] font-bold text-white/70 uppercase tracking-tighter text-center pointer-events-none">
+                                      {locale === "tr" ? "Var." : "Def."}
+                                    </div>
+                                  )}
                                 </button>
                               );
                             })}

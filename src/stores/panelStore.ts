@@ -33,6 +33,8 @@ export interface HoveredAgent {
     mapSplash: string | null;
     mapColor: string;
   };
+  /** When true, left overlay shows only the map (no agent portrait). */
+  mapOnly?: boolean;
 }
 
 export interface HoveredCrosshair {

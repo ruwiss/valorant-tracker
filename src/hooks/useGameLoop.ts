@@ -8,6 +8,9 @@ import { useConstantsStore } from "../stores/constantsStore";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionEvent, GameState } from "../lib/types";
 
+/** Guard StrictMode double-mount so we don't spam backend / console on boot. */
+let bootstrapped = false;
+
 /**
  * Event-driven game loop. The backend supervisor OWNS the connection lifecycle
  * (connect, watch, self-reconnect, autolock); this hook is a thin consumer:
@@ -23,16 +26,20 @@ export function useGameLoop() {
 
   useEffect(() => {
     // 1. One-time setup: assets, constants, window, hotkey, autolock delay.
-    loadAssets();
-    loadConstants();
-    restoreWindowPosition();
-    registerHotkey();
-    syncAutoLockDelay();
-    syncDiscordRpc();
+    // React StrictMode mounts twice in dev — only bootstrap once per page load.
+    if (!bootstrapped) {
+      bootstrapped = true;
+      loadAssets();
+      loadConstants();
+      restoreWindowPosition();
+      registerHotkey();
+      syncAutoLockDelay();
+      syncDiscordRpc();
 
-    // 2. Push persisted settings (autolock + pause intent) to the backend,
-    //    which starts with an empty AppState on each launch.
-    pushSettingsToBackend();
+      // 2. Push persisted settings (autolock + pause intent) to the backend,
+      //    which starts with an empty AppState on each launch.
+      pushSettingsToBackend();
+    }
 
     // 3. Subscribe to backend events.
     const setupConnectionListener = () =>

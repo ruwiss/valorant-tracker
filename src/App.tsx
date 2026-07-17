@@ -57,7 +57,7 @@ function App() {
         <WeaponOverlay />
 
         {/* Agent hover overlay for settings */}
-        <AgentOverlay />
+        <AgentOverlay key="agent-overlay" />
 
         {/* Crosshair hover preview for presets */}
         <CrosshairOverlay />
