@@ -105,18 +105,30 @@ export const useGameStore = create<GameStore>()(
 
 			setGameState: (newState: GameState) => {
 				set((s) => {
-					// A transient "disconnected" mid-game (brief network blip / token
-					// refresh) must NOT wipe a live pregame/ingame panel. The backend
-					// self-reconnects and re-emits the real state within a tick or two;
-					// dropping to the waiting screen here is exactly the "have to hit
-					// refresh" symptom. Keep the last good panel until the backend
-					// confirms a genuine non-disconnected transition (idle/pregame/ingame).
-					if (
-						newState.state === "disconnected" &&
-						(s.gameState.state === "pregame" || s.gameState.state === "ingame")
-					) {
+					const wasLive =
+						s.gameState.state === "pregame" || s.gameState.state === "ingame";
+
+					// Transient disconnect mid-match: keep the live panel. Backend
+					// reconnects and re-emits shortly; wiping here is the classic
+					// "stuck on Oyun Bekleniyor" flash.
+					if (newState.state === "disconnected" && wasLive) {
 						return s;
 					}
+
+					// Ignore idle while we are still (re)connecting — a false idle during
+					// token refresh / pregame→ingame load must not clobber the panel.
+					// Once status is CONNECTED, trust the backend (it already debounces).
+					if (newState.state === "idle" && wasLive) {
+						const st = get().status;
+						if (
+							st === "CONNECTING" ||
+							st === "RECONNECTING" ||
+							st === "WAITING_FOR_GAME"
+						) {
+							return s;
+						}
+					}
+
 					return { gameState: newState };
 				});
 			},
@@ -127,6 +139,8 @@ export const useGameStore = create<GameStore>()(
 				// Honor the user's pause intent: ignore any non-paused status until the
 				// user explicitly resumes (prevents the backend racing us back online).
 				if (get().pausedByUser && next !== "PAUSED") return;
+
+				const prev = get().status;
 
 				set((s) => ({
 					status: next,
@@ -142,6 +156,26 @@ export const useGameStore = create<GameStore>()(
 					// (idle/disconnected), not from the connection status.
 					gameState: next === "PAUSED" ? initialGameState : s.gameState,
 				}));
+
+				// Reconnected after a blip / cold start: if we are not already on a live
+				// panel, pull game state once so we do not stay on "Oyun Bekleniyor"
+				// when the supervisor's re-emit was suppressed or missed.
+				if (
+					next === "CONNECTED" &&
+					prev !== "CONNECTED" &&
+					!get().pausedByUser
+				) {
+					const gs = get().gameState;
+					if (gs.state !== "pregame" && gs.state !== "ingame") {
+						invokeCommand<GameState>("get_game_state", undefined, {
+							suppressErrorToast: true,
+						})
+							.then((fresh) => {
+								if (fresh) get().setGameState(fresh);
+							})
+							.catch(() => {});
+					}
+				}
 			},
 
 			// --- Auto-lock agent selection ---

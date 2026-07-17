@@ -32,6 +32,9 @@ pub struct AppState {
     pub is_paused: RwLock<bool>,
     // Debounce: consecutive idle responses needed before transitioning from pregame/ingame to idle
     pub consecutive_idle_count: RwLock<u32>,
+    // Debounce: consecutive MENUS presence readings before treating the match as ended.
+    // A single false MENUS (stale presence) would otherwise skip coregame forever.
+    pub consecutive_menus_count: RwLock<u32>,
     // Last known game state string for debounce logic ("idle" | "pregame" | "ingame")
     pub last_known_state: RwLock<String>,
     // Last full GameState snapshot (used during idle debounce so UI/Discord keep
@@ -83,6 +86,7 @@ impl AppState {
             supervisor_started: RwLock::new(false),
             is_paused: RwLock::new(false),
             consecutive_idle_count: RwLock::new(0),
+            consecutive_menus_count: RwLock::new(0),
             last_known_state: RwLock::new("idle".to_string()),
             last_full_game_state: RwLock::new(None),
             map_agent_preferences: Arc::new(RwLock::new(HashMap::new())),

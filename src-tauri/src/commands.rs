@@ -144,6 +144,26 @@ pub fn start_supervisor(app: tauri::AppHandle) {
             if !connected || needs_reinit {
                 poll_interval_ms = POLL_WAITING_MS;
                 emit_connection(&app, &mut last_conn_json, "connecting", "");
+
+                // Mid-match token blip: keep feeding the last live snapshot so the
+                // UI never falls through to the waiting screen while we reconnect.
+                let was_live = {
+                    let last = app.state::<AppState>().last_known_state.read().clone();
+                    last == "pregame" || last == "ingame"
+                };
+                if was_live {
+                    if let Some(cached) = app.state::<AppState>().last_full_game_state.read().clone()
+                    {
+                        if let Ok(json) = serde_json::to_string(&cached) {
+                            if json != last_emitted_state_json {
+                                let _ = app.emit("game_state_changed", &cached);
+                                last_emitted_state_json = json;
+                            }
+                        }
+                        discord.update(&cached, "connecting");
+                    }
+                }
+
                 match api.initialize().await {
                     Ok(status) => {
                         backoff_ms = 1000;
@@ -173,9 +193,11 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                             e,
                             backoff_ms
                         );
-                        // Only surface "waiting_for_game" (which wipes the live panel)
-                        // once failures persist - a transient hiccup keeps "connecting".
-                        if consecutive_connect_failures >= WAITING_AFTER_FAILURES {
+                        // Never advertise "waiting_for_game" while we still believe a
+                        // match is live — that status is what drives the waiting
+                        // screen. Keep "connecting" so the UI holds the live panel
+                        // and we keep retrying until tokens recover or the match ends.
+                        if consecutive_connect_failures >= WAITING_AFTER_FAILURES && !was_live {
                             emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
                             discord.update(&GameState::default(), "waiting_for_game");
                         } else {
@@ -208,7 +230,11 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 };
 
                 // A disconnect detected mid-poll: reconnect on the next tick.
+                // Note: when a live snapshot is cached, get_game_state_internal
+                // returns that snapshot instead of empty "disconnected", so we
+                // only hit this on a true cold disconnect with no cache.
                 if current_state.state == "disconnected" {
+                    *api.needs_reinit.write() = true;
                     continue;
                 }
 
@@ -393,14 +419,25 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
     get_game_state_internal(&state).await
 }
 
+/// Prefer the last full live snapshot over an empty "disconnected" payload so the
+/// UI/Discord keep map/score while the supervisor re-establishes tokens.
+fn cached_live_or_disconnected(state: &AppState) -> GameState {
+    if let Some(cached) = state.last_full_game_state.read().clone() {
+        if cached.state == "pregame" || cached.state == "ingame" {
+            return cached;
+        }
+    }
+    GameState {
+        state: "disconnected".into(),
+        ..Default::default()
+    }
+}
+
 pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, String> {
     let api = &state.api;
 
     if !*api.connected.read() {
-        return Ok(GameState {
-            state: "disconnected".into(),
-            ..Default::default()
-        });
+        return Ok(cached_live_or_disconnected(state));
     }
 
     // Static flags to prevent repeated logging (reset on successful connection)
@@ -415,22 +452,17 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
             tracing::warn!("[get_game_state] Lockfile changed! Riot Client may have restarted. Triggering reinit...");
         }
         *api.needs_reinit.write() = true;
-        return Ok(GameState {
-            state: "disconnected".into(),
-            ..Default::default()
-        });
+        return Ok(cached_live_or_disconnected(state));
     }
 
-    // If tokens need refresh, trigger reconnection instead of returning stale data
+    // If tokens need refresh, trigger reconnection instead of returning stale data.
+    // Still serve the last live snapshot so the panel does not flash "waiting".
     if *api.needs_reinit.read() {
         // Log only once per reinit cycle
         if !REINIT_WARNED.swap(true, Ordering::Relaxed) {
             tracing::warn!("[get_game_state] Tokens need refresh, signaling disconnected");
         }
-        return Ok(GameState {
-            state: "disconnected".into(),
-            ..Default::default()
-        });
+        return Ok(cached_live_or_disconnected(state));
     }
 
     // Reset warning flags when connected successfully (reached this point = no issues)
@@ -593,8 +625,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     });
                 }
 
-                // Reset idle counter and update last known state on successful pregame
+                // Reset idle/menus counters and update last known state on successful pregame
                 *state.consecutive_idle_count.write() = 0;
+                *state.consecutive_menus_count.write() = 0;
                 *state.last_known_state.write() = "pregame".to_string();
 
                 let gs = GameState {
@@ -612,132 +645,156 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
     }
 
-    // Presence MENUS is a hard signal that the client left the match loop.
-    // Core-game can still expose a residual match id + 0-0 scores after that;
-    // when we see MENUS we skip the ingame branch and (below) skip idle debounce.
+    // Presence MENUS usually means the client left the match loop (residual
+    // coregame id + fake 0-0 scores). A *single* MENUS reading is not enough —
+    // stale/wrong presence can appear mid-match and would otherwise skip the
+    // entire ingame branch permanently. Require consecutive confirmations.
     let mut presence_confirms_menus = false;
+    const MENUS_DEBOUNCE_THRESHOLD: u32 = 3;
 
     // Check coregame
     if let Some(match_id) = api.get_coregame_match_id().await {
         let my_presence = api.get_my_presence().await;
-        if my_presence.as_ref().is_some_and(|p| p.is_menus()) {
-            presence_confirms_menus = true;
-            tracing::info!(
-                "[get_game_state] Presence is MENUS while coregame id {} still present; treating match as ended",
-                match_id
-            );
-            // Fall through to idle transition below (no debounce — MENUS is authoritative).
-        } else if let Some(match_data) = api.get_coregame_match(&match_id).await {
-            let map_name = MAP_NAMES
-                .get(match_data.map_id.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Unknown".into());
-
-            let my_puuid = api.puuid.read().clone();
-            let puuids: Vec<String> = match_data
-                .players
-                .iter()
-                .map(|p| p.subject.clone())
-                .collect();
-
-            let names = api.get_player_names(&puuids).await;
-
-            // Get parties with caching
-            let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
-
-            let my_team = match_data
-                .players
-                .iter()
-                .find(|p| p.subject == my_puuid)
-                .map(|p| p.team_id.clone())
-                .unwrap_or_default();
-
-            let mut allies = vec![];
-            let mut enemies = vec![];
-
-            for p in match_data.players {
-                let agent_name = get_agent_name(&p.character_id);
-                let was_enemy = p.team_id != my_team;
-                if p.subject != my_puuid && !agent_name.is_empty() {
-                    state.current_match_players.write().insert(
-                        p.subject.clone(),
-                        EncounterPlayer {
-                            agent: agent_name.clone(),
-                            was_enemy,
-                        },
-                    );
-                }
-
-                let (previous_encounter, previous_encounter_agent, previous_encounter_was_enemy) =
-                    get_encounter_data(&p.subject);
-                let (level, player_card_id) = match p.player_identity {
-                    Some(id) => (
-                        id.account_level,
-                        id.player_card_id.filter(|s| !s.is_empty()),
-                    ),
-                    None => (0, None),
-                };
-                let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
-                let party = parties
-                    .get(&p.subject)
-                    .cloned()
-                    .unwrap_or_else(|| "Solo".into());
-
-                // Use agent name (capitalized) for hidden players
-                let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-                let display_name = if player_name.is_empty() {
-                    capitalize_first(&agent_name)
-                } else {
-                    player_name
-                };
-
-                let player = PlayerData {
-                    puuid: p.subject.clone(),
-                    name: display_name,
-                    agent: agent_name,
-                    locked: true,
-                    party,
-                    is_me: p.subject == my_puuid,
-                    rank_tier: rank,
-                    rank_rr: 0,
-                    level,
-                    previous_encounter,
-                    previous_encounter_agent,
-                    previous_encounter_was_enemy,
-                    player_card_id,
-                };
-
-                if p.team_id == my_team {
-                    allies.push(player);
-                } else {
-                    enemies.push(player);
-                }
+        let presence_is_menus = my_presence.as_ref().is_some_and(|p| p.is_menus());
+        if presence_is_menus {
+            let mut menus_count = state.consecutive_menus_count.write();
+            *menus_count += 1;
+            if *menus_count >= MENUS_DEBOUNCE_THRESHOLD {
+                presence_confirms_menus = true;
+                tracing::info!(
+                    "[get_game_state] Presence MENUS confirmed x{} while coregame id {} still present; treating match as ended",
+                    *menus_count,
+                    match_id
+                );
+            } else {
+                tracing::debug!(
+                    "[get_game_state] Presence MENUS debounce {}/{} (coregame id {}) — still treating as in-match",
+                    *menus_count,
+                    MENUS_DEBOUNCE_THRESHOLD,
+                    match_id
+                );
             }
+        } else {
+            *state.consecutive_menus_count.write() = 0;
+        }
 
-            // Reset idle counter and update last known state on successful ingame
-            *state.consecutive_idle_count.write() = 0;
-            *state.last_known_state.write() = "ingame".to_string();
+        if !presence_confirms_menus {
+            if let Some(match_data) = api.get_coregame_match(&match_id).await {
+                let map_name = MAP_NAMES
+                    .get(match_data.map_id.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Unknown".into());
 
-            // Round score is only available via our own presence, not GLZ.
-            // get_my_presence already blanks scores when not INGAME.
-            let (ally_score, enemy_score) = match my_presence {
-                Some(p) => (p.ally_score, p.enemy_score),
-                None => (None, None),
-            };
+                let my_puuid = api.puuid.read().clone();
+                let puuids: Vec<String> = match_data
+                    .players
+                    .iter()
+                    .map(|p| p.subject.clone())
+                    .collect();
 
-            let gs = GameState {
-                state: "ingame".into(),
-                match_id: Some(match_id),
-                map_name: Some(map_name),
-                mode_name: None,
-                side: None,
-                allies,
-                enemies,
-                ally_score,
-                enemy_score,
-            };
-            *state.last_full_game_state.write() = Some(gs.clone());
-            return Ok(gs);
+                let names = api.get_player_names(&puuids).await;
+
+                // Get parties with caching
+                let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
+
+                let my_team = match_data
+                    .players
+                    .iter()
+                    .find(|p| p.subject == my_puuid)
+                    .map(|p| p.team_id.clone())
+                    .unwrap_or_default();
+
+                let mut allies = vec![];
+                let mut enemies = vec![];
+
+                for p in match_data.players {
+                    let agent_name = get_agent_name(&p.character_id);
+                    let was_enemy = p.team_id != my_team;
+                    if p.subject != my_puuid && !agent_name.is_empty() {
+                        state.current_match_players.write().insert(
+                            p.subject.clone(),
+                            EncounterPlayer {
+                                agent: agent_name.clone(),
+                                was_enemy,
+                            },
+                        );
+                    }
+
+                    let (
+                        previous_encounter,
+                        previous_encounter_agent,
+                        previous_encounter_was_enemy,
+                    ) = get_encounter_data(&p.subject);
+                    let (level, player_card_id) = match p.player_identity {
+                        Some(id) => (
+                            id.account_level,
+                            id.player_card_id.filter(|s| !s.is_empty()),
+                        ),
+                        None => (0, None),
+                    };
+                    let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
+                    let party = parties
+                        .get(&p.subject)
+                        .cloned()
+                        .unwrap_or_else(|| "Solo".into());
+
+                    // Use agent name (capitalized) for hidden players
+                    let player_name = names.get(&p.subject).cloned().unwrap_or_default();
+                    let display_name = if player_name.is_empty() {
+                        capitalize_first(&agent_name)
+                    } else {
+                        player_name
+                    };
+
+                    let player = PlayerData {
+                        puuid: p.subject.clone(),
+                        name: display_name,
+                        agent: agent_name,
+                        locked: true,
+                        party,
+                        is_me: p.subject == my_puuid,
+                        rank_tier: rank,
+                        rank_rr: 0,
+                        level,
+                        previous_encounter,
+                        previous_encounter_agent,
+                        previous_encounter_was_enemy,
+                        player_card_id,
+                    };
+
+                    if p.team_id == my_team {
+                        allies.push(player);
+                    } else {
+                        enemies.push(player);
+                    }
+                }
+
+                // Reset idle/menus counters and update last known state on successful ingame
+                *state.consecutive_idle_count.write() = 0;
+                *state.consecutive_menus_count.write() = 0;
+                *state.last_known_state.write() = "ingame".to_string();
+
+                // Round score is only available via our own presence, not GLZ.
+                // get_my_presence already blanks scores when not INGAME.
+                let (ally_score, enemy_score) = match my_presence {
+                    Some(p) => (p.ally_score, p.enemy_score),
+                    None => (None, None),
+                };
+
+                let gs = GameState {
+                    state: "ingame".into(),
+                    match_id: Some(match_id),
+                    map_name: Some(map_name),
+                    mode_name: None,
+                    side: None,
+                    allies,
+                    enemies,
+                    ally_score,
+                    enemy_score,
+                };
+                *state.last_full_game_state.write() = Some(gs.clone());
+                return Ok(gs);
+            }
         }
     }
 
@@ -750,27 +807,27 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     let network_errors = *api.consecutive_network_errors.read();
     if was_in_game && network_errors > 0 {
         // We were in a game but getting network errors - don't trust this "idle" state
-        tracing::warn!("[get_game_state] In-game session with {} network errors, returning disconnected instead of idle", network_errors);
-        return Ok(GameState {
-            state: "disconnected".into(),
-            ..Default::default()
-        });
+        tracing::warn!(
+            "[get_game_state] In-game session with {} network errors, holding last live snapshot",
+            network_errors
+        );
+        return Ok(cached_live_or_disconnected(state));
     }
 
-    // DEBOUNCE: If we were in pregame/ingame, require 3 consecutive idle responses
-    // before actually transitioning to idle. This prevents false idle transitions
-    // when API temporarily fails to return match data.
-    // Skip debounce when Riot presence already reports MENUS — that is a real
-    // match end (and the source of the Discord "stuck at 0-0" bug).
-    const IDLE_DEBOUNCE_THRESHOLD: u32 = 3;
+    // DEBOUNCE: pregame → loading → ingame can leave a multi-second gap with no
+    // match id. Old threshold of 3 (~1.5s at live poll) was far too aggressive and
+    // dumped the UI onto "Oyun Bekleniyor" mid-load. Hold the last snapshot longer.
+    // MENUS still short-circuits after its own debounce (above).
+    const IDLE_DEBOUNCE_THRESHOLD: u32 = 20; // ~10s at 500ms live poll
 
     if last_state == "pregame" || last_state == "ingame" {
         if presence_confirms_menus {
             tracing::info!(
-                "[get_game_state] Presence MENUS confirmed, transitioning {} -> idle immediately",
+                "[get_game_state] Presence MENUS confirmed, transitioning {} -> idle",
                 last_state
             );
             *state.consecutive_idle_count.write() = 0;
+            *state.consecutive_menus_count.write() = 0;
         } else {
             let mut idle_count = state.consecutive_idle_count.write();
             *idle_count += 1;
@@ -800,6 +857,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 last_state
             );
             *idle_count = 0;
+            *state.consecutive_menus_count.write() = 0;
         }
     }
 
@@ -815,6 +873,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // Update last known state to idle and drop the match snapshot so Discord
     // stops advertising the previous map/score.
     *state.last_known_state.write() = "idle".to_string();
+    *state.consecutive_menus_count.write() = 0;
     *state.last_full_game_state.write() = None;
 
     Ok(GameState {
