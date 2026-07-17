@@ -55,6 +55,35 @@ export function ChatPanel() {
   const lastMessageIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true); // Default to true so initial load scrolls down
   const prevFirstMessageIdRef = useRef<string | null>(null);
+  /** When true, next message paint should jump straight to the bottom (open / switch chat). */
+  const forceScrollBottomRef = useRef(true);
+  const scrollAnimRef = useRef<number | null>(null);
+
+  const cancelScrollAnim = () => {
+    if (scrollAnimRef.current !== null) {
+      cancelAnimationFrame(scrollAnimRef.current);
+      scrollAnimRef.current = null;
+    }
+  };
+
+  /** Jump to latest message. Instant by default so open never leaves the viewport mid-history. */
+  const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    cancelScrollAnim();
+    // Double-rAF: wait for layout after messages paint (images/fonts can shift height).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!scrollContainerRef.current) return;
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior,
+        });
+        isNearBottomRef.current = true;
+        setShowScrollButton(false);
+      });
+    });
+  };
 
   useLayoutEffect(() => {
     // If we have messages and we had a previous first message
@@ -109,82 +138,52 @@ export function ChatPanel() {
     return () => clearInterval(interval);
   }, [isOpen, isConnected, activeCid, isWindowVisible, activeTab]);
 
-  const scrollAnimRef = useRef<number | null>(null);
-
   // Cleanup animation on unmount
   useEffect(() => {
-    return () => {
-      if (scrollAnimRef.current !== null) {
-        cancelAnimationFrame(scrollAnimRef.current);
-      }
-    };
+    return () => cancelScrollAnim();
   }, []);
 
-  // Scroll restoration for chat
+  // Scroll restoration for friend list tab
   useLayoutEffect(() => {
     if (activeTab === "FRIENDS" && friendListRef.current) {
       friendListRef.current.scrollTop = friendScrollPos.current;
     }
   }, [activeTab]);
 
+  // Panel opened → always land on the latest message
+  useEffect(() => {
+    if (!isOpen) return;
+    forceScrollBottomRef.current = true;
+    isNearBottomRef.current = true;
+    lastMessageIdRef.current = null;
+    if (messages.length > 0 && activeTab === "DM") {
+      scrollToBottom("auto");
+    }
+  }, [isOpen]);
+
   // Smart Scroll for Chat
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (messages.length === 0 || activeTab !== "DM") return;
     const lastMsg = messages[messages.length - 1];
-
-    // Only scroll if we are near bottom OR if it's a completely new chat (id changed and last was null)
-    // or if we just sent a message (we can track that via store or simple expectation)
-    // For now, simple logic: if near bottom, stay at bottom.
-
-    // Also if this is the FIRST load of a chat (lastMessageIdRef.current is null), we should scroll.
     const isFirstLoad = lastMessageIdRef.current === null;
+    const shouldForce = forceScrollBottomRef.current;
 
-    if (lastMsg.id !== lastMessageIdRef.current) {
-      if (scrollContainerRef.current && (isNearBottomRef.current || isFirstLoad)) {
-        if (isFirstLoad) {
-          // Custom slow scroll for first load (2s duration)
-          const container = scrollContainerRef.current;
-          const start = container.scrollTop;
-          const target = container.scrollHeight - container.clientHeight;
-          const distance = target - start;
-          const duration = 2000;
-          const startTime = performance.now();
-
-          const animate = (time: number) => {
-            const elapsed = time - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const ease = 1 - Math.pow(1 - progress, 4); // Quartic ease-out
-
-            container.scrollTop = start + distance * ease;
-
-            if (progress < 1) {
-              scrollAnimRef.current = requestAnimationFrame(animate);
-            } else {
-              scrollAnimRef.current = null;
-            }
-          };
-
-          if (distance > 0) {
-            if (scrollAnimRef.current !== null) cancelAnimationFrame(scrollAnimRef.current);
-            scrollAnimRef.current = requestAnimationFrame(animate);
-          }
-        } else {
-          // Safe scroll using the container directly to prevent parent layout shifts
-          scrollContainerRef.current.scrollTo({
-            top: scrollContainerRef.current.scrollHeight,
-            behavior: "smooth",
-          });
-        }
+    if (lastMsg.id !== lastMessageIdRef.current || shouldForce) {
+      if (scrollContainerRef.current && (isNearBottomRef.current || isFirstLoad || shouldForce)) {
+        // Open / conversation switch: instant jump. Live new messages: smooth.
+        scrollToBottom(shouldForce || isFirstLoad ? "auto" : "smooth");
+        forceScrollBottomRef.current = false;
       }
       lastMessageIdRef.current = lastMsg.id;
     }
-  }, [messages]);
+  }, [messages, activeTab]);
 
-  // Reset scroll tracker
+  // Reset scroll tracker when switching conversations
   useEffect(() => {
     lastMessageIdRef.current = null;
     isNearBottomRef.current = true;
     prevFirstMessageIdRef.current = null;
+    forceScrollBottomRef.current = true;
   }, [activeCid]);
 
   // Handle Outside Click
@@ -233,16 +232,10 @@ export function ChatPanel() {
     const success = await sendMessage(messageToSend, type);
     if (success) {
       isNearBottomRef.current = true;
+      forceScrollBottomRef.current = true;
       // Force immediate message fetch to show the sent message
       await fetchMessages(true);
-      setTimeout(() => {
-        if (scrollContainerRef.current) {
-          scrollContainerRef.current.scrollTo({
-            top: scrollContainerRef.current.scrollHeight,
-            behavior: "smooth",
-          });
-        }
-      }, 100);
+      scrollToBottom("smooth");
     } else {
       // Restore message on failure
       setInputValue(messageToSend);
@@ -516,9 +509,8 @@ export function ChatPanel() {
               {showScrollButton && (
                 <button
                   onClick={() => {
-                    scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: "smooth" });
-                    isNearBottomRef.current = true;
-                    setShowScrollButton(false);
+                    forceScrollBottomRef.current = true;
+                    scrollToBottom("smooth");
                   }}
                   className="absolute bottom-24 right-6 z-20 w-8 h-8 rounded-full bg-accent-red text-white shadow-lg flex items-center justify-center animate-bounce-in hover:bg-accent-red/90 transition-all active:scale-95"
                   title={t("chat.scroll_down")}
