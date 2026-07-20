@@ -43,8 +43,10 @@ interface SettingsStore extends SettingsState {
   syncDiscordRpc: () => void;
 }
 
+const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 5;
+
 const clampAutoLockDelay = (seconds: number) => {
-  if (!Number.isFinite(seconds)) return 6;
+  if (!Number.isFinite(seconds)) return DEFAULT_AUTO_LOCK_DELAY_SECONDS;
   return Math.min(10, Math.max(1, Math.round(seconds)));
 };
 
@@ -133,7 +135,7 @@ export const useSettingsStore = create<SettingsStore>()(
       isWindowVisible: true,
       contactInfo: null,
       windowStyle: "docked" as WindowStyle, // Default docked
-      autoLockDelaySeconds: 6,
+      autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
 
       setAutoLockDelaySeconds: (seconds: number) => {
@@ -142,10 +144,24 @@ export const useSettingsStore = create<SettingsStore>()(
         invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
       },
 
+      // Push persisted delay to backend only AFTER rehydrate.
+      // Calling this before hydration overwrites localStorage with the default.
       syncAutoLockDelay: () => {
-        const autoLockDelaySeconds = clampAutoLockDelay(get().autoLockDelaySeconds);
-        set({ autoLockDelaySeconds });
-        invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
+        const push = () => {
+          const autoLockDelaySeconds = clampAutoLockDelay(get().autoLockDelaySeconds);
+          set({ autoLockDelaySeconds });
+          invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
+        };
+
+        if (useSettingsStore.persist.hasHydrated()) {
+          push();
+          return;
+        }
+
+        const unsub = useSettingsStore.persist.onFinishHydration(() => {
+          unsub();
+          push();
+        });
       },
 
       setDiscordRpcEnabled: (enabled: boolean) => {

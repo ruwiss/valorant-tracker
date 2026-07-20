@@ -76,7 +76,7 @@ impl AppState {
                 .build()
                 .unwrap_or_default(),
             auto_lock_agent: Arc::new(RwLock::new(None)),
-            auto_lock_delay_ms: Arc::new(RwLock::new(6000)),
+            auto_lock_delay_ms: Arc::new(RwLock::new(5000)),
             cached_parties: RwLock::new(HashMap::new()),
             cached_parties_match_id: RwLock::new(None),
             in_game_session: RwLock::new(false),

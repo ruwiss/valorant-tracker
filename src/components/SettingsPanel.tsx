@@ -288,7 +288,7 @@ export function SettingsPanel() {
               />
               <div className="flex justify-between text-[8px] text-dim/70 font-bold mt-1">
                 <span>1s</span>
-                <span>{locale === "tr" ? "Varsayılan: 6s" : "Default: 6s"}</span>
+                <span>{locale === "tr" ? "Varsayılan: 5s" : "Default: 5s"}</span>
                 <span>10s</span>
               </div>
             </div>
