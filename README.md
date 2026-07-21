@@ -5,9 +5,11 @@
 </p>
 
 <p align="center">
-  <video src="images/valotracker.mp4" width="800" height="600" controls playsinline>
-    Demo video desteklenmiyor. <a href="images/valotracker.mp4">Videoyu indir</a>.
-  </video>
+  <img src="images/valotracker.gif" alt="VALORANT Tracker Demo" width="800" height="600">
+</p>
+
+<p align="center">
+  <a href="images/valotracker.mp4">MP4 indir</a>
 </p>
 
 ---
