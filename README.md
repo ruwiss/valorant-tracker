@@ -17,15 +17,6 @@ Lightweight desktop companion for VALORANT. Real-time match data, automation, an
 - **Quick messaging** — chat with friends without leaving the app
 - **Game settings presets** — save and restore game settings profiles
 
-## Contact
-
-| Platform | Link |
-| :--- | :--- |
-| **Telegram** | [@omergundgr](https://t.me/omergundgr) |
-| **Discord** | `ruwis.db` |
-| **R10.net** | [omergundogar](https://www.r10.net/profil/118273-omergundogar.html) |
-| **Email** | [hqnetcontact@gmail.com](mailto:hqnetcontact@gmail.com) |
-
 ## License
 
 See [LICENSE](LICENSE).
