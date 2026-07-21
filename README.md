@@ -4,14 +4,6 @@
   <img src="images/vtracker.png" alt="VALORANT Tracker Önizleme" width="800">
 </p>
 
-<p align="center">
-  <img src="images/valotracker.gif" alt="VALORANT Tracker Demo" width="800" height="600">
-</p>
-
-<p align="center">
-  <a href="images/valotracker.mp4">MP4 indir</a>
-</p>
-
 ---
 
 **VALORANT TRACKER**, VALORANT deneyiminizi geliştirmek için tasarlanmış güçlü, hafif ve modern bir masaüstü uygulamasıdır. Performans ve estetik ön planda tutularak geliştirilen uygulama; gerçek zamanlı veriler, otomasyonlar ve sosyal özellikleri doğrudan masaüstünüze getirir.
@@ -33,8 +25,6 @@
 - **Hızlı Mesajlaşma (DM)**: Uygulamadan çıkmadan arkadaşlarınızla hızlıca mesajlaşın.
 - **Mesaj Geçmişi**: Arkadaşlarınızla olan tüm yazışmalarınızın geçmişini tek bir yerden takip edin.
 
-
-
 ### İletişim
 
 Sorularınız için aşağıdaki kanallardan ulaşabilirsiniz:
@@ -48,4 +38,8 @@ Sorularınız için aşağıdaki kanallardan ulaşabilirsiniz:
 
 <p align="center">
   <img src="images/vtracker2.png" alt="Arayüz" width="800">
+</p>
+
+<p align="center">
+  <img src="images/valotracker.gif" alt="VALORANT Tracker Demo" width="800" height="600">
 </p>
