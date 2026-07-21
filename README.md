@@ -4,6 +4,12 @@
   <img src="images/vtracker.png" alt="VALORANT Tracker Önizleme" width="800">
 </p>
 
+<p align="center">
+  <video src="images/valotracker.mp4" width="800" height="600" controls playsinline>
+    Demo video desteklenmiyor. <a href="images/valotracker.mp4">Videoyu indir</a>.
+  </video>
+</p>
+
 ---
 
 **VALORANT TRACKER**, VALORANT deneyiminizi geliştirmek için tasarlanmış güçlü, hafif ve modern bir masaüstü uygulamasıdır. Performans ve estetik ön planda tutularak geliştirilen uygulama; gerçek zamanlı veriler, otomasyonlar ve sosyal özellikleri doğrudan masaüstünüze getirir.
