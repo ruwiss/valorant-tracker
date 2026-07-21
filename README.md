@@ -1,45 +1,31 @@
-# <img src="images/icon.png" width="48" height="48" align="center" /> VALORANT TRACKER
+# VALORANT Tracker
 
 <p align="center">
-  <img src="images/vtracker.png" alt="VALORANT Tracker Önizleme" width="800">
+  <img src="images/banner.webp" alt="VALORANT Tracker" width="800">
 </p>
 
----
+Lightweight desktop companion for VALORANT. Real-time match data, automation, and social tools in a modern Tauri app.
 
-**VALORANT TRACKER**, VALORANT deneyiminizi geliştirmek için tasarlanmış güçlü, hafif ve modern bir masaüstü uygulamasıdır. Performans ve estetik ön planda tutularak geliştirilen uygulama; gerçek zamanlı veriler, otomasyonlar ve sosyal özellikleri doğrudan masaüstünüze getirir.
+## Features
 
-## Temel Özellikler
+- **Map-based agent instalock** — lock your preferred agent instantly per map
+- **Weapon skin viewer** — see what skins other players are using in the match
+- **Premade / party detection** — see who a player is queued with
+- **Player statistics** — quick access to performance and profile stats
+- **Night Market & store** — browse the daily shop and Night Market offers
+- **Fast name translation** — translate foreign player names in real time
+- **Quick messaging** — chat with friends without leaving the app
+- **Game settings presets** — save and restore game settings profiles
 
-### Gelişmiş Analiz
-- **Silah Skin Görüntüleyici**: Maçtaki diğer oyuncuların hangi silah kaplamalarını (skin) kullandığını anında görün.
-- **Takım Arkadaşı Geçmişi**: Oyuncuların son 3 maçına dayanarak kimlerle sık oynadığını (premade) tespit edin.
-- **Tracker.gg Entegrasyonu**: Detaylı oyuncu profili istatistiklerine ve performans geçmişine hızlı erişim sağlayın.
+## Contact
 
-### Otomasyon ve Araçlar
-- **Harita Bazlı Otomatik Kilitleme (Instalock)**: Seçilen haritaya göre favori ajanınızı maç başlar başlamaz otomatik olarak kilitleyin.
-- **Yabancı Dil İsim Çevirisi**: Daha iyi iletişim için yabancı dildeki isimleri gerçek zamanlı olarak çevirin.
-- **Oyun İçi Arayüz (Overlay)**: Seçim ekranında ve maç sırasında istatistikleri gösteren kesintisiz paneller.
-- **Özel Tuş Ataması (Hotkeys)**: Uygulama arayüzünü oyun içindeyken tek bir tuşla anında ekrana getirin veya gizleyin.
-
-### İletişim
-- **Hızlı Mesajlaşma (DM)**: Uygulamadan çıkmadan arkadaşlarınızla hızlıca mesajlaşın.
-- **Mesaj Geçmişi**: Arkadaşlarınızla olan tüm yazışmalarınızın geçmişini tek bir yerden takip edin.
-
-### İletişim
-
-Sorularınız için aşağıdaki kanallardan ulaşabilirsiniz:
-
-| Platform | Bilgi / Link |
+| Platform | Link |
 | :--- | :--- |
 | **Telegram** | [@omergundgr](https://t.me/omergundgr) |
 | **Discord** | `ruwis.db` |
 | **R10.net** | [omergundogar](https://www.r10.net/profil/118273-omergundogar.html) |
-| **E-posta** | [hqnetcontact@gmail.com](mailto:hqnetcontact@gmail.com) |
+| **Email** | [hqnetcontact@gmail.com](mailto:hqnetcontact@gmail.com) |
 
-<p align="center">
-  <img src="images/vtracker2.png" alt="Arayüz" width="800">
-</p>
+## License
 
-<p align="center">
-  <img src="images/valotracker.gif" alt="VALORANT Tracker Demo" width="800" height="600">
-</p>
+See [LICENSE](LICENSE).
