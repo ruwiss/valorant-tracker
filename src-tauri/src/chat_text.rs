@@ -194,6 +194,9 @@ const SYMBOL_REPLACEMENTS: &[(&str, &str)] = &[
     ("...", "\u{2026}"), // …
     // Status / icons (user-confirmed visible in-game)
     (":check:", "\u{2713}"),    // ✓
+    (":yes:", "\u{2713}"),      // ✓ (alias)
+    (":wrong:", "\u{2717}"),    // ✗
+    (":x:", "\u{2717}"),        // ✗ (alias)
     (":warn:", "\u{26A0}"),     // ⚠
     (":skull:", "\u{2620}"),    // ☠
     (":kurukafa:", "\u{2620}"), // ☠ (TR alias)

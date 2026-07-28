@@ -5,7 +5,7 @@
  * Greetings: sa / as
  * Translate: !t <lang> <text>
  * Agents: <sage (ally) / >jett (enemy) → @Name (no #tag)
- * Symbols: <3 </3 -> <- ... :check: :warn: :skull: / :kurukafa:
+ * Symbols: <3 </3 -> <- ... :check: :wrong: :warn: :skull: / :kurukafa:
  */
 
 const SYMBOLS: [string, string][] = [
@@ -15,6 +15,9 @@ const SYMBOLS: [string, string][] = [
   ["<-", "\u2190"],
   ["...", "\u2026"],
   [":check:", "\u2713"],
+  [":yes:", "\u2713"],
+  [":wrong:", "\u2717"],
+  [":x:", "\u2717"],
   [":warn:", "\u26A0"],
   [":skull:", "\u2620"],
   [":kurukafa:", "\u2620"],
