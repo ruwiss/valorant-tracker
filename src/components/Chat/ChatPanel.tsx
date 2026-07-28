@@ -252,10 +252,19 @@ export function ChatPanel() {
   // In render:
   // <form onSubmit={handleSend} ...>
 
-  // Filter Logic
+  /** Prefer in-game / party channel labels over generic "TEAM". */
+  const conversationLabel = (conv: (typeof conversations)[number]) => {
+    const cid = conv.cid.toLowerCase();
+    if (cid.includes("coregame")) return t("chat.game");
+    if (cid.includes("parties") && conv.type === "groupchat") return t("chat.party");
+    if (conv.type === "groupchat") return conv.game_name || t("chat.team");
+    return conv.game_name || t("chat.dm");
+  };
+
+  // Chat tab: DMs + live game/party channels (groupchat goes to in-game Valorant chat).
   const filteredConversations = useMemo(() => {
-    if (activeTab === "DM") return conversations.filter((c) => c.type !== "groupchat");
-    return []; // Friends tab doesn't use this
+    if (activeTab !== "DM") return [];
+    return conversations;
   }, [conversations, activeTab]);
 
   const filteredFriends = useMemo(() => {
@@ -276,9 +285,13 @@ export function ChatPanel() {
 
     // Auto-select logic based on tab
     if (tab === "DM") {
-      // Auto select first DM
-      const firstDm = conversations.find((c) => c.type !== "groupchat");
-      setActiveCid(firstDm ? firstDm.cid : null);
+      // Prefer live game chat, then party, then first conversation.
+      const preferred =
+        conversations.find((c) => c.cid.toLowerCase().includes("coregame")) ||
+        conversations.find((c) => c.type === "groupchat" && c.cid.toLowerCase().includes("parties")) ||
+        conversations.find((c) => c.type === "groupchat") ||
+        conversations[0];
+      setActiveCid(preferred ? preferred.cid : null);
     }
   };
 
@@ -426,7 +439,7 @@ export function ChatPanel() {
                       )}
                     >
                       <div className={clsx("w-1.5 h-1.5 rounded-full", conv.type === "groupchat" ? "bg-accent-cyan" : "bg-accent-gold")} />
-                      {conv.type === "groupchat" ? t("chat.team") : conv.game_name || t("chat.dm")}
+                      {conversationLabel(conv)}
                       {conv.unread_count > 0 && <span className="ml-1 bg-accent-red text-white text-[9px] px-1 rounded-sm">{conv.unread_count}</span>}
                     </button>
                   ))}

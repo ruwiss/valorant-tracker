@@ -1,12 +1,9 @@
 import { useEffect, useState } from "react";
 import { usePresetsStore } from "../stores/presetsStore";
 import { useGameStore } from "../stores/gameStore";
-import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
 import { invokeCommand } from "../utils/ipc";
-import { previewLayer, buildCrosshairCode } from "../utils/crosshair";
-import { MiniCrosshair } from "./MiniCrosshair";
-import type { PresetMeta, CrosshairProfileData } from "../lib/types";
+import type { PresetMeta } from "../lib/types";
 
 function formatDate(unixSeconds: number, locale: string): string {
   try {
@@ -22,6 +19,12 @@ function formatDate(unixSeconds: number, locale: string): string {
   }
 }
 
+/** Format sensitivity as a fixed 3-decimal string (Valorant-style), cleaning FP noise. */
+function formatSens(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return (Math.round(value * 1000) / 1000).toFixed(3);
+}
+
 export function PresetsTab() {
   const { t, locale } = useI18n();
   const { presets, loading, applyingId, armedId, refresh, capture, remove, rename, arm, closeAndArm, disarm, syncArmed } =
@@ -33,15 +36,11 @@ export function PresetsTab() {
   // direct write while it runs would be lost).
   const [gameRunning, setGameRunning] = useState(false);
 
-  const setHoveredCrosshair = usePanelStore((s) => s.setHoveredCrosshair);
-
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<PresetMeta | null>(null);
-  // Crosshair accordion: which preset is expanded + its loaded profiles.
+  // Sensitivity accordion: which preset is expanded.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [crosshairs, setCrosshairs] = useState<CrosshairProfileData | null>(null);
-  const [loadingXhairs, setLoadingXhairs] = useState(false);
   // Inline rename: which preset is being edited + draft text.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -96,11 +95,6 @@ export function PresetsTab() {
     };
   }, [refresh, t]);
 
-  // Clear any lingering crosshair preview when leaving the tab.
-  useEffect(() => {
-    return () => setHoveredCrosshair(null);
-  }, [setHoveredCrosshair]);
-
   const handleSave = async () => {
     if (!name.trim() || saving) return;
     setSaving(true);
@@ -138,36 +132,9 @@ export function PresetsTab() {
     if (newName) await rename(id, newName);
   };
 
-  // Toggle the crosshair accordion for a preset, loading its profiles on open.
-  const toggleExpand = async (id: string) => {
-    setHoveredCrosshair(null);
-    if (expandedId === id) {
-      setExpandedId(null);
-      setCrosshairs(null);
-      return;
-    }
-    setExpandedId(id);
-    setCrosshairs(null);
-    setLoadingXhairs(true);
-    const data = await invokeCommand<CrosshairProfileData>(
-      "get_preset_crosshairs",
-      { id },
-      { suppressErrorToast: true },
-    );
-    setLoadingXhairs(false);
-    setCrosshairs(data ?? { currentProfile: 0, profiles: [] });
-  };
-
-  // Copy a profile's Valorant import code to the clipboard.
-  const copyCrosshairCode = async (prof: CrosshairProfileData["profiles"][number]) => {
-    const { toast } = await import("sonner");
-    try {
-      const code = buildCrosshairCode(previewLayer(prof));
-      await navigator.clipboard.writeText(code);
-      toast.success(t("presets.crosshairCopied"));
-    } catch {
-      toast.error(t("presets.crosshairCopyFailed"));
-    }
+  // Toggle the sensitivity accordion for a preset (values already on PresetMeta).
+  const toggleExpand = (id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
   };
 
   return (
@@ -228,6 +195,8 @@ export function PresetsTab() {
         ) : (
           presets.map((p) => {
             const expanded = expandedId === p.id;
+            const hasSens =
+              p.sensitivity != null || p.sensitivity_ads != null || p.sensitivity_zoomed != null;
             return (
               <div
                 key={p.id}
@@ -253,7 +222,7 @@ export function PresetsTab() {
                     <button
                       onClick={() => toggleExpand(p.id)}
                       className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
-                      title={t("presets.crosshairs")}
+                      title={t("presets.sensitivity")}
                     >
                       <svg
                         className={`w-3.5 h-3.5 shrink-0 text-dim transition-transform duration-300 ${expanded ? "rotate-90 text-accent-cyan" : "group-hover:text-primary"}`}
@@ -362,52 +331,36 @@ export function PresetsTab() {
                   )}
                 </div>
 
-                {/* Crosshair accordion */}
+                {/* Sensitivity accordion */}
                 {expanded && (
-                  <div className="border-t border-white/5 px-2 py-2 animate-in slide-in-from-top-1 duration-200">
+                  <div className="border-t border-white/5 px-2.5 py-2 animate-in slide-in-from-top-1 duration-200">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="text-[8px] font-black uppercase tracking-widest text-dim">
-                        {t("presets.crosshairs")}
+                        {t("presets.sensitivity")}
                       </span>
-                      {crosshairs && crosshairs.profiles.length > 0 && (
-                        <span className="text-[8px] text-dim/50">({crosshairs.profiles.length})</span>
-                      )}
                     </div>
 
-                    {loadingXhairs ? (
-                      <p className="text-[9px] text-dim py-2 text-center">…</p>
-                    ) : !crosshairs || crosshairs.profiles.length === 0 ? (
-                      <p className="text-[9px] text-dim/70 py-2 text-center">{t("presets.noCrosshairs")}</p>
+                    {!hasSens ? (
+                      <p className="text-[9px] text-dim/70 py-2 text-center">{t("presets.noSensitivity")}</p>
                     ) : (
-                      <div className="space-y-0.5">
-                        {crosshairs.profiles.map((prof, i) => (
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {(
+                          [
+                            { key: "hip", label: t("presets.sensHip"), value: p.sensitivity },
+                            { key: "ads", label: t("presets.sensAds"), value: p.sensitivity_ads },
+                            { key: "scoped", label: t("presets.sensScoped"), value: p.sensitivity_zoomed },
+                          ] as const
+                        ).map((row) => (
                           <div
-                            key={i}
-                            onMouseEnter={() =>
-                              setHoveredCrosshair({
-                                name: prof.profileName,
-                                layer: previewLayer(prof),
-                              })
-                            }
-                            onMouseLeave={() => setHoveredCrosshair(null)}
-                            onClick={() => copyCrosshairCode(prof)}
-                            title={t("presets.copyCrosshairCode")}
-                            className="group/xh flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-accent-cyan/10 cursor-pointer transition-colors"
+                            key={row.key}
+                            className="flex flex-col items-center gap-0.5 rounded-md bg-white/[0.03] border border-white/5 px-1.5 py-1.5"
                           >
-                            <MiniCrosshair layer={previewLayer(prof)} size={26} />
-                            <span className="flex-1 min-w-0 text-[9px] text-secondary truncate">
-                              {prof.profileName}
+                            <span className="text-[7px] font-black uppercase tracking-wider text-dim">
+                              {row.label}
                             </span>
-                            {i === crosshairs.currentProfile && (
-                              <span className="shrink-0 text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-accent-cyan/20 text-accent-cyan">
-                                {t("presets.currentProfile")}
-                              </span>
-                            )}
-                            {/* Copy hint — appears on hover. */}
-                            <svg className="shrink-0 w-3 h-3 text-dim/0 group-hover/xh:text-accent-cyan/70 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
+                            <span className="text-[12px] font-bold tabular-nums text-accent-cyan">
+                              {formatSens(row.value)}
+                            </span>
                           </div>
                         ))}
                       </div>

@@ -151,7 +151,12 @@ export interface PresetMeta {
   created_at: number; // unix seconds
   source_puuid: string;
   auto_backup: boolean;
+  /** Hipfire mouse sensitivity (MouseSensitivity). */
   sensitivity: number | null;
+  /** ADS sensitivity multiplier (MouseSensitivityADS). */
+  sensitivity_ads: number | null;
+  /** Scoped / zoomed sensitivity multiplier (MouseSensitivityZoomed). */
+  sensitivity_zoomed: number | null;
 }
 
 // ===== Crosshair (SavedCrosshairProfileData) =====

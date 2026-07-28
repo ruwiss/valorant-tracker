@@ -47,6 +47,29 @@ pub struct ValorantAPI {
     last_recovery_check: RwLock<std::time::Instant>, // Rate limit recovery checks
 }
 
+/// Outcome of a remote GET. Callers that care about match lifecycle must
+/// distinguish a clean 404 (player left the match) from transient failures
+/// (timeouts / 5xx / auth blips) so the UI does not flash "waiting".
+#[derive(Debug)]
+pub enum RemoteResult<T> {
+    Ok(T),
+    /// Resource genuinely absent (HTTP 404 / 204).
+    NotFound,
+    /// Network, auth, 5xx, parse, or other recoverable failure.
+    Transient,
+}
+
+/// Probe of pregame/coregame player endpoints.
+#[derive(Debug, Clone)]
+pub enum MatchProbe {
+    /// Player is registered in a match with this id.
+    InMatch(String),
+    /// Clean "not in this phase" (404 or empty MatchID).
+    NotInMatch,
+    /// Could not tell — keep last live snapshot.
+    Uncertain,
+}
+
 impl ValorantAPI {
     pub fn new() -> Self {
         // 1. Standard client for Local API
@@ -619,7 +642,7 @@ impl ValorantAPI {
         format!("https://pd.{}.a.pvp.net{}", shard, endpoint)
     }
 
-    async fn get_remote<T: serde::de::DeserializeOwned>(&self, url: &str) -> Option<T> {
+    async fn get_remote_ex<T: serde::de::DeserializeOwned>(&self, url: &str) -> RemoteResult<T> {
         // Check if tokens might be stale
         if self.should_refresh_tokens() {
             *self.needs_reinit.write() = true;
@@ -637,18 +660,52 @@ impl ValorantAPI {
 
             match req.send().await {
                 Ok(resp) => {
+                    let status = resp.status().as_u16();
                     // Check for auth errors that indicate connection is stale
-                    if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
+                    if status == 401 || status == 403 {
                         tracing::debug!(
                             "[get_remote] Auth error ({}), triggering reinit",
-                            resp.status()
+                            status
                         );
                         *self.needs_reinit.write() = true;
-                        return None;
+                        return RemoteResult::Transient;
                     }
-                    // Success - reset error counter
-                    *self.consecutive_network_errors.write() = 0;
-                    return resp.json().await.ok();
+                    // Clean absence — not an error, just "not in match / not found".
+                    if status == 404 || status == 204 {
+                        *self.consecutive_network_errors.write() = 0;
+                        return RemoteResult::NotFound;
+                    }
+                    // Rate-limit / server errors: treat as transient, not match end.
+                    if status == 429 || (500..600).contains(&status) {
+                        tracing::debug!("[get_remote] Server/rate status {} (transient)", status);
+                        let mut errors = self.consecutive_network_errors.write();
+                        *errors += 1;
+                        if *errors >= 3 {
+                            *self.needs_reinit.write() = true;
+                        }
+                        return RemoteResult::Transient;
+                    }
+                    if !(200..300).contains(&status) {
+                        tracing::debug!("[get_remote] Unexpected status {} (transient)", status);
+                        let mut errors = self.consecutive_network_errors.write();
+                        *errors += 1;
+                        if *errors >= 3 {
+                            *self.needs_reinit.write() = true;
+                        }
+                        return RemoteResult::Transient;
+                    }
+                    // Success body — parse JSON
+                    match resp.json::<T>().await {
+                        Ok(v) => {
+                            *self.consecutive_network_errors.write() = 0;
+                            return RemoteResult::Ok(v);
+                        }
+                        Err(e) => {
+                            tracing::debug!("[get_remote] JSON parse failed: {}", e);
+                            // 200 with unparseable body is not a clean "not in match".
+                            return RemoteResult::Transient;
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::debug!("[get_remote] Request error (attempt {}): {}", attempt, e);
@@ -667,7 +724,7 @@ impl ValorantAPI {
                         );
                         *self.needs_reinit.write() = true;
                         *self.connected.write() = false;
-                        return None;
+                        return RemoteResult::Transient;
                     }
 
                     // If lockfile hasn't changed, try to detect actual port from process
@@ -677,7 +734,7 @@ impl ValorantAPI {
                             "[get_remote] Port recovery successful, triggering reinit..."
                         );
                         *self.connected.write() = false;
-                        return None;
+                        return RemoteResult::Transient;
                     }
 
                     // Increment error counter
@@ -691,11 +748,18 @@ impl ValorantAPI {
                         );
                         *self.needs_reinit.write() = true;
                     }
-                    return None;
+                    return RemoteResult::Transient;
                 }
             }
         }
-        None
+        RemoteResult::Transient
+    }
+
+    async fn get_remote<T: serde::de::DeserializeOwned>(&self, url: &str) -> Option<T> {
+        match self.get_remote_ex(url).await {
+            RemoteResult::Ok(v) => Some(v),
+            RemoteResult::NotFound | RemoteResult::Transient => None,
+        }
     }
 
     #[allow(dead_code)]
@@ -792,27 +856,70 @@ impl ValorantAPI {
     }
 
     pub async fn get_pregame_match_id(&self) -> Option<String> {
+        match self.probe_pregame_match_id().await {
+            MatchProbe::InMatch(id) => Some(id),
+            MatchProbe::NotInMatch | MatchProbe::Uncertain => None,
+        }
+    }
+
+    /// Probe pregame player endpoint distinguishing 404 vs transient failure.
+    pub async fn probe_pregame_match_id(&self) -> MatchProbe {
         let puuid = self.puuid.read().clone();
         let url = self.glz_url(&format!("/pregame/v1/players/{}", puuid));
-        let data: PregamePlayer = self.get_remote(&url).await?;
-        data.match_id
+        match self.get_remote_ex::<PregamePlayer>(&url).await {
+            RemoteResult::Ok(data) => match data.match_id.filter(|s| !s.is_empty()) {
+                Some(id) => MatchProbe::InMatch(id),
+                None => MatchProbe::NotInMatch,
+            },
+            RemoteResult::NotFound => MatchProbe::NotInMatch,
+            RemoteResult::Transient => MatchProbe::Uncertain,
+        }
     }
 
     pub async fn get_pregame_match(&self, match_id: &str) -> Option<PregameMatch> {
+        match self.get_pregame_match_ex(match_id).await {
+            RemoteResult::Ok(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub async fn get_pregame_match_ex(&self, match_id: &str) -> RemoteResult<PregameMatch> {
         let url = self.glz_url(&format!("/pregame/v1/matches/{}", match_id));
-        self.get_remote(&url).await
+        self.get_remote_ex(&url).await
     }
 
     pub async fn get_coregame_match_id(&self) -> Option<String> {
-        let puuid = self.puuid.read().clone();
-        let url = self.glz_url(&format!("/core-game/v1/players/{}", puuid));
-        let data: CoregamePlayer = self.get_remote(&url).await?;
-        data.match_id
+        match self.probe_coregame_match_id().await {
+            MatchProbe::InMatch(id) => Some(id),
+            MatchProbe::NotInMatch | MatchProbe::Uncertain => None,
+        }
     }
 
+    /// Probe coregame player endpoint distinguishing 404 vs transient failure.
+    pub async fn probe_coregame_match_id(&self) -> MatchProbe {
+        let puuid = self.puuid.read().clone();
+        let url = self.glz_url(&format!("/core-game/v1/players/{}", puuid));
+        match self.get_remote_ex::<CoregamePlayer>(&url).await {
+            RemoteResult::Ok(data) => match data.match_id.filter(|s| !s.is_empty()) {
+                Some(id) => MatchProbe::InMatch(id),
+                None => MatchProbe::NotInMatch,
+            },
+            RemoteResult::NotFound => MatchProbe::NotInMatch,
+            RemoteResult::Transient => MatchProbe::Uncertain,
+        }
+    }
+
+    #[allow(dead_code)]
     pub async fn get_coregame_match(&self, match_id: &str) -> Option<CoregameMatch> {
+        match self.get_coregame_match_ex(match_id).await {
+            RemoteResult::Ok(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub async fn get_coregame_match_ex(&self, match_id: &str) -> RemoteResult<CoregameMatch> {
         let url = self.glz_url(&format!("/core-game/v1/matches/{}", match_id));
-        self.get_remote(&url).await
+        self.get_remote_ex(&url).await
     }
 
     pub async fn get_player_names(&self, puuids: &[String]) -> HashMap<String, String> {
@@ -1909,8 +2016,7 @@ impl ValorantAPI {
         }
     }
 
-    /// Get local game chat conversation info
-    #[allow(dead_code)]
+    /// Get local game chat conversation info (in-match team/all chat).
     pub async fn get_game_chat(&self) -> Option<ConversationsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
@@ -1931,8 +2037,7 @@ impl ValorantAPI {
         }
     }
 
-    /// Get local party chat conversation info
-    #[allow(dead_code)]
+    /// Get local party chat conversation info (lobby/party stack chat).
     pub async fn get_party_chat(&self) -> Option<ConversationsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
@@ -1964,9 +2069,13 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
         let url = format!("https://127.0.0.1:{}/chat/v6/messages", port);
 
+        // Shortcuts (sa/as/<3/!t) — shared with the in-game keyboard expander.
+        // Translate may block briefly on network; only when `!t` is used.
+        let message = crate::chat_text::transform_outgoing_chat(message);
+
         let body = SendChatRequest {
             cid: cid.to_string(),
-            message: message.to_string(),
+            message,
             message_type: message_type.to_string(),
         };
 

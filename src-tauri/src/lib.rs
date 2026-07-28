@@ -1,4 +1,7 @@
 mod api;
+#[cfg(windows)]
+mod chat_expander;
+mod chat_text;
 mod commands;
 mod constants;
 mod discord;
@@ -129,6 +132,11 @@ pub fn run() -> RunResult {
             // lifecycle (connect, watch, self-reconnect, autolock) and emits
             // `connection_changed` / `game_state_changed` events to the frontend.
             commands::start_supervisor(app.handle().clone());
+
+            // In-game chat shortcuts (sa / as / <3) — native game chat box only
+            // works via keyboard expansion; the HTTP API never sees those keys.
+            #[cfg(windows)]
+            chat_expander::start();
 
             #[cfg(debug_assertions)]
             {

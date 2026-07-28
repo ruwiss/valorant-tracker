@@ -34,7 +34,8 @@ const PAGE_SIZE = 50;
 
 export const useChatStore = create<ChatStore>((set, get) => ({
   activeCid: null,
-  activeTab: "DM",
+  // No default open DM → land on friends; switch to DM when a conversation is opened.
+  activeTab: "FRIENDS",
   conversations: [],
   messages: [],
   friends: [],
@@ -45,11 +46,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
-  setIsOpen: (isOpen) => set({ isOpen }),
+  setIsOpen: (isOpen) => {
+    // Opening the panel with no active conversation → friends tab (not empty DM).
+    if (isOpen && !get().activeCid) {
+      set({ isOpen: true, activeTab: "FRIENDS" });
+      return;
+    }
+    set({ isOpen });
+  },
 
   setActiveCid: (cid) => {
-    set({ activeCid: cid, page: 0, messages: [], hasMore: true });
-    get().fetchMessages(true);
+    set({
+      activeCid: cid,
+      page: 0,
+      messages: [],
+      hasMore: true,
+      // Opening a conversation always lands on the DM tab.
+      ...(cid ? { activeTab: "DM" as Tab } : {}),
+    });
+    if (cid) get().fetchMessages(true);
   },
 
   fetchConversations: async () => {
@@ -198,6 +213,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const { activeCid } = get();
     if (!activeCid) return false;
 
+    // Shortcuts (sa/as/<3) are applied in the Rust send path so they hit
+    // in-game Valorant chat (groupchat) the same way as DMs.
     try {
       const success = await invokeCommand<boolean>("send_message", {
         cid: activeCid,

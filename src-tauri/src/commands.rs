@@ -1,4 +1,5 @@
 use crate::api::types::*;
+use crate::api::{MatchProbe, RemoteResult};
 use crate::constants::{AGENTS, MAP_NAMES, QUEUE_NAMES};
 use crate::state::{AppState, EncounterPlayer};
 use std::collections::HashMap;
@@ -170,6 +171,15 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         consecutive_connect_failures = 0;
                         tracing::info!("[Supervisor] Connected (region={})", status.region);
                         emit_connection(&app, &mut last_conn_json, "connected", &status.region);
+
+                        // Reset idle and menus debounce counters upon a successful reconnection/token refresh.
+                        // This prevents any transient API delays immediately following reconnection from 
+                        // triggering a premature transition to "idle" (which would clear or disrupt states).
+                        {
+                            let state = app.state::<AppState>();
+                            *state.consecutive_idle_count.write() = 0;
+                            *state.consecutive_menus_count.write() = 0;
+                        }
 
                         // Force the next poll to re-emit the current game state even
                         // if it is unchanged. The frontend may have reset its panel to
@@ -433,6 +443,30 @@ fn cached_live_or_disconnected(state: &AppState) -> GameState {
     }
 }
 
+/// Hold the last pregame/ingame snapshot (or a bare last_known_state) without
+/// advancing idle debounce. Used when APIs are flaky mid-match.
+fn hold_live_snapshot(state: &AppState, reason: &str) -> GameState {
+    tracing::debug!("[get_game_state] Holding live snapshot: {}", reason);
+    // Do not count this tick as an idle confirmation.
+    *state.consecutive_idle_count.write() = 0;
+    if let Some(cached) = state.last_full_game_state.read().clone() {
+        if cached.state == "pregame" || cached.state == "ingame" {
+            return cached;
+        }
+    }
+    let last = state.last_known_state.read().clone();
+    if last == "pregame" || last == "ingame" {
+        return GameState {
+            state: last,
+            ..Default::default()
+        };
+    }
+    GameState {
+        state: "idle".into(),
+        ..Default::default()
+    }
+}
+
 pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, String> {
     let api = &state.api;
 
@@ -469,16 +503,63 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     LOCKFILE_WARNED.store(false, Ordering::Relaxed);
     REINIT_WARNED.store(false, Ordering::Relaxed);
 
+    // --- MATCH PROBES (404 vs transient) ---
+    // Distinguish clean "not in match" from API failures so a mid-match blip
+    // never drops the UI onto "Maç Bekleniyor".
+    let coregame_probe = api.probe_coregame_match_id().await;
+    let pregame_probe = match &coregame_probe {
+        MatchProbe::InMatch(_) => MatchProbe::NotInMatch, // skip extra call
+        _ => api.probe_pregame_match_id().await,
+    };
+
+    // Either probe uncertain? Hold live panel if we were already in a match.
+    let last_state_early = state.last_known_state.read().clone();
+    let was_live_early = last_state_early == "pregame" || last_state_early == "ingame";
+    let probe_uncertain = matches!(coregame_probe, MatchProbe::Uncertain)
+        || matches!(pregame_probe, MatchProbe::Uncertain);
+
+    // Own presence: while the client still says PREGAME/INGAME we must never
+    // flip to idle, even if GLZ match endpoints flap.
+    let my_presence = api.get_my_presence().await;
+    let presence_in_match = my_presence.as_ref().is_some_and(|p| {
+        p.session_loop_state.as_deref().is_some_and(|s| {
+            s.eq_ignore_ascii_case("INGAME") || s.eq_ignore_ascii_case("PREGAME")
+        })
+    });
+
+    if was_live_early && probe_uncertain {
+        return Ok(hold_live_snapshot(
+            state,
+            "match-id probe transient failure while live",
+        ));
+    }
+    if was_live_early && presence_in_match {
+        // Presence still says we are in the match loop. Only proceed when we
+        // can actually rebuild the roster; if both match bodies fail later we
+        // still hold via the body-fetch paths below.
+        if matches!(coregame_probe, MatchProbe::NotInMatch)
+            && matches!(pregame_probe, MatchProbe::NotInMatch)
+        {
+            return Ok(hold_live_snapshot(
+                state,
+                "presence still PREGAME/INGAME but match ids empty",
+            ));
+        }
+    }
+
     // --- RECENT ENCOUNTER TRACKING LOGIC ---
-    let coregame_match_id = api.get_coregame_match_id().await;
-    let pregame_match_id = if coregame_match_id.is_none() {
-        api.get_pregame_match_id().await
-    } else {
-        None
+    let coregame_match_id = match &coregame_probe {
+        MatchProbe::InMatch(id) => Some(id.clone()),
+        _ => None,
+    };
+    let pregame_match_id = match &pregame_probe {
+        MatchProbe::InMatch(id) => Some(id.clone()),
+        _ => None,
     };
     let current_is_ingame = coregame_match_id.is_some();
     let current_id = coregame_match_id
-        .or(pregame_match_id)
+        .clone()
+        .or_else(|| pregame_match_id.clone())
         .unwrap_or_else(|| "idle".to_string());
 
     {
@@ -542,8 +623,18 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // ---------------------------------------
 
     // Check pregame
-    if let Some(match_id) = api.get_pregame_match_id().await {
-        if let Some(match_data) = api.get_pregame_match(&match_id).await {
+    if let Some(match_id) = pregame_match_id.clone() {
+        match api.get_pregame_match_ex(&match_id).await {
+            RemoteResult::Transient => {
+                return Ok(hold_live_snapshot(
+                    state,
+                    "pregame match body transient failure",
+                ));
+            }
+            RemoteResult::NotFound => {
+                // Id was residual; fall through to coregame / idle logic.
+            }
+            RemoteResult::Ok(match_data) => {
             let map_name = MAP_NAMES
                 .get(match_data.map_id.as_str())
                 .map(|s| s.to_string())
@@ -642,6 +733,8 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 *state.last_full_game_state.write() = Some(gs.clone());
                 return Ok(gs);
             }
+            // ally_team missing — fall through to hold/idle below
+            }
         }
     }
 
@@ -650,11 +743,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // stale/wrong presence can appear mid-match and would otherwise skip the
     // entire ingame branch permanently. Require consecutive confirmations.
     let mut presence_confirms_menus = false;
-    const MENUS_DEBOUNCE_THRESHOLD: u32 = 3;
+    const MENUS_DEBOUNCE_THRESHOLD: u32 = 4; // ~2s at 500ms live poll
 
-    // Check coregame
-    if let Some(match_id) = api.get_coregame_match_id().await {
-        let my_presence = api.get_my_presence().await;
+    // Check coregame (reuse probe result — do not re-fetch player endpoint)
+    if let Some(match_id) = coregame_match_id.clone() {
         let presence_is_menus = my_presence.as_ref().is_some_and(|p| p.is_menus());
         if presence_is_menus {
             let mut menus_count = state.consecutive_menus_count.write();
@@ -679,7 +771,17 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
 
         if !presence_confirms_menus {
-            if let Some(match_data) = api.get_coregame_match(&match_id).await {
+            match api.get_coregame_match_ex(&match_id).await {
+                RemoteResult::Transient => {
+                    return Ok(hold_live_snapshot(
+                        state,
+                        "coregame match body transient failure",
+                    ));
+                }
+                RemoteResult::NotFound => {
+                    // Residual id; fall through to idle logic.
+                }
+                RemoteResult::Ok(match_data) => {
                 let map_name = MAP_NAMES
                     .get(match_data.map_id.as_str())
                     .map(|s| s.to_string())
@@ -776,7 +878,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                 // Round score is only available via our own presence, not GLZ.
                 // get_my_presence already blanks scores when not INGAME.
-                let (ally_score, enemy_score) = match my_presence {
+                let (ally_score, enemy_score) = match &my_presence {
                     Some(p) => (p.ally_score, p.enemy_score),
                     None => (None, None),
                 };
@@ -794,6 +896,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 };
                 *state.last_full_game_state.write() = Some(gs.clone());
                 return Ok(gs);
+                }
             }
         }
     }
@@ -805,20 +908,58 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
     // Check for signs of API issues that might cause false "idle" state
     let network_errors = *api.consecutive_network_errors.read();
-    if was_in_game && network_errors > 0 {
+    if was_live_early && network_errors > 0 {
         // We were in a game but getting network errors - don't trust this "idle" state
-        tracing::warn!(
-            "[get_game_state] In-game session with {} network errors, holding last live snapshot",
-            network_errors
-        );
-        return Ok(cached_live_or_disconnected(state));
+        return Ok(hold_live_snapshot(
+            state,
+            &format!("network errors ({network_errors}) while live"),
+        ));
+    }
+    if was_in_game && network_errors > 0 {
+        return Ok(hold_live_snapshot(
+            state,
+            &format!("in_game_session with network errors ({network_errors})"),
+        ));
+    }
+
+    // Also confirm MENUS when match ids already cleared (no residual coregame id).
+    // Without this, a real match end would wait the full idle debounce (~15s).
+    if !presence_confirms_menus && was_live_early {
+        if my_presence.as_ref().is_some_and(|p| p.is_menus())
+            && matches!(coregame_probe, MatchProbe::NotInMatch)
+            && matches!(pregame_probe, MatchProbe::NotInMatch)
+        {
+            let mut menus_count = state.consecutive_menus_count.write();
+            *menus_count += 1;
+            if *menus_count >= MENUS_DEBOUNCE_THRESHOLD {
+                presence_confirms_menus = true;
+                tracing::info!(
+                    "[get_game_state] Presence MENUS + clean NotInMatch confirmed x{} — match ended",
+                    *menus_count
+                );
+            } else {
+                tracing::debug!(
+                    "[get_game_state] Post-match MENUS debounce {}/{}",
+                    *menus_count,
+                    MENUS_DEBOUNCE_THRESHOLD
+                );
+            }
+        }
+    }
+
+    // Presence still claims we are in a match — never drop to idle.
+    if was_live_early && presence_in_match && !presence_confirms_menus {
+        return Ok(hold_live_snapshot(
+            state,
+            "presence still in match loop at idle gate",
+        ));
     }
 
     // DEBOUNCE: pregame → loading → ingame can leave a multi-second gap with no
-    // match id. Old threshold of 3 (~1.5s at live poll) was far too aggressive and
-    // dumped the UI onto "Oyun Bekleniyor" mid-load. Hold the last snapshot longer.
+    // match id. Hold the last snapshot longer so the UI does not flash waiting.
     // MENUS still short-circuits after its own debounce (above).
-    const IDLE_DEBOUNCE_THRESHOLD: u32 = 20; // ~10s at 500ms live poll
+    // ~15s at 500ms live poll — real match end is confirmed faster via MENUS.
+    const IDLE_DEBOUNCE_THRESHOLD: u32 = 30;
 
     if last_state == "pregame" || last_state == "ingame" {
         if presence_confirms_menus {
@@ -861,12 +1002,12 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
     }
 
-    // Clear party cache when idle (no match) - only if we were in a game session
+    // Clear party cache when idle (no match) - only if we were in a game session.
+    // Note: We no longer clear cached_parties, fetched_history_players, or cached_parties_match_id here.
+    // Keeping them preserved ensures that if a connection hiccup or a manual/auto reconnect occurs,
+    // we do not lose party color assignments mid-match. The cache is still safely cleared/overwritten
+    // in `get_cached_parties` as soon as a new match_id starts.
     if was_in_game {
-        // Returning to lobby - clear all caches for next game
-        state.cached_parties.write().clear();
-        state.fetched_history_players.write().clear();
-        *state.cached_parties_match_id.write() = None;
         *state.in_game_session.write() = false;
     }
 
@@ -1232,35 +1373,99 @@ pub async fn get_active_conversations(
         return Err("Not connected".into());
     }
 
-    if let Some(mut convs) = api.get_conversations().await {
-        // Enhance DM conversations with player names
-        let mut puuids = Vec::new();
-        for conv in &convs.conversations {
-            if conv.conversation_type == "chat" && !conv.cid.contains('@') {
-                // Try to guess PUUID from CID if it IS a PUUID (DM conversations usually are)
-                // But wait, the CID for DMs is usually "puuid@ares-parties.glz" or just a UUID
-                // Let's safe check if the CID looks like a UUID
-                if conv.cid.len() == 36 {
-                    puuids.push(conv.cid.clone());
+    let mut conversations: Vec<Conversation> = api
+        .get_conversations()
+        .await
+        .map(|c| c.conversations)
+        .unwrap_or_default();
+
+    // Force-include live game + party channels when present. These are the
+    // in-match / lobby chats teammates see — not friend DMs. The general
+    // conversations list sometimes omits them or lists them late.
+    let merge_channel = |list: &mut Vec<Conversation>, extra: Option<ConversationsResponse>, label: &str| {
+        let Some(extra) = extra else { return };
+        for mut conv in extra.conversations {
+            if !list.iter().any(|c| c.cid == conv.cid) {
+                conv.game_name = Some(label.to_string());
+                list.push(conv);
+            } else if let Some(existing) = list.iter_mut().find(|c| c.cid == conv.cid) {
+                // Prefer a clear channel label over empty/raw names.
+                if existing.game_name.as_deref().unwrap_or("").is_empty() {
+                    existing.game_name = Some(label.to_string());
                 }
             }
         }
+    };
 
-        if !puuids.is_empty() {
-            let names = api.get_player_names(&puuids).await;
-            for conv in &mut convs.conversations {
-                if conv.conversation_type == "chat" && conv.cid.len() == 36 {
-                    if let Some(name) = names.get(&conv.cid) {
-                        conv.game_name = Some(name.clone());
-                    }
+    merge_channel(
+        &mut conversations,
+        api.get_game_chat().await,
+        "GAME",
+    );
+    merge_channel(
+        &mut conversations,
+        api.get_party_chat().await,
+        "PARTY",
+    );
+
+    // Label group chats by CID when still unnamed.
+    for conv in &mut conversations {
+        if conv.conversation_type == "groupchat" {
+            let cid = conv.cid.to_lowercase();
+            if conv.game_name.as_deref().unwrap_or("").is_empty() {
+                if cid.contains("coregame") {
+                    conv.game_name = Some("GAME".into());
+                } else if cid.contains("parties") {
+                    conv.game_name = Some("PARTY".into());
+                } else {
+                    conv.game_name = Some("TEAM".into());
                 }
             }
         }
-
-        Ok(convs.conversations)
-    } else {
-        Ok(vec![])
     }
+
+    // Enhance DM conversations with player names
+    let mut puuids = Vec::new();
+    for conv in &conversations {
+        if conv.conversation_type == "chat" && !conv.cid.contains('@') {
+            // Try to guess PUUID from CID if it IS a PUUID (DM conversations usually are)
+            // But wait, the CID for DMs is usually "puuid@ares-parties.glz" or just a UUID
+            // Let's safe check if the CID looks like a UUID
+            if conv.cid.len() == 36 {
+                puuids.push(conv.cid.clone());
+            }
+        }
+    }
+
+    if !puuids.is_empty() {
+        let names = api.get_player_names(&puuids).await;
+        for conv in &mut conversations {
+            if conv.conversation_type == "chat" && conv.cid.len() == 36 {
+                if let Some(name) = names.get(&conv.cid) {
+                    conv.game_name = Some(name.clone());
+                }
+            }
+        }
+    }
+
+    // Pin in-game channels first so they're easy to pick during a match.
+    conversations.sort_by(|a, b| {
+        let rank = |c: &Conversation| -> u8 {
+            let cid = c.cid.to_lowercase();
+            if cid.contains("coregame") {
+                0
+            } else if cid.contains("parties") && c.conversation_type == "groupchat" {
+                1
+            } else if c.conversation_type == "groupchat" {
+                2
+            } else {
+                3
+            }
+        };
+        rank(a).cmp(&rank(b))
+    });
+
+    Ok(conversations)
 }
 
 #[tauri::command]

@@ -1254,6 +1254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -3592,6 +3593,7 @@ dependencies = [
  "cookie",
  "cookie_store 0.22.0",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -5513,7 +5515,7 @@ dependencies = [
 
 [[package]]
 name = "valorant-tracker"
-version = "1.0.9"
+version = "1.8.6"
 dependencies = [
  "base64 0.22.1",
  "discord-rich-presence",

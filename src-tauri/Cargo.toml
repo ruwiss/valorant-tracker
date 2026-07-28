@@ -1,6 +1,6 @@
 [package]
 name = "valorant-tracker"
-version = "1.8.5"
+version = "1.8.6"
 description = "Valorant Match Tracker"
 authors = ["omerg"]
 edition = "2021"
@@ -22,7 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 # Standard client for Local Riot API (native-tls for Windows)
-reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "deflate", "blocking"] }
 # Impersonation client for Tracker.gg (v4 to match rquest-util)
 rquest = { version = "4", features = ["json", "cookies", "gzip", "brotli", "deflate"] }
 rquest-util = "2"
@@ -56,6 +56,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Pipes",
     "Win32_System_IO",
+    "Win32_System_ProcessStatus",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }

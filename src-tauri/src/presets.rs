@@ -39,8 +39,12 @@ pub struct PresetMeta {
     pub created_at: i64,
     pub source_puuid: String,
     pub auto_backup: bool,
-    /// MouseSensitivity, surfaced for the list preview. None if absent.
+    /// MouseSensitivity (hipfire), for the expand preview. None if absent.
     pub sensitivity: Option<f64>,
+    /// MouseSensitivityADS multiplier. None if absent.
+    pub sensitivity_ads: Option<f64>,
+    /// MouseSensitivityZoomed (scoped) multiplier. None if absent.
+    pub sensitivity_zoomed: Option<f64>,
 }
 
 impl SettingsPreset {
@@ -51,16 +55,20 @@ impl SettingsPreset {
             created_at: self.created_at,
             source_puuid: self.source_puuid.clone(),
             auto_backup: self.auto_backup,
-            sensitivity: extract_sensitivity(&self.data),
+            sensitivity: extract_float(&self.data, "MouseSensitivity"),
+            sensitivity_ads: extract_float(&self.data, "MouseSensitivityADS"),
+            sensitivity_zoomed: extract_float(&self.data, "MouseSensitivityZoomed"),
         }
     }
 }
 
-/// Pull MouseSensitivity out of a raw settings blob for the list preview.
-fn extract_sensitivity(data: &serde_json::Value) -> Option<f64> {
+/// Pull a named float setting out of a raw settings blob.
+/// `suffix` is matched against the end of `settingEnum` (e.g. "MouseSensitivity").
+fn extract_float(data: &serde_json::Value, suffix: &str) -> Option<f64> {
+    let needle = format!("::{suffix}");
     data.get("floatSettings")?.as_array()?.iter().find_map(|s| {
         let name = s.get("settingEnum")?.as_str()?;
-        if name.ends_with("::MouseSensitivity") {
+        if name.ends_with(&needle) {
             s.get("value")?.as_f64()
         } else {
             None
