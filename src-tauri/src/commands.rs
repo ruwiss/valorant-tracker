@@ -731,6 +731,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     ..Default::default()
                 };
                 *state.last_full_game_state.write() = Some(gs.clone());
+                crate::chat_text::update_roster_from_game(&gs);
                 return Ok(gs);
             }
             // ally_team missing — fall through to hold/idle below
@@ -895,6 +896,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     enemy_score,
                 };
                 *state.last_full_game_state.write() = Some(gs.clone());
+                crate::chat_text::update_roster_from_game(&gs);
                 return Ok(gs);
                 }
             }
@@ -1016,6 +1018,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     *state.last_known_state.write() = "idle".to_string();
     *state.consecutive_menus_count.write() = 0;
     *state.last_full_game_state.write() = None;
+    crate::chat_text::clear_roster();
 
     Ok(GameState {
         state: "idle".into(),

@@ -4,37 +4,20 @@
  *
  * Greetings: sa / as
  * Translate: !t <lang> <text>
- * Symbols: see list below
+ * Agents: <sage (ally) / >jett (enemy) → @Name (no #tag)
+ * Symbols: <3 </3 -> <- ... :check: :warn: :skull: / :kurukafa:
  */
 
 const SYMBOLS: [string, string][] = [
   ["</3", "\u2661"],
   ["<3", "\u2665"],
-  [":-)", "\u263A"],
-  [":)", "\u263A"],
-  [":-(", "\u2639"],
-  [":(", "\u2639"],
-  [":-D", "\u263B"],
-  [":D", "\u263B"],
-  [";)", "\u263A"],
-  [":star:", "\u2605"],
-  ["***", "\u2605"],
-  ["<=>", "\u2194"],
-  ["=>", "\u21D2"],
   ["->", "\u2192"],
   ["<-", "\u2190"],
-  ["+/-", "\u00B1"],
-  ["!=", "\u2260"],
-  ["~=", "\u2248"],
-  ["<=", "\u2264"],
-  [">=", "\u2265"],
   ["...", "\u2026"],
-  [":note:", "\u266A"],
   [":check:", "\u2713"],
-  [":x:", "\u2717"],
   [":warn:", "\u26A0"],
   [":skull:", "\u2620"],
-  [":peace:", "\u262E"],
+  [":kurukafa:", "\u2620"],
 ];
 
 /** Frontend helper for previews/tests only — production path is Rust. */
@@ -50,6 +33,5 @@ export function transformOutgoingChat(raw: string): string {
   for (const [from, to] of SYMBOLS) {
     if (out.includes(from)) out = out.split(from).join(to);
   }
-  out = out.replace(/\(tm\)/gi, "\u2122").replace(/\(c\)/gi, "\u00A9").replace(/\(r\)/gi, "\u00AE");
   return out;
 }

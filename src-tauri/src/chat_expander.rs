@@ -7,8 +7,8 @@
 //!   - buffers what is typed
 //!   - on Enter (send), expands `sa` / `as` / `<3` / `!t <lang> …` before send
 //!
-//! Expansion is done by suppressing the send Enter, selecting the line
-//! (Ctrl+A), typing the expanded text, then Enter.
+//! Expansion: swallow Enter → clear line → paste expanded text via clipboard
+//! (Unicode SendInput was dropping mid-string in Valorant) → Enter.
 //! Translate (`!t`) runs on a background thread so the hook never blocks.
 //!
 //! Valorant keeps the chat bar **open after send** until Escape — so we must
@@ -22,14 +22,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+/// Win32 clipboard format for UTF-16 text.
+const CF_UNICODETEXT: u32 = 13;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardState, SendInput, ToUnicode, INPUT, INPUT_0, INPUT_KEYBOARD,
     KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_A, VK_BACK,
-    VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN, VK_SHIFT,
+    VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN, VK_SHIFT, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
@@ -205,6 +212,7 @@ fn send_vk(vk: VIRTUAL_KEY, down: bool) {
 }
 
 fn send_unicode_char(ch: char) {
+    // BMP only (our expansions stay in BMP).
     let unit = ch as u16;
     unsafe {
         let down = INPUT {
@@ -235,45 +243,81 @@ fn send_unicode_char(ch: char) {
     }
 }
 
-fn send_unicode_string(s: &str) {
+fn send_unicode_string_slow(s: &str) {
+    // Fallback only — Valorant often drops mid-string when fed too fast.
     for ch in s.chars() {
         send_unicode_char(ch);
-        std::thread::sleep(Duration::from_millis(3));
+        std::thread::sleep(Duration::from_millis(12));
     }
 }
 
 fn tap_key(vk: VIRTUAL_KEY) {
     send_vk(vk, true);
+    std::thread::sleep(Duration::from_millis(8));
     send_vk(vk, false);
+    std::thread::sleep(Duration::from_millis(8));
+}
+
+/// Put Unicode text on the Windows clipboard (CF_UNICODETEXT).
+fn set_clipboard_text(text: &str) -> bool {
+    unsafe {
+        if OpenClipboard(HWND::default()).is_err() {
+            tracing::warn!("[ChatExpander] OpenClipboard failed");
+            return false;
+        }
+        let _ = EmptyClipboard();
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * std::mem::size_of::<u16>();
+        let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {
+            let _ = CloseClipboard();
+            return false;
+        };
+        let ptr = GlobalLock(hmem);
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+        let _ = GlobalUnlock(hmem);
+        // Ownership of hmem transfers to the clipboard on success.
+        if SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0 as _)).is_err() {
+            let _ = CloseClipboard();
+            return false;
+        }
+        let _ = CloseClipboard();
+        true
+    }
 }
 
 /// Clear whatever is currently in the chat input line.
-///
-/// Valorant often does **not** replace a Ctrl+A selection when Unicode is typed
-/// (result: `sa` + `Selamun Aleyküm` → `saSelamun Aleyküm`). So we:
-/// 1. Ctrl+A + Delete (if select works)
-/// 2. Backspace once per original character (always removes the typed short text)
 fn clear_chat_line(original: &str) {
-    // 1) Select-all + delete
+    // Select-all + delete
     send_vk(VK_CONTROL, true);
-    std::thread::sleep(Duration::from_millis(10));
-    tap_key(VK_A);
-    std::thread::sleep(Duration::from_millis(12));
-    send_vk(VK_CONTROL, false);
-    std::thread::sleep(Duration::from_millis(12));
-    tap_key(VK_DELETE);
-    std::thread::sleep(Duration::from_millis(10));
-    tap_key(VK_BACK);
-    std::thread::sleep(Duration::from_millis(10));
-
-    // 2) Backspace the original buffer length (covers Ctrl+A failure).
-    //    +2 safety for any invisible/extra glyph the game kept.
-    let n = original.chars().count().saturating_add(2);
-    for _ in 0..n {
-        tap_key(VK_BACK);
-        std::thread::sleep(Duration::from_millis(4));
-    }
     std::thread::sleep(Duration::from_millis(15));
+    tap_key(VK_A);
+    std::thread::sleep(Duration::from_millis(15));
+    send_vk(VK_CONTROL, false);
+    std::thread::sleep(Duration::from_millis(15));
+    tap_key(VK_DELETE);
+    std::thread::sleep(Duration::from_millis(15));
+
+    // Backspace original length (+2) if select-all failed.
+    let n = original.chars().count().saturating_add(2).min(64);
+    for _ in 0..n {
+        send_vk(VK_BACK, true);
+        send_vk(VK_BACK, false);
+        std::thread::sleep(Duration::from_millis(6));
+    }
+    std::thread::sleep(Duration::from_millis(20));
+}
+
+fn paste_clipboard() {
+    send_vk(VK_CONTROL, true);
+    std::thread::sleep(Duration::from_millis(15));
+    tap_key(VK_V);
+    std::thread::sleep(Duration::from_millis(15));
+    send_vk(VK_CONTROL, false);
+    std::thread::sleep(Duration::from_millis(40));
 }
 
 /// Expand (may network for `!t`) then inject into the game chat box.
@@ -288,27 +332,42 @@ fn inject_expanded_from_raw(raw: String) {
             st.buffer.clear();
         }
 
-        // Let the swallowed Enter settle.
-        std::thread::sleep(Duration::from_millis(30));
+        // Let the swallowed Enter settle; Valorant needs a beat before input.
+        std::thread::sleep(Duration::from_millis(50));
 
-        // Wipe `sa` / `<3` / `!t …` from the input so we never get `saSelamun…`.
+        // Wipe short form (`sa`, `<3`, …) so we never get `saSelamun…`.
         clear_chat_line(&raw);
 
-        // Type only the expanded text into an empty line.
-        send_unicode_string(&text);
-        std::thread::sleep(Duration::from_millis(25));
+        // Prefer clipboard paste — full string at once, no mid-cut "Selamun A".
+        let pasted = if set_clipboard_text(&text) {
+            paste_clipboard();
+            true
+        } else {
+            false
+        };
 
-        // Send.
+        if !pasted {
+            tracing::warn!("[ChatExpander] Clipboard paste failed; slow Unicode fallback");
+            send_unicode_string_slow(&text);
+            std::thread::sleep(Duration::from_millis(30));
+        }
+
+        // Send the line.
+        std::thread::sleep(Duration::from_millis(40));
         tap_key(VK_RETURN);
 
-        // Valorant leaves the chat bar open after send — stay open so the next
-        // line is still buffered. Only Escape / focus-loss close it.
-        std::thread::sleep(Duration::from_millis(40));
+        // Keep chat_open — Valorant leaves the bar open after send.
+        std::thread::sleep(Duration::from_millis(60));
         let mut st = STATE.lock();
         st.injecting = false;
         st.chat_open = true;
         st.buffer.clear();
-        tracing::info!("[ChatExpander] Injected {:?} → {:?}", raw.trim(), text);
+        tracing::info!(
+            "[ChatExpander] Injected {:?} → {:?} (paste={})",
+            raw.trim(),
+            text,
+            pasted
+        );
     });
 }
 
