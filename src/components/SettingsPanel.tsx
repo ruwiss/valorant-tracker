@@ -38,7 +38,7 @@ type Tab = "autolock" | "presets" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { setHoveredAgent } = usePanelStore();
@@ -507,6 +507,20 @@ export function SettingsPanel() {
                 </button>
               </div>
               <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.discordRpcDesc")}</p>
+            </div>
+
+            {/* Chat shortcuts (sa / as / <3 / !t) */}
+            <div>
+              <label className="text-[10px] text-dim block mb-1.5">{t("settings.chatShortcuts")}</label>
+              <div className="flex gap-1.5">
+                <button onClick={() => setChatShortcutsEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${chatShortcutsEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.on")}
+                </button>
+                <button onClick={() => setChatShortcutsEnabled(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!chatShortcutsEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.off")}
+                </button>
+              </div>
+              <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.chatShortcutsDesc")}</p>
             </div>
 
             {/* Hotkey */}

@@ -121,14 +121,20 @@ impl PresetStore {
     }
 
     pub fn list(&self) -> Vec<PresetMeta> {
-        let mut metas: Vec<PresetMeta> = self.inner.lock().presets.iter().map(|p| p.meta()).collect();
+        let mut metas: Vec<PresetMeta> =
+            self.inner.lock().presets.iter().map(|p| p.meta()).collect();
         // Newest first.
         metas.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         metas
     }
 
     pub fn get(&self, id: &str) -> Option<SettingsPreset> {
-        self.inner.lock().presets.iter().find(|p| p.id == id).cloned()
+        self.inner
+            .lock()
+            .presets
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
     }
 
     /// Add a preset and persist. Returns its metadata.

@@ -12,7 +12,27 @@ use crate::api::types::GameState;
 use crate::constants::AGENTS;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// Master switch for outgoing chat shortcuts, driven by the Settings toggle.
+/// Shared by the in-game keyboard expander and the overlay's own send path so
+/// one setting governs both.
+static SHORTCUTS_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Enable/disable every outgoing shortcut transform.
+pub fn set_shortcuts_enabled(on: bool) {
+    SHORTCUTS_ENABLED.store(on, Ordering::Relaxed);
+    tracing::info!(
+        "[ChatText] Shortcuts {}",
+        if on { "enabled" } else { "disabled" }
+    );
+}
+
+/// Whether outgoing shortcut transforms are currently active.
+pub fn shortcuts_enabled() -> bool {
+    SHORTCUTS_ENABLED.load(Ordering::Relaxed)
+}
 
 /// Shared blocking HTTP client for translate (hook thread + API path).
 static HTTP: Lazy<reqwest::blocking::Client> = Lazy::new(|| {
@@ -137,7 +157,8 @@ fn apply_agent_mentions(input: &str) -> String {
                     .collect::<String>()
                     .replace(['/', '-'], "");
                 for agent in AGENT_NAMES_BY_LEN.iter() {
-                    if compact == *agent || compact.starts_with(agent) && compact.len() == agent.len()
+                    if compact == *agent
+                        || compact.starts_with(agent) && compact.len() == agent.len()
                     {
                         // Consume original typed token length (with slashes).
                         let token: String = rest
@@ -250,9 +271,7 @@ fn is_plausible_lang_code(lang: &str) -> bool {
     if b.len() < 2 || b.len() > 12 {
         return false;
     }
-    b.iter()
-        .all(|c| c.is_ascii_alphabetic() || *c == b'-')
-        && b[0].is_ascii_alphabetic()
+    b.iter().all(|c| c.is_ascii_alphabetic() || *c == b'-') && b[0].is_ascii_alphabetic()
 }
 
 /// Translate `text` into `target_lang` (source auto-detected). Returns None on failure.
@@ -292,6 +311,10 @@ pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
 /// Apply all outgoing shortcuts. Safe to call from any thread (uses blocking HTTP
 /// only when `!t` is present).
 pub fn transform_outgoing_chat(message: &str) -> String {
+    if !shortcuts_enabled() {
+        return message.to_string();
+    }
+
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return message.to_string();
@@ -301,12 +324,7 @@ pub fn transform_outgoing_chat(message: &str) -> String {
     let mut out = if let Some((lang, text)) = parse_translate_command(trimmed) {
         match google_translate(text, lang) {
             Some(translated) => {
-                tracing::info!(
-                    "[ChatText] !t {} {:?} → {:?}",
-                    lang,
-                    text,
-                    translated
-                );
+                tracing::info!("[ChatText] !t {} {:?} → {:?}", lang, text, translated);
                 translated
             }
             None => {
@@ -336,6 +354,10 @@ pub fn transform_outgoing_chat(message: &str) -> String {
 
 /// True if sending `raw` should be intercepted and rewritten before it hits chat.
 pub fn needs_chat_expansion(raw: &str) -> bool {
+    if !shortcuts_enabled() {
+        return false;
+    }
+
     let t = raw.trim();
     if t.is_empty() {
         return false;

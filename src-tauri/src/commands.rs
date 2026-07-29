@@ -74,11 +74,19 @@ async fn try_apply_armed_preset(app: &tauri::AppHandle) {
     let ev = match &result {
         Ok(_) => {
             tracing::info!("[ArmedPreset] Applied successfully");
-            PresetAppliedEvent { ok: true, preset_id: armed.id.clone(), error: None }
+            PresetAppliedEvent {
+                ok: true,
+                preset_id: armed.id.clone(),
+                error: None,
+            }
         }
         Err(e) => {
             tracing::error!("[ArmedPreset] Apply failed: {}", e);
-            PresetAppliedEvent { ok: false, preset_id: armed.id.clone(), error: Some(e.clone()) }
+            PresetAppliedEvent {
+                ok: false,
+                preset_id: armed.id.clone(),
+                error: Some(e.clone()),
+            }
         }
     };
     let _ = app.emit("preset_auto_applied", &ev);
@@ -153,7 +161,8 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     last == "pregame" || last == "ingame"
                 };
                 if was_live {
-                    if let Some(cached) = app.state::<AppState>().last_full_game_state.read().clone()
+                    if let Some(cached) =
+                        app.state::<AppState>().last_full_game_state.read().clone()
                     {
                         if let Ok(json) = serde_json::to_string(&cached) {
                             if json != last_emitted_state_json {
@@ -173,7 +182,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         emit_connection(&app, &mut last_conn_json, "connected", &status.region);
 
                         // Reset idle and menus debounce counters upon a successful reconnection/token refresh.
-                        // This prevents any transient API delays immediately following reconnection from 
+                        // This prevents any transient API delays immediately following reconnection from
                         // triggering a premature transition to "idle" (which would clear or disrupt states).
                         {
                             let state = app.state::<AppState>();
@@ -260,160 +269,149 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 // the feature is disabled or Discord isn't running).
                 discord.update(&current_state, "connected");
 
-                    // 3. Autolock logic (if in pregame and not already running a sequence)
-                    if current_state.state == "pregame"
-                        && !autolock_in_progress.load(Ordering::Relaxed)
-                    {
-                        if let Some(match_id) = current_state.match_id.clone() {
-                            if let Some(map_name) = current_state.map_name.clone() {
-                                let global_agent = auto_lock_agent.read().clone();
-                                let target_agent = if global_agent.is_some() {
-                                    let map_prefs = map_agent_preferences.read();
-                                    map_prefs.get(&map_name).cloned().or(global_agent)
+                // 3. Autolock logic (if in pregame and not already running a sequence)
+                if current_state.state == "pregame" && !autolock_in_progress.load(Ordering::Relaxed)
+                {
+                    if let Some(match_id) = current_state.match_id.clone() {
+                        if let Some(map_name) = current_state.map_name.clone() {
+                            let global_agent = auto_lock_agent.read().clone();
+                            let target_agent = if global_agent.is_some() {
+                                let map_prefs = map_agent_preferences.read();
+                                map_prefs.get(&map_name).cloned().or(global_agent)
+                            } else {
+                                None
+                            };
+
+                            if let Some(agent_name) = target_agent {
+                                let agent_id = if agent_name.len() > 20 {
+                                    agent_name.clone()
                                 } else {
-                                    None
+                                    AGENTS
+                                        .get(agent_name.to_lowercase().as_str())
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_default()
                                 };
 
-                                if let Some(agent_name) = target_agent {
-                                    let agent_id = if agent_name.len() > 20 {
-                                        agent_name.clone()
-                                    } else {
-                                        AGENTS
-                                            .get(agent_name.to_lowercase().as_str())
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_default()
-                                    };
+                                if !agent_id.is_empty() {
+                                    let is_locked = current_state
+                                        .allies
+                                        .iter()
+                                        .find(|p| p.is_me)
+                                        .map(|p| p.locked)
+                                        .unwrap_or(false);
 
-                                    if !agent_id.is_empty() {
-                                        let is_locked = current_state
-                                            .allies
-                                            .iter()
-                                            .find(|p| p.is_me)
-                                            .map(|p| p.locked)
-                                            .unwrap_or(false);
+                                    if !is_locked {
+                                        let api_clone = api.clone();
+                                        let in_progress_clone = autolock_in_progress.clone();
 
-                                        if !is_locked {
-                                            let api_clone = api.clone();
-                                            let in_progress_clone = autolock_in_progress.clone();
+                                        // Spawn a SEPARATE task so we don't block the state emitter
+                                        in_progress_clone.store(true, Ordering::Relaxed);
+                                        let lock_delay_ms = *auto_lock_delay_ms.read();
+                                        tokio::spawn(async move {
+                                            tracing::info!(
+                                                "[Autolock] Waiting for UI to load (3s)..."
+                                            );
 
-                                            // Spawn a SEPARATE task so we don't block the state emitter
-                                            in_progress_clone.store(true, Ordering::Relaxed);
-                                            let lock_delay_ms = *auto_lock_delay_ms.read();
-                                            tokio::spawn(async move {
-                                                tracing::info!(
-                                                    "[Autolock] Waiting for UI to load (3s)..."
-                                                );
+                                            // Phase 1: Wait for game client UI to fully render agent grid
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                3000,
+                                            ))
+                                            .await;
+                                            api_clone.select_agent(&match_id, &agent_id).await;
+                                            tracing::info!(
+                                                "[Autolock] Agent selected (hovering visible)"
+                                            );
 
-                                                // Phase 1: Wait for game client UI to fully render agent grid
+                                            tracing::info!(
+                                                "[Autolock] Waiting before lock ({}ms)...",
+                                                lock_delay_ms
+                                            );
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                lock_delay_ms,
+                                            ))
+                                            .await;
+
+                                            // Phase 2: Lock with verification + fast retry.
+                                            // A single fire-and-forget lock can be silently
+                                            // dropped (stale token, request racing the
+                                            // server's select state, lock fired a touch too
+                                            // early). Confirm via the pregame match and
+                                            // re-attempt until the agent is actually locked,
+                                            // the pregame ends, or we hit the safety cap.
+                                            let my_puuid = api_clone.puuid.read().clone();
+                                            let mut locked = false;
+                                            for attempt in 1..=20u32 {
+                                                api_clone.lock_agent(&match_id, &agent_id).await;
+
+                                                // Give the server a moment, then verify.
                                                 tokio::time::sleep(
-                                                    tokio::time::Duration::from_millis(3000),
+                                                    tokio::time::Duration::from_millis(700),
                                                 )
                                                 .await;
-                                                api_clone.select_agent(&match_id, &agent_id).await;
-                                                tracing::info!(
-                                                    "[Autolock] Agent selected (hovering visible)"
-                                                );
 
-                                                tracing::info!(
-                                                    "[Autolock] Waiting before lock ({}ms)...",
-                                                    lock_delay_ms
-                                                );
-                                                tokio::time::sleep(
-                                                    tokio::time::Duration::from_millis(
-                                                        lock_delay_ms,
-                                                    ),
-                                                )
-                                                .await;
+                                                match api_clone.get_pregame_match(&match_id).await {
+                                                    Some(m) => {
+                                                        let me_locked = m
+                                                            .ally_team
+                                                            .as_ref()
+                                                            .and_then(|t| {
+                                                                t.players
+                                                                    .iter()
+                                                                    .find(|p| p.subject == my_puuid)
+                                                            })
+                                                            .map(|p| {
+                                                                p.character_selection_state
+                                                                    == "locked"
+                                                            })
+                                                            .unwrap_or(false);
 
-                                                // Phase 2: Lock with verification + fast retry.
-                                                // A single fire-and-forget lock can be silently
-                                                // dropped (stale token, request racing the
-                                                // server's select state, lock fired a touch too
-                                                // early). Confirm via the pregame match and
-                                                // re-attempt until the agent is actually locked,
-                                                // the pregame ends, or we hit the safety cap.
-                                                let my_puuid = api_clone.puuid.read().clone();
-                                                let mut locked = false;
-                                                for attempt in 1..=20u32 {
-                                                    api_clone
-                                                        .lock_agent(&match_id, &agent_id)
-                                                        .await;
-
-                                                    // Give the server a moment, then verify.
-                                                    tokio::time::sleep(
-                                                        tokio::time::Duration::from_millis(700),
-                                                    )
-                                                    .await;
-
-                                                    match api_clone
-                                                        .get_pregame_match(&match_id)
-                                                        .await
-                                                    {
-                                                        Some(m) => {
-                                                            let me_locked = m
-                                                                .ally_team
-                                                                .as_ref()
-                                                                .and_then(|t| {
-                                                                    t.players.iter().find(|p| {
-                                                                        p.subject == my_puuid
-                                                                    })
-                                                                })
-                                                                .map(|p| {
-                                                                    p.character_selection_state
-                                                                        == "locked"
-                                                                })
-                                                                .unwrap_or(false);
-
-                                                            if me_locked {
-                                                                locked = true;
-                                                                tracing::info!(
+                                                        if me_locked {
+                                                            locked = true;
+                                                            tracing::info!(
                                                                     "[Autolock] Lock confirmed (attempt {})",
                                                                     attempt
                                                                 );
-                                                                break;
-                                                            }
+                                                            break;
+                                                        }
 
-                                                            tracing::warn!(
+                                                        tracing::warn!(
                                                                 "[Autolock] Lock not confirmed (attempt {}), re-hovering and retrying...",
                                                                 attempt
                                                             );
-                                                            // Re-hover in case the select state
-                                                            // was lost, then retry the lock.
-                                                            api_clone
-                                                                .select_agent(&match_id, &agent_id)
-                                                                .await;
-                                                            tokio::time::sleep(
-                                                                tokio::time::Duration::from_millis(
-                                                                    500,
-                                                                ),
-                                                            )
+                                                        // Re-hover in case the select state
+                                                        // was lost, then retry the lock.
+                                                        api_clone
+                                                            .select_agent(&match_id, &agent_id)
                                                             .await;
-                                                        }
-                                                        None => {
-                                                            // Pregame gone (game started, dodge,
-                                                            // or disconnect) - stop retrying.
-                                                            tracing::info!(
+                                                        tokio::time::sleep(
+                                                            tokio::time::Duration::from_millis(500),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    None => {
+                                                        // Pregame gone (game started, dodge,
+                                                        // or disconnect) - stop retrying.
+                                                        tracing::info!(
                                                                 "[Autolock] Pregame ended before lock confirmed; stopping retries."
                                                             );
-                                                            break;
-                                                        }
+                                                        break;
                                                     }
                                                 }
+                                            }
 
-                                                if !locked {
-                                                    tracing::warn!(
+                                            if !locked {
+                                                tracing::warn!(
                                                         "[Autolock] Could not confirm lock after retries."
                                                     );
-                                                }
+                                            }
 
-                                                // Allow next sequence after a small buffer
-                                                tokio::time::sleep(
-                                                    tokio::time::Duration::from_millis(1000),
-                                                )
-                                                .await;
-                                                in_progress_clone.store(false, Ordering::Relaxed);
-                                            });
-                                        }
+                                            // Allow next sequence after a small buffer
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                1000,
+                                            ))
+                                            .await;
+                                            in_progress_clone.store(false, Ordering::Relaxed);
+                                        });
                                     }
                                 }
                             }
@@ -421,7 +419,8 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     }
                 }
             }
-        });
+        }
+    });
 }
 
 #[tauri::command]
@@ -522,9 +521,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // flip to idle, even if GLZ match endpoints flap.
     let my_presence = api.get_my_presence().await;
     let presence_in_match = my_presence.as_ref().is_some_and(|p| {
-        p.session_loop_state.as_deref().is_some_and(|s| {
-            s.eq_ignore_ascii_case("INGAME") || s.eq_ignore_ascii_case("PREGAME")
-        })
+        p.session_loop_state
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case("INGAME") || s.eq_ignore_ascii_case("PREGAME"))
     });
 
     if was_live_early && probe_uncertain {
@@ -635,106 +634,107 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 // Id was residual; fall through to coregame / idle logic.
             }
             RemoteResult::Ok(match_data) => {
-            let map_name = MAP_NAMES
-                .get(match_data.map_id.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Unknown".into());
-            let mode_name = QUEUE_NAMES
-                .get(match_data.queue_id.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| match_data.queue_id.clone());
+                let map_name = MAP_NAMES
+                    .get(match_data.map_id.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Unknown".into());
+                let mode_name = QUEUE_NAMES
+                    .get(match_data.queue_id.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| match_data.queue_id.clone());
 
-            let mut allies = vec![];
-            let my_puuid = api.puuid.read().clone();
+                let mut allies = vec![];
+                let my_puuid = api.puuid.read().clone();
 
-            if let Some(team) = match_data.ally_team {
-                let side = if team.team_id == "Red" {
-                    "SALDIRAN"
-                } else {
-                    "SAVUNAN"
-                };
-                let puuids: Vec<String> = team.players.iter().map(|p| p.subject.clone()).collect();
+                if let Some(team) = match_data.ally_team {
+                    let side = if team.team_id == "Red" {
+                        "SALDIRAN"
+                    } else {
+                        "SAVUNAN"
+                    };
+                    let puuids: Vec<String> =
+                        team.players.iter().map(|p| p.subject.clone()).collect();
 
-                let names = api.get_player_names(&puuids).await;
+                    let names = api.get_player_names(&puuids).await;
 
-                // Get parties with caching - only fetch once per match
-                let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
+                    // Get parties with caching - only fetch once per match
+                    let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
 
-                // Note: Auto-lock is handled by the background supervisor to avoid blocking this function
+                    // Note: Auto-lock is handled by the background supervisor to avoid blocking this function
 
-                for p in team.players {
-                    let agent_name = get_agent_name(&p.character_id);
-                    if p.subject != my_puuid && !agent_name.is_empty() {
-                        state.current_match_players.write().insert(
-                            p.subject.clone(),
-                            EncounterPlayer {
-                                agent: agent_name.clone(),
-                                was_enemy: false,
-                            },
-                        );
+                    for p in team.players {
+                        let agent_name = get_agent_name(&p.character_id);
+                        if p.subject != my_puuid && !agent_name.is_empty() {
+                            state.current_match_players.write().insert(
+                                p.subject.clone(),
+                                EncounterPlayer {
+                                    agent: agent_name.clone(),
+                                    was_enemy: false,
+                                },
+                            );
+                        }
+
+                        let (
+                            previous_encounter,
+                            previous_encounter_agent,
+                            previous_encounter_was_enemy,
+                        ) = get_encounter_data(&p.subject);
+                        let (level, player_card_id) = match p.player_identity {
+                            Some(id) => (
+                                id.account_level,
+                                id.player_card_id.filter(|s| !s.is_empty()),
+                            ),
+                            None => (0, None),
+                        };
+                        let party = parties
+                            .get(&p.subject)
+                            .cloned()
+                            .unwrap_or_else(|| "Solo".into());
+
+                        // Use agent name (capitalized) for hidden players
+                        let player_name = names.get(&p.subject).cloned().unwrap_or_default();
+                        let display_name = if player_name.is_empty() {
+                            capitalize_first(&agent_name)
+                        } else {
+                            player_name
+                        };
+
+                        allies.push(PlayerData {
+                            puuid: p.subject.clone(),
+                            name: display_name,
+                            agent: agent_name,
+                            locked: p.character_selection_state == "locked",
+                            party,
+                            is_me: p.subject == my_puuid,
+                            rank_tier: p.competitive_tier,
+                            rank_rr: 0,
+                            level,
+                            previous_encounter,
+                            previous_encounter_agent,
+                            previous_encounter_was_enemy,
+                            player_card_id,
+                        });
                     }
 
-                    let (
-                        previous_encounter,
-                        previous_encounter_agent,
-                        previous_encounter_was_enemy,
-                    ) = get_encounter_data(&p.subject);
-                    let (level, player_card_id) = match p.player_identity {
-                        Some(id) => (
-                            id.account_level,
-                            id.player_card_id.filter(|s| !s.is_empty()),
-                        ),
-                        None => (0, None),
-                    };
-                    let party = parties
-                        .get(&p.subject)
-                        .cloned()
-                        .unwrap_or_else(|| "Solo".into());
+                    // Reset idle/menus counters and update last known state on successful pregame
+                    *state.consecutive_idle_count.write() = 0;
+                    *state.consecutive_menus_count.write() = 0;
+                    *state.last_known_state.write() = "pregame".to_string();
 
-                    // Use agent name (capitalized) for hidden players
-                    let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-                    let display_name = if player_name.is_empty() {
-                        capitalize_first(&agent_name)
-                    } else {
-                        player_name
+                    let gs = GameState {
+                        state: "pregame".into(),
+                        match_id: Some(match_id),
+                        map_name: Some(map_name),
+                        mode_name: Some(mode_name),
+                        side: Some(side.into()),
+                        allies,
+                        ..Default::default()
                     };
-
-                    allies.push(PlayerData {
-                        puuid: p.subject.clone(),
-                        name: display_name,
-                        agent: agent_name,
-                        locked: p.character_selection_state == "locked",
-                        party,
-                        is_me: p.subject == my_puuid,
-                        rank_tier: p.competitive_tier,
-                        rank_rr: 0,
-                        level,
-                        previous_encounter,
-                        previous_encounter_agent,
-                        previous_encounter_was_enemy,
-                        player_card_id,
-                    });
+                    *state.last_full_game_state.write() = Some(gs.clone());
+                    crate::chat_text::update_roster_from_game(&gs);
+                    return Ok(gs);
                 }
-
-                // Reset idle/menus counters and update last known state on successful pregame
-                *state.consecutive_idle_count.write() = 0;
-                *state.consecutive_menus_count.write() = 0;
-                *state.last_known_state.write() = "pregame".to_string();
-
-                let gs = GameState {
-                    state: "pregame".into(),
-                    match_id: Some(match_id),
-                    map_name: Some(map_name),
-                    mode_name: Some(mode_name),
-                    side: Some(side.into()),
-                    allies,
-                    ..Default::default()
-                };
-                *state.last_full_game_state.write() = Some(gs.clone());
-                crate::chat_text::update_roster_from_game(&gs);
-                return Ok(gs);
-            }
-            // ally_team missing — fall through to hold/idle below
+                // ally_team missing — fall through to hold/idle below
             }
         }
     }
@@ -783,121 +783,121 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     // Residual id; fall through to idle logic.
                 }
                 RemoteResult::Ok(match_data) => {
-                let map_name = MAP_NAMES
-                    .get(match_data.map_id.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Unknown".into());
+                    let map_name = MAP_NAMES
+                        .get(match_data.map_id.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Unknown".into());
 
-                let my_puuid = api.puuid.read().clone();
-                let puuids: Vec<String> = match_data
-                    .players
-                    .iter()
-                    .map(|p| p.subject.clone())
-                    .collect();
+                    let my_puuid = api.puuid.read().clone();
+                    let puuids: Vec<String> = match_data
+                        .players
+                        .iter()
+                        .map(|p| p.subject.clone())
+                        .collect();
 
-                let names = api.get_player_names(&puuids).await;
+                    let names = api.get_player_names(&puuids).await;
 
-                // Get parties with caching
-                let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
+                    // Get parties with caching
+                    let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
 
-                let my_team = match_data
-                    .players
-                    .iter()
-                    .find(|p| p.subject == my_puuid)
-                    .map(|p| p.team_id.clone())
-                    .unwrap_or_default();
+                    let my_team = match_data
+                        .players
+                        .iter()
+                        .find(|p| p.subject == my_puuid)
+                        .map(|p| p.team_id.clone())
+                        .unwrap_or_default();
 
-                let mut allies = vec![];
-                let mut enemies = vec![];
+                    let mut allies = vec![];
+                    let mut enemies = vec![];
 
-                for p in match_data.players {
-                    let agent_name = get_agent_name(&p.character_id);
-                    let was_enemy = p.team_id != my_team;
-                    if p.subject != my_puuid && !agent_name.is_empty() {
-                        state.current_match_players.write().insert(
-                            p.subject.clone(),
-                            EncounterPlayer {
-                                agent: agent_name.clone(),
-                                was_enemy,
-                            },
-                        );
+                    for p in match_data.players {
+                        let agent_name = get_agent_name(&p.character_id);
+                        let was_enemy = p.team_id != my_team;
+                        if p.subject != my_puuid && !agent_name.is_empty() {
+                            state.current_match_players.write().insert(
+                                p.subject.clone(),
+                                EncounterPlayer {
+                                    agent: agent_name.clone(),
+                                    was_enemy,
+                                },
+                            );
+                        }
+
+                        let (
+                            previous_encounter,
+                            previous_encounter_agent,
+                            previous_encounter_was_enemy,
+                        ) = get_encounter_data(&p.subject);
+                        let (level, player_card_id) = match p.player_identity {
+                            Some(id) => (
+                                id.account_level,
+                                id.player_card_id.filter(|s| !s.is_empty()),
+                            ),
+                            None => (0, None),
+                        };
+                        let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
+                        let party = parties
+                            .get(&p.subject)
+                            .cloned()
+                            .unwrap_or_else(|| "Solo".into());
+
+                        // Use agent name (capitalized) for hidden players
+                        let player_name = names.get(&p.subject).cloned().unwrap_or_default();
+                        let display_name = if player_name.is_empty() {
+                            capitalize_first(&agent_name)
+                        } else {
+                            player_name
+                        };
+
+                        let player = PlayerData {
+                            puuid: p.subject.clone(),
+                            name: display_name,
+                            agent: agent_name,
+                            locked: true,
+                            party,
+                            is_me: p.subject == my_puuid,
+                            rank_tier: rank,
+                            rank_rr: 0,
+                            level,
+                            previous_encounter,
+                            previous_encounter_agent,
+                            previous_encounter_was_enemy,
+                            player_card_id,
+                        };
+
+                        if p.team_id == my_team {
+                            allies.push(player);
+                        } else {
+                            enemies.push(player);
+                        }
                     }
 
-                    let (
-                        previous_encounter,
-                        previous_encounter_agent,
-                        previous_encounter_was_enemy,
-                    ) = get_encounter_data(&p.subject);
-                    let (level, player_card_id) = match p.player_identity {
-                        Some(id) => (
-                            id.account_level,
-                            id.player_card_id.filter(|s| !s.is_empty()),
-                        ),
-                        None => (0, None),
-                    };
-                    let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
-                    let party = parties
-                        .get(&p.subject)
-                        .cloned()
-                        .unwrap_or_else(|| "Solo".into());
+                    // Reset idle/menus counters and update last known state on successful ingame
+                    *state.consecutive_idle_count.write() = 0;
+                    *state.consecutive_menus_count.write() = 0;
+                    *state.last_known_state.write() = "ingame".to_string();
 
-                    // Use agent name (capitalized) for hidden players
-                    let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-                    let display_name = if player_name.is_empty() {
-                        capitalize_first(&agent_name)
-                    } else {
-                        player_name
+                    // Round score is only available via our own presence, not GLZ.
+                    // get_my_presence already blanks scores when not INGAME.
+                    let (ally_score, enemy_score) = match &my_presence {
+                        Some(p) => (p.ally_score, p.enemy_score),
+                        None => (None, None),
                     };
 
-                    let player = PlayerData {
-                        puuid: p.subject.clone(),
-                        name: display_name,
-                        agent: agent_name,
-                        locked: true,
-                        party,
-                        is_me: p.subject == my_puuid,
-                        rank_tier: rank,
-                        rank_rr: 0,
-                        level,
-                        previous_encounter,
-                        previous_encounter_agent,
-                        previous_encounter_was_enemy,
-                        player_card_id,
+                    let gs = GameState {
+                        state: "ingame".into(),
+                        match_id: Some(match_id),
+                        map_name: Some(map_name),
+                        mode_name: None,
+                        side: None,
+                        allies,
+                        enemies,
+                        ally_score,
+                        enemy_score,
                     };
-
-                    if p.team_id == my_team {
-                        allies.push(player);
-                    } else {
-                        enemies.push(player);
-                    }
-                }
-
-                // Reset idle/menus counters and update last known state on successful ingame
-                *state.consecutive_idle_count.write() = 0;
-                *state.consecutive_menus_count.write() = 0;
-                *state.last_known_state.write() = "ingame".to_string();
-
-                // Round score is only available via our own presence, not GLZ.
-                // get_my_presence already blanks scores when not INGAME.
-                let (ally_score, enemy_score) = match &my_presence {
-                    Some(p) => (p.ally_score, p.enemy_score),
-                    None => (None, None),
-                };
-
-                let gs = GameState {
-                    state: "ingame".into(),
-                    match_id: Some(match_id),
-                    map_name: Some(map_name),
-                    mode_name: None,
-                    side: None,
-                    allies,
-                    enemies,
-                    ally_score,
-                    enemy_score,
-                };
-                *state.last_full_game_state.write() = Some(gs.clone());
-                crate::chat_text::update_roster_from_game(&gs);
-                return Ok(gs);
+                    *state.last_full_game_state.write() = Some(gs.clone());
+                    crate::chat_text::update_roster_from_game(&gs);
+                    return Ok(gs);
                 }
             }
         }
@@ -1166,6 +1166,23 @@ pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
     state.discord.is_enabled()
 }
 
+/// Enable/disable outgoing chat shortcuts (`sa`, `as`, `<3`, `!t <lang> …`).
+/// Covers both paths: the in-game keyboard expander and messages sent from the
+/// overlay's own chat panel.
+#[tauri::command]
+pub fn set_chat_shortcuts(enabled: bool) {
+    crate::chat_text::set_shortcuts_enabled(enabled);
+    #[cfg(windows)]
+    crate::chat_expander::on_enabled_changed(enabled);
+    tracing::info!("[Command] set_chat_shortcuts enabled={}", enabled);
+}
+
+/// Returns whether outgoing chat shortcuts are currently enabled.
+#[tauri::command]
+pub fn get_chat_shortcuts() -> bool {
+    crate::chat_text::shortcuts_enabled()
+}
+
 /// Initial-sync helper: returns the current connection status so the frontend
 /// can render correctly without waiting for the next `connection_changed` event.
 #[tauri::command]
@@ -1385,31 +1402,24 @@ pub async fn get_active_conversations(
     // Force-include live game + party channels when present. These are the
     // in-match / lobby chats teammates see — not friend DMs. The general
     // conversations list sometimes omits them or lists them late.
-    let merge_channel = |list: &mut Vec<Conversation>, extra: Option<ConversationsResponse>, label: &str| {
-        let Some(extra) = extra else { return };
-        for mut conv in extra.conversations {
-            if !list.iter().any(|c| c.cid == conv.cid) {
-                conv.game_name = Some(label.to_string());
-                list.push(conv);
-            } else if let Some(existing) = list.iter_mut().find(|c| c.cid == conv.cid) {
-                // Prefer a clear channel label over empty/raw names.
-                if existing.game_name.as_deref().unwrap_or("").is_empty() {
-                    existing.game_name = Some(label.to_string());
+    let merge_channel =
+        |list: &mut Vec<Conversation>, extra: Option<ConversationsResponse>, label: &str| {
+            let Some(extra) = extra else { return };
+            for mut conv in extra.conversations {
+                if !list.iter().any(|c| c.cid == conv.cid) {
+                    conv.game_name = Some(label.to_string());
+                    list.push(conv);
+                } else if let Some(existing) = list.iter_mut().find(|c| c.cid == conv.cid) {
+                    // Prefer a clear channel label over empty/raw names.
+                    if existing.game_name.as_deref().unwrap_or("").is_empty() {
+                        existing.game_name = Some(label.to_string());
+                    }
                 }
             }
-        }
-    };
+        };
 
-    merge_channel(
-        &mut conversations,
-        api.get_game_chat().await,
-        "GAME",
-    );
-    merge_channel(
-        &mut conversations,
-        api.get_party_chat().await,
-        "PARTY",
-    );
+    merge_channel(&mut conversations, api.get_game_chat().await, "GAME");
+    merge_channel(&mut conversations, api.get_party_chat().await, "PARTY");
 
     // Label group chats by CID when still unnamed.
     for conv in &mut conversations {
@@ -1644,7 +1654,9 @@ pub async fn get_preset_crosshairs(
     id: String,
 ) -> Result<serde_json::Value, String> {
     let store = preset_store(&state)?;
-    let preset = store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+    let preset = store
+        .get(&id)
+        .ok_or_else(|| "Preset not found".to_string())?;
 
     let empty = serde_json::json!({ "currentProfile": 0, "profiles": [] });
 
@@ -1754,7 +1766,9 @@ pub async fn apply_preset(
     }
 
     let store = preset_store(&state)?;
-    let preset = store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+    let preset = store
+        .get(&id)
+        .ok_or_else(|| "Preset not found".to_string())?;
 
     ensure_account_backup(&state.api, &store, backup_label.as_deref().unwrap_or("")).await?;
     state.api.apply_player_settings(&preset.data).await
@@ -1785,7 +1799,9 @@ pub async fn arm_preset(
 ) -> Result<(), String> {
     // Validate the preset exists before arming.
     let store = preset_store(&state)?;
-    store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+    store
+        .get(&id)
+        .ok_or_else(|| "Preset not found".to_string())?;
 
     *state.armed_preset.write() = Some(crate::state::ArmedPreset {
         id,
@@ -1813,7 +1829,9 @@ pub async fn close_riot_and_arm_preset(
 
     // Validate the preset exists before doing anything destructive.
     let store = preset_store(&state)?;
-    store.get(&id).ok_or_else(|| "Preset not found".to_string())?;
+    store
+        .get(&id)
+        .ok_or_else(|| "Preset not found".to_string())?;
 
     // Arm first so that even if the kill races a relaunch, the preset is pending.
     *state.armed_preset.write() = Some(crate::state::ArmedPreset {
@@ -2047,7 +2065,8 @@ pub async fn get_storefront(
         None => return Ok(None),
     };
 
-    let vp = |c: &std::collections::HashMap<String, i64>| c.get(VP_CURRENCY_ID).copied().unwrap_or(0);
+    let vp =
+        |c: &std::collections::HashMap<String, i64>| c.get(VP_CURRENCY_ID).copied().unwrap_or(0);
 
     let daily_offers: Vec<ShopOffer> = raw
         .skins_panel_layout

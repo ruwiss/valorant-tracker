@@ -19,6 +19,7 @@ interface SettingsState {
   windowStyle: WindowStyle;
   autoLockDelaySeconds: number;
   discordRpcEnabled: boolean;
+  chatShortcutsEnabled: boolean;
 }
 
 interface SettingsStore extends SettingsState {
@@ -41,6 +42,8 @@ interface SettingsStore extends SettingsState {
   syncAutoLockDelay: () => void;
   setDiscordRpcEnabled: (enabled: boolean) => void;
   syncDiscordRpc: () => void;
+  setChatShortcutsEnabled: (enabled: boolean) => void;
+  syncChatShortcuts: () => void;
 }
 
 const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 5;
@@ -137,6 +140,7 @@ export const useSettingsStore = create<SettingsStore>()(
       windowStyle: "docked" as WindowStyle, // Default docked
       autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
+      chatShortcutsEnabled: true,
 
       setAutoLockDelaySeconds: (seconds: number) => {
         const autoLockDelaySeconds = clampAutoLockDelay(seconds);
@@ -172,6 +176,30 @@ export const useSettingsStore = create<SettingsStore>()(
       // Push the persisted Discord RPC preference to the (fresh) backend on startup.
       syncDiscordRpc: () => {
         invokeCommand("set_discord_rpc", { enabled: get().discordRpcEnabled }).catch(console.error);
+      },
+
+      setChatShortcutsEnabled: (enabled: boolean) => {
+        set({ chatShortcutsEnabled: enabled });
+        invokeCommand("set_chat_shortcuts", { enabled }).catch(console.error);
+      },
+
+      // Push the persisted chat-shortcut preference to the (fresh) backend.
+      // Waits for rehydration, otherwise the default `true` would overwrite a
+      // persisted "off" before localStorage is read back.
+      syncChatShortcuts: () => {
+        const push = () => {
+          invokeCommand("set_chat_shortcuts", { enabled: get().chatShortcutsEnabled }).catch(console.error);
+        };
+
+        if (useSettingsStore.persist.hasHydrated()) {
+          push();
+          return;
+        }
+
+        const unsub = useSettingsStore.persist.onFinishHydration(() => {
+          unsub();
+          push();
+        });
       },
 
       fetchContactInfo: async () => {
@@ -408,6 +436,7 @@ export const useSettingsStore = create<SettingsStore>()(
         windowStyle: state.windowStyle,
         autoLockDelaySeconds: state.autoLockDelaySeconds,
         discordRpcEnabled: state.discordRpcEnabled,
+        chatShortcutsEnabled: state.chatShortcutsEnabled,
       }),
     }
   )

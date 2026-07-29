@@ -151,7 +151,12 @@ impl DiscordPresence {
             }
             let res = {
                 let client = st.client.as_mut().unwrap();
-                client.set_activity(Self::build_activity(&details, &state_line, &image_key, match_start))
+                client.set_activity(Self::build_activity(
+                    &details,
+                    &state_line,
+                    &image_key,
+                    match_start,
+                ))
             };
             match res {
                 Ok(_) => {
@@ -227,10 +232,20 @@ fn now_secs() -> i64 {
 fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
     // Connection problems take precedence over a stale game state.
     if conn_status == "paused" {
-        return ("İzleme duraklatıldı".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false);
+        return (
+            "İzleme duraklatıldı".into(),
+            String::new(),
+            DEFAULT_LARGE_IMAGE.into(),
+            false,
+        );
     }
     if conn_status == "waiting_for_game" || conn_status == "connecting" {
-        return ("Oyun bekleniyor".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false);
+        return (
+            "Oyun bekleniyor".into(),
+            String::new(),
+            DEFAULT_LARGE_IMAGE.into(),
+            false,
+        );
     }
 
     match gs.state.as_str() {
@@ -239,7 +254,12 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
             // "Maçta" with a blank map or a fake 0-0 — fall back to lobby text.
             let map = gs.map_name.clone().filter(|m| !m.is_empty());
             let Some(map) = map else {
-                return ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false);
+                return (
+                    "Menüde".into(),
+                    String::new(),
+                    DEFAULT_LARGE_IMAGE.into(),
+                    false,
+                );
             };
             let details = match (gs.ally_score, gs.enemy_score) {
                 (Some(a), Some(e)) => format!("{map}  {a} - {e}"),
@@ -253,7 +273,12 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
             ("Ajan seçimi".into(), map, image, false)
         }
         // idle / disconnected / unknown → lobby presence (not a live match)
-        _ => ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into(), false),
+        _ => (
+            "Menüde".into(),
+            String::new(),
+            DEFAULT_LARGE_IMAGE.into(),
+            false,
+        ),
     }
 }
 

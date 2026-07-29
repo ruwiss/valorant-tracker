@@ -1,10 +1,10 @@
 use crate::api::types::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use parking_lot::RwLock;
-use rquest_util::Emulation;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
+use parking_lot::RwLock;
+use rquest_util::Emulation;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -512,9 +512,7 @@ impl ValorantAPI {
 
         // Resolve the cloud player-preferences host (affinity-based). Best effort:
         // PAS token first, region table fallback. Used for settings presets.
-        let pp_host = self
-            .resolve_pp_host(&ent_response.access_token)
-            .await;
+        let pp_host = self.resolve_pp_host(&ent_response.access_token).await;
         tracing::info!("[Initialize] Player-preferences host: {}", pp_host);
         *self.pp_host.write() = pp_host;
 
@@ -602,7 +600,8 @@ impl ValorantAPI {
         let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
         enc.write_all(bytes)
             .map_err(|e| format!("deflate error: {}", e))?;
-        enc.finish().map_err(|e| format!("deflate finish error: {}", e))
+        enc.finish()
+            .map_err(|e| format!("deflate finish error: {}", e))
     }
 
     async fn get_client_version(&self) -> String {
@@ -663,10 +662,7 @@ impl ValorantAPI {
                     let status = resp.status().as_u16();
                     // Check for auth errors that indicate connection is stale
                     if status == 401 || status == 403 {
-                        tracing::debug!(
-                            "[get_remote] Auth error ({}), triggering reinit",
-                            status
-                        );
+                        tracing::debug!("[get_remote] Auth error ({}), triggering reinit", status);
                         *self.needs_reinit.write() = true;
                         return RemoteResult::Transient;
                     }
@@ -1019,7 +1015,10 @@ impl ValorantAPI {
     ///
     ///   PUT https://{pp_host}/playerPref/v3/savePreference
     ///   body { type:"Ares.PlayerSettings", data: base64(raw-deflate(JSON)) }
-    pub async fn push_cloud_settings_raw(&self, settings: &serde_json::Value) -> Result<(), String> {
+    pub async fn push_cloud_settings_raw(
+        &self,
+        settings: &serde_json::Value,
+    ) -> Result<(), String> {
         if self.should_refresh_tokens() {
             *self.needs_reinit.write() = true;
             return Err("STALE_TOKEN".to_string());
@@ -1094,7 +1093,12 @@ impl ValorantAPI {
             return out;
         };
 
-        for arr_key in ["boolSettings", "intSettings", "floatSettings", "stringSettings"] {
+        for arr_key in [
+            "boolSettings",
+            "intSettings",
+            "floatSettings",
+            "stringSettings",
+        ] {
             // Drop machine-specific entries that came from the preset's source.
             if let Some(arr) = out_obj.get_mut(arr_key).and_then(|v| v.as_array_mut()) {
                 arr.retain(|item| {
@@ -1398,9 +1402,7 @@ impl ValorantAPI {
                 if let Some(private_b64) = p.private {
                     if let Ok(decoded) = STANDARD.decode(&private_b64) {
                         if let Ok(json_str) = String::from_utf8(decoded) {
-                            if let Ok(pd) =
-                                serde_json::from_str::<PresencePrivate>(&json_str)
-                            {
+                            if let Ok(pd) = serde_json::from_str::<PresencePrivate>(&json_str) {
                                 // Scores are only meaningful while actually INGAME.
                                 // In MENUS the client resets them to 0-0 — returning
                                 // those would make Discord show a fake "Map 0-0".
@@ -1752,7 +1754,10 @@ impl ValorantAPI {
             Ok(resp) => {
                 let status = resp.status();
                 if status.as_u16() == 401 || status.as_u16() == 403 {
-                    tracing::warn!("[get_storefront] auth error ({}), triggering reinit", status);
+                    tracing::warn!(
+                        "[get_storefront] auth error ({}), triggering reinit",
+                        status
+                    );
                     *self.needs_reinit.write() = true;
                     return None;
                 }

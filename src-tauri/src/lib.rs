@@ -71,6 +71,8 @@ pub fn run() -> RunResult {
             commands::reconnect,
             commands::set_discord_rpc,
             commands::get_discord_rpc,
+            commands::set_chat_shortcuts,
+            commands::get_chat_shortcuts,
             commands::get_connection_status,
             commands::get_player_loadout,
             commands::get_chat_messages,
@@ -118,8 +120,7 @@ pub fn run() -> RunResult {
 
             // Initialize the settings-preset store from the app data dir.
             if let Ok(data_dir) = app.path().app_data_dir() {
-                let store =
-                    presets::PresetStore::load(presets::presets_path(&data_dir));
+                let store = presets::PresetStore::load(presets::presets_path(&data_dir));
                 *app.state::<AppState>().presets.write() = Some(Arc::new(store));
             } else {
                 tracing::error!("[Presets] Could not resolve app_data_dir; presets disabled");

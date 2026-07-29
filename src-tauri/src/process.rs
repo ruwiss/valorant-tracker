@@ -19,9 +19,7 @@ mod imp {
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::System::Threading::{
-        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
-    };
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
     /// Walk the process snapshot, calling `f(pid, exe_name)` for each entry.
     /// `exe_name` is the bare image name (e.g. `VALORANT-Win64-Shipping.exe`).
