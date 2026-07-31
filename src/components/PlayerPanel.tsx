@@ -294,49 +294,76 @@ export function PlayerPanel() {
 		}
 	};
 
+	/** Translate a single name/tag fragment. Returns null when unchanged or empty. */
+	const translateFragment = async (
+		text: string,
+		targetLang: string,
+	): Promise<{ text: string; src: string } | null> => {
+		const trimmed = text.trim();
+		if (!trimmed) return null;
+
+		const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(trimmed)}`;
+		const res = await fetch(url);
+		if (!res.ok) throw new Error("Google Translate HTTP Error");
+
+		const data = await res.json();
+		// data[0] is an array of [translated, original, ...] segments — join them all.
+		if (!data?.[0]?.[0]?.[0]) return null;
+
+		const translatedText = (data[0] as unknown[][])
+			.map((seg) => (typeof seg?.[0] === "string" ? seg[0] : ""))
+			.join("");
+		const srcCode: string = typeof data[2] === "string" ? data[2] : "";
+
+		if (translatedText.toLowerCase().trim() === trimmed.toLowerCase()) {
+			return null; // no useful translation
+		}
+		return { text: translatedText, src: srcCode };
+	};
+
 	const handleTranslate = async (e: React.MouseEvent) => {
 		e.stopPropagation();
-		if (!selectedPlayer || isTranslating || translatedName) return;
+		// null = not attempted yet; "" / non-empty = already ran (block re-click)
+		if (!selectedPlayer || isTranslating || translatedName !== null) return;
 
 		setIsTranslating(true);
 		try {
-			const nickname = selectedPlayer.name.split("#")[0];
+			const full = selectedPlayer.name;
+			const hashIdx = full.indexOf("#");
+			const namePart = hashIdx >= 0 ? full.slice(0, hashIdx) : full;
+			const tagPart = hashIdx >= 0 ? full.slice(hashIdx + 1) : "";
 			const targetLang = locale === "tr" ? "tr" : "en";
 
-			// Use Google Translate's free API endpoint (client=gtx)
-			const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(nickname)}`;
+			// Translate name and tag independently so one can succeed without the other.
+			const [nameResult, tagResult] = await Promise.all([
+				translateFragment(namePart, targetLang),
+				tagPart ? translateFragment(tagPart, targetLang) : Promise.resolve(null),
+			]);
 
-			const res = await fetch(url);
-			if (!res.ok) throw new Error("Google Translate HTTP Error");
-
-			const data = await res.json();
-
-			// Google Translate returns an array where data[0] contains all translated segments.
-			// data[0][0][0] is usually the translated text. data[2] holds the
-			// auto-detected SOURCE language code (e.g. "ru", "ja").
-			if (data && data[0] && data[0][0] && data[0][0][0]) {
-				const translatedText = data[0][0][0];
-				const srcCode: string = typeof data[2] === "string" ? data[2] : "";
-
-				// Don't show if translation is identical to original (case-insensitive)
-				if (
-					translatedText.toLowerCase().trim() !== nickname.toLowerCase().trim()
-				) {
-					setTranslatedName(translatedText);
-					// Only surface the source language when it differs from the UI locale
-					// (no point tagging "English" when the user is already on English).
-					setDetectedLang(srcCode && srcCode !== targetLang ? srcCode : null);
-				} else {
-					// If they are exactly the same, it means Google didn't find anything to translate
-					setTranslatedName("-");
-					setDetectedLang(null);
-				}
-			} else {
-				throw new Error("Invalid translation response format");
+			// Build display: only include parts that actually changed.
+			// - only name  → "Name"
+			// - only tag   → "#Tag"
+			// - both       → "Name#Tag"
+			// - neither    → "" (render nothing, not "-")
+			let display = "";
+			if (nameResult && tagResult) {
+				display = `${nameResult.text}#${tagResult.text}`;
+			} else if (nameResult) {
+				display = nameResult.text;
+			} else if (tagResult) {
+				display = `#${tagResult.text}`;
 			}
+
+			setTranslatedName(display);
+
+			const srcCode = nameResult?.src || tagResult?.src || "";
+			setDetectedLang(
+				display && srcCode && srcCode !== targetLang ? srcCode : null,
+			);
 		} catch (err) {
 			console.error("Google Translation failed:", err);
 			setTranslatedName("Hata");
+			setDetectedLang(null);
 		} finally {
 			setIsTranslating(false);
 		}
@@ -588,8 +615,8 @@ export function PlayerPanel() {
 								{/* Translate Button */}
 								<button
 									onClick={handleTranslate}
-									className={`p-1 rounded-full transition-colors ${isTranslating ? "text-accent-cyan cursor-wait" : translatedName ? "text-success cursor-default" : "text-dim hover:text-accent-cyan hover:bg-card-hover/60"}`}
-									title={translatedName ? "Translated" : "Translate Name"}
+									className={`p-1 rounded-full transition-colors ${isTranslating ? "text-accent-cyan cursor-wait" : translatedName !== null ? "text-success cursor-default" : "text-dim hover:text-accent-cyan hover:bg-card-hover/60"}`}
+									title={translatedName !== null ? "Translated" : "Translate Name"}
 								>
 									{isTranslating ? (
 										<svg
@@ -629,16 +656,16 @@ export function PlayerPanel() {
 								</button>
 							</div>
 
-							{translatedName && (
-								<div className="text-[10px] text-accent-gold/80 italic -mt-0.5 truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+							{translatedName ? (
+								<div className="text-[10px] text-[#f5d78e] font-medium italic -mt-0.5 truncate drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
 									{translatedName}
 									{detectedLang && (
-										<span className="not-italic text-dim/60 font-normal ml-1">
+										<span className="not-italic text-[#f5d78e]/70 font-normal ml-1">
 											({langDisplayName(detectedLang, locale)})
 										</span>
 									)}
 								</div>
-							)}
+							) : null}
 
 							{copied && (
 								<span className="text-[8px] text-success block -mt-0.5">

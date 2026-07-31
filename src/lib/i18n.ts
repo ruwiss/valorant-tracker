@@ -158,6 +158,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.madeBy": "Made by",
     "settings.close": "Close",
 
+    // First-launch welcome toast
+    "welcome.title": "Quick tip",
+    "welcome.hotkey": "Press {hotkey} anytime to show or hide this overlay.",
+    "welcome.borderless": "For in-game use, set Valorant to Windowed Fullscreen (Settings → Video → Display Mode).",
+
     // Player Stats
     "stats.title": "Player Stats",
     "stats.loading": "Loading stats...",
@@ -438,6 +443,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.hotkeyNote": "Tuşa basınca oyun küçülüyorsa, Valorant'ı Pencereli Tam Ekran moduna alın.",
     "settings.madeBy": "Yapımcı",
     "settings.close": "Kapat",
+
+    // First-launch welcome toast
+    "welcome.title": "Hızlı ipucu",
+    "welcome.hotkey": "Overlay'i açıp kapatmak için {hotkey} tuşuna bas.",
+    "welcome.borderless": "Oyunda da çalışması için Valorant'ı Pencereli Tam Ekran yap (Ayarlar → Video → Görüntü Modu).",
 
     // Player Stats
     "stats.title": "OYUNCU İSTATİSTİKLERİ",

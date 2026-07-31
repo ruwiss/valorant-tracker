@@ -1,9 +1,54 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { availableMonitors } from "@tauri-apps/api/window";
 import { invokeCommand } from "../utils/ipc";
+
+/**
+ * Zustand persist writes on EVERY set(), including before rehydrate finishes.
+ * A pre-hydrate set() would partialize the in-memory defaults and overwrite
+ * localStorage (e.g. wiping a custom auto-lock delay back to 5/6).
+ * Gate writes until the first rehydrate completes.
+ */
+let settingsPersistWritable = false;
+
+const hydrationSafeStorage: StateStorage = {
+  getItem: (name) => {
+    try {
+      return localStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  },
+  setItem: (name, value) => {
+    if (!settingsPersistWritable) return;
+    try {
+      localStorage.setItem(name, value);
+    } catch (e) {
+      console.error("Failed to persist settings:", e);
+    }
+  },
+  removeItem: (name) => {
+    try {
+      localStorage.removeItem(name);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
+/** Run after settings rehydrate (or immediately if already hydrated). */
+function afterSettingsHydrated(fn: () => void) {
+  if (useSettingsStore.persist.hasHydrated()) {
+    fn();
+    return;
+  }
+  const unsub = useSettingsStore.persist.onFinishHydration(() => {
+    unsub();
+    fn();
+  });
+}
 
 interface WindowPosition {
   x: number;
@@ -20,6 +65,8 @@ interface SettingsState {
   autoLockDelaySeconds: number;
   discordRpcEnabled: boolean;
   chatShortcutsEnabled: boolean;
+  /** First-launch tip toast; shown once then persisted as seen. */
+  hasSeenWelcome: boolean;
 }
 
 interface SettingsStore extends SettingsState {
@@ -44,6 +91,7 @@ interface SettingsStore extends SettingsState {
   syncDiscordRpc: () => void;
   setChatShortcutsEnabled: (enabled: boolean) => void;
   syncChatShortcuts: () => void;
+  markWelcomeSeen: () => void;
 }
 
 const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 5;
@@ -141,6 +189,11 @@ export const useSettingsStore = create<SettingsStore>()(
       autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
       chatShortcutsEnabled: true,
+      hasSeenWelcome: false,
+
+      markWelcomeSeen: () => {
+        set({ hasSeenWelcome: true });
+      },
 
       setAutoLockDelaySeconds: (seconds: number) => {
         const autoLockDelaySeconds = clampAutoLockDelay(seconds);
@@ -148,23 +201,11 @@ export const useSettingsStore = create<SettingsStore>()(
         invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
       },
 
-      // Push persisted delay to backend only AFTER rehydrate.
-      // Calling this before hydration overwrites localStorage with the default.
+      // Push persisted delay to backend only AFTER rehydrate (never write defaults first).
       syncAutoLockDelay: () => {
-        const push = () => {
+        afterSettingsHydrated(() => {
           const autoLockDelaySeconds = clampAutoLockDelay(get().autoLockDelaySeconds);
-          set({ autoLockDelaySeconds });
           invokeCommand("set_auto_lock_delay", { seconds: autoLockDelaySeconds }).catch(console.error);
-        };
-
-        if (useSettingsStore.persist.hasHydrated()) {
-          push();
-          return;
-        }
-
-        const unsub = useSettingsStore.persist.onFinishHydration(() => {
-          unsub();
-          push();
         });
       },
 
@@ -175,7 +216,9 @@ export const useSettingsStore = create<SettingsStore>()(
 
       // Push the persisted Discord RPC preference to the (fresh) backend on startup.
       syncDiscordRpc: () => {
-        invokeCommand("set_discord_rpc", { enabled: get().discordRpcEnabled }).catch(console.error);
+        afterSettingsHydrated(() => {
+          invokeCommand("set_discord_rpc", { enabled: get().discordRpcEnabled }).catch(console.error);
+        });
       },
 
       setChatShortcutsEnabled: (enabled: boolean) => {
@@ -184,21 +227,9 @@ export const useSettingsStore = create<SettingsStore>()(
       },
 
       // Push the persisted chat-shortcut preference to the (fresh) backend.
-      // Waits for rehydration, otherwise the default `true` would overwrite a
-      // persisted "off" before localStorage is read back.
       syncChatShortcuts: () => {
-        const push = () => {
+        afterSettingsHydrated(() => {
           invokeCommand("set_chat_shortcuts", { enabled: get().chatShortcutsEnabled }).catch(console.error);
-        };
-
-        if (useSettingsStore.persist.hasHydrated()) {
-          push();
-          return;
-        }
-
-        const unsub = useSettingsStore.persist.onFinishHydration(() => {
-          unsub();
-          push();
         });
       },
 
@@ -429,6 +460,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: "valorant-tracker-settings-v3", // Version bumped to clear old state
+      storage: createJSONStorage(() => hydrationSafeStorage),
       partialize: (state): SettingsState => ({
         hotkey: state.hotkey,
         windowPosition: state.windowPosition,
@@ -437,7 +469,27 @@ export const useSettingsStore = create<SettingsStore>()(
         autoLockDelaySeconds: state.autoLockDelaySeconds,
         discordRpcEnabled: state.discordRpcEnabled,
         chatShortcutsEnabled: state.chatShortcutsEnabled,
+        hasSeenWelcome: state.hasSeenWelcome,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<SettingsState>;
+        return {
+          ...current,
+          ...p,
+          // Always clamp so a corrupt / legacy value cannot break the slider.
+          autoLockDelaySeconds: clampAutoLockDelay(
+            p.autoLockDelaySeconds ?? current.autoLockDelaySeconds,
+          ),
+        };
+      },
+      onRehydrateStorage: () => (_state, error) => {
+        // Unlock persistence only after storage was read & merged into memory.
+        // Pre-hydrate set() calls were no-ops so they could not wipe a custom delay.
+        settingsPersistWritable = true;
+        if (error) {
+          console.error("Settings rehydrate failed:", error);
+        }
+      },
     }
   )
 );

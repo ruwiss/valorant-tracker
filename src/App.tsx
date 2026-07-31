@@ -11,8 +11,35 @@ import { ChatPanel } from "./components/Chat/ChatPanel";
 import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useGameLoop } from "./hooks/useGameLoop";
-import { Toaster } from "sonner";
+import { useI18n } from "./lib/i18n";
+import { Toaster, toast } from "sonner";
 import { useEffect } from "react";
+
+/** How long the first-launch tip stays visible (ms). */
+const WELCOME_TOAST_DURATION_MS = 12_000;
+
+/** Guard StrictMode double-mount so the welcome toast only fires once per session. */
+let welcomeToastScheduled = false;
+
+function showWelcomeToastIfNeeded() {
+  const { hasSeenWelcome, hotkey, markWelcomeSeen } = useSettingsStore.getState();
+  if (hasSeenWelcome) return;
+
+  // Mark first so StrictMode / remount cannot queue the toast.
+  markWelcomeSeen();
+
+  const { t } = useI18n.getState();
+  toast(t("welcome.title"), {
+    description: (
+      <div className="flex flex-col gap-1.5 text-[13px] leading-snug">
+        <span>{t("welcome.hotkey", { hotkey })}</span>
+        <span className="opacity-80">{t("welcome.borderless")}</span>
+      </div>
+    ),
+    duration: WELCOME_TOAST_DURATION_MS,
+    position: "bottom-right",
+  });
+}
 
 function App() {
   const { gameState } = useGameStore();
@@ -32,6 +59,25 @@ function App() {
     return () => {
       document.removeEventListener("contextmenu", handleContextMenu);
     };
+  }, []);
+
+  // First launch: bottom-right tip about hotkey + Windowed Fullscreen (once).
+  useEffect(() => {
+    if (welcomeToastScheduled) return;
+    welcomeToastScheduled = true;
+
+    const run = () => {
+      // Short delay so the window is painted before the toast appears.
+      window.setTimeout(showWelcomeToastIfNeeded, 700);
+    };
+
+    if (useSettingsStore.persist.hasHydrated()) {
+      run();
+      return;
+    }
+
+    const unsub = useSettingsStore.persist.onFinishHydration(run);
+    return unsub;
   }, []);
 
   const renderContent = () => {
