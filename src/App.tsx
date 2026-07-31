@@ -12,38 +12,60 @@ import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useGameLoop } from "./hooks/useGameLoop";
 import { useI18n } from "./lib/i18n";
-import { Toaster, toast } from "sonner";
-import { useEffect } from "react";
+import { Toaster } from "sonner";
+import { useEffect, useState } from "react";
 
-/** How long the first-launch tip stays visible (ms). */
-const WELCOME_TOAST_DURATION_MS = 12_000;
+/** How long the first-launch tip stays under the header (ms). */
+const WELCOME_TIP_DURATION_MS = 6_500;
 
-/** Guard StrictMode double-mount so the welcome toast only fires once per session. */
-let welcomeToastScheduled = false;
+/** Guard StrictMode double-mount so the tip only schedules once per session. */
+let welcomeTipScheduled = false;
 
-function showWelcomeToastIfNeeded() {
-  const { hasSeenWelcome, hotkey, markWelcomeSeen } = useSettingsStore.getState();
-  if (hasSeenWelcome) return;
+function WelcomeTipBanner({
+  hotkey,
+  onDismiss,
+}: {
+  hotkey: string;
+  onDismiss: () => void;
+}) {
+  const { t } = useI18n();
 
-  // Mark first so StrictMode / remount cannot queue the toast.
-  markWelcomeSeen();
-
-  const { t } = useI18n.getState();
-  toast(t("welcome.title"), {
-    description: (
-      <div className="flex flex-col gap-1.5 text-[13px] leading-snug">
-        <span>{t("welcome.hotkey", { hotkey })}</span>
-        <span className="opacity-80">{t("welcome.borderless")}</span>
+  return (
+    <div
+      className="mb-2 shrink-0 rounded-lg border border-accent-cyan/20 bg-accent-cyan/[0.07] px-2.5 py-1.5 animate-smooth-appear"
+      role="status"
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90 mb-0.5">
+            {t("welcome.title")}
+          </div>
+          <p className="text-[10px] leading-snug text-primary/85">
+            {t("welcome.hotkey", { hotkey })}
+          </p>
+          <p className="text-[9px] leading-snug text-dim/90 mt-0.5">
+            {t("welcome.borderless")}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-dim/70 hover:text-primary hover:bg-white/10 transition-colors"
+          aria-label="Dismiss"
+        >
+          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
-    ),
-    duration: WELCOME_TOAST_DURATION_MS,
-    position: "bottom-right",
-  });
+    </div>
+  );
 }
 
 function App() {
   const { gameState } = useGameStore();
-  const { windowStyle } = useSettingsStore();
+  const { windowStyle, hotkey } = useSettingsStore();
+  const [showWelcomeTip, setShowWelcomeTip] = useState(false);
 
   // Subscribe to backend connection/game-state events (backend owns the loop)
   useGameLoop();
@@ -61,23 +83,41 @@ function App() {
     };
   }, []);
 
-  // First launch: bottom-right tip about hotkey + Windowed Fullscreen (once).
+  // First launch: compact tip under the VALORANT header (once).
   useEffect(() => {
-    if (welcomeToastScheduled) return;
-    welcomeToastScheduled = true;
+    if (welcomeTipScheduled) return;
+    welcomeTipScheduled = true;
+
+    let hideTimer: number | undefined;
+    let showTimer: number | undefined;
 
     const run = () => {
-      // Short delay so the window is painted before the toast appears.
-      window.setTimeout(showWelcomeToastIfNeeded, 700);
+      const { hasSeenWelcome, markWelcomeSeen } = useSettingsStore.getState();
+      if (hasSeenWelcome) return;
+
+      // Short delay so the window is painted first.
+      showTimer = window.setTimeout(() => {
+        markWelcomeSeen();
+        setShowWelcomeTip(true);
+        hideTimer = window.setTimeout(() => setShowWelcomeTip(false), WELCOME_TIP_DURATION_MS);
+      }, 500);
     };
 
     if (useSettingsStore.persist.hasHydrated()) {
       run();
-      return;
+    } else {
+      const unsub = useSettingsStore.persist.onFinishHydration(run);
+      return () => {
+        unsub();
+        if (showTimer) window.clearTimeout(showTimer);
+        if (hideTimer) window.clearTimeout(hideTimer);
+      };
     }
 
-    const unsub = useSettingsStore.persist.onFinishHydration(run);
-    return unsub;
+    return () => {
+      if (showTimer) window.clearTimeout(showTimer);
+      if (hideTimer) window.clearTimeout(hideTimer);
+    };
   }, []);
 
   const renderContent = () => {
@@ -96,6 +136,12 @@ function App() {
       {/* Main content - Fixed width to prevent jumping during resize */}
       <div className="relative w-[380px] flex-none flex flex-col p-4 pl-5">
         <Header />
+        {showWelcomeTip && (
+          <WelcomeTipBanner
+            hotkey={hotkey}
+            onDismiss={() => setShowWelcomeTip(false)}
+          />
+        )}
         {renderContent()}
         <Footer />
 
