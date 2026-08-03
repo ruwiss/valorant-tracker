@@ -294,7 +294,11 @@ export function PlayerPanel() {
 		}
 	};
 
-	/** Translate a single name/tag fragment. Returns null when unchanged or empty. */
+	/** True once a successful translate finished (empty string = no useful change). */
+	const translateDone =
+		translatedName !== null && translatedName !== "Hata";
+
+	/** Translate a single name/tag fragment via Rust (same path as chat `!t`). */
 	const translateFragment = async (
 		text: string,
 		targetLang: string,
@@ -302,31 +306,34 @@ export function PlayerPanel() {
 		const trimmed = text.trim();
 		if (!trimmed) return null;
 
-		const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(trimmed)}`;
-		const res = await fetch(url);
-		if (!res.ok) throw new Error("Google Translate HTTP Error");
+		const result = await invokeCommand<{
+			text: string;
+			source_lang: string;
+		}>("translate_text", { text: trimmed, targetLang }, {
+			suppressErrorToast: true,
+		});
 
-		const data = await res.json();
-		// data[0] is an array of [translated, original, ...] segments — join them all.
-		if (!data?.[0]?.[0]?.[0]) return null;
-
-		const translatedText = (data[0] as unknown[][])
-			.map((seg) => (typeof seg?.[0] === "string" ? seg[0] : ""))
-			.join("");
-		const srcCode: string = typeof data[2] === "string" ? data[2] : "";
-
-		if (translatedText.toLowerCase().trim() === trimmed.toLowerCase()) {
-			return null; // no useful translation
+		if (!result?.text) {
+			// invokeCommand rethrows on Err; null should not happen for Ok.
+			throw new Error("Translation returned empty");
 		}
-		return { text: translatedText, src: srcCode };
+
+		const translatedText = result.text.trim();
+		if (!translatedText) throw new Error("Translation returned empty");
+		if (translatedText.toLowerCase() === trimmed.toLowerCase()) {
+			return null; // no useful translation (already target language / same text)
+		}
+		return { text: translatedText, src: result.source_lang || "" };
 	};
 
 	const handleTranslate = async (e: React.MouseEvent) => {
 		e.stopPropagation();
-		// null = not attempted yet; "" / non-empty = already ran (block re-click)
-		if (!selectedPlayer || isTranslating || translatedName !== null) return;
+		// Allow retry after error; block only after a successful attempt.
+		if (!selectedPlayer || isTranslating || translateDone) return;
 
 		setIsTranslating(true);
+		setTranslatedName(null);
+		setDetectedLang(null);
 		try {
 			const full = selectedPlayer.name;
 			const hashIdx = full.indexOf("#");
@@ -615,8 +622,22 @@ export function PlayerPanel() {
 								{/* Translate Button */}
 								<button
 									onClick={handleTranslate}
-									className={`p-1 rounded-full transition-colors ${isTranslating ? "text-accent-cyan cursor-wait" : translatedName !== null ? "text-success cursor-default" : "text-dim hover:text-accent-cyan hover:bg-card-hover/60"}`}
-									title={translatedName !== null ? "Translated" : "Translate Name"}
+									className={`p-1 rounded-full transition-colors ${
+										isTranslating
+											? "text-accent-cyan cursor-wait"
+											: translatedName === "Hata"
+												? "text-accent-red hover:bg-card-hover/60"
+												: translateDone
+													? "text-success cursor-default"
+													: "text-dim hover:text-accent-cyan hover:bg-card-hover/60"
+									}`}
+									title={
+										translatedName === "Hata"
+											? "Çeviri başarısız — tekrar dene"
+											: translateDone
+												? "Translated"
+												: "Translate Name"
+									}
 								>
 									{isTranslating ? (
 										<svg

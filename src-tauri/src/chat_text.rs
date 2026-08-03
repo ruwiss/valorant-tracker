@@ -274,15 +274,35 @@ fn is_plausible_lang_code(lang: &str) -> bool {
     b.iter().all(|c| c.is_ascii_alphabetic() || *c == b'-') && b[0].is_ascii_alphabetic()
 }
 
-/// Translate `text` into `target_lang` (source auto-detected). Returns None on failure.
-pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
+/// Result of a Google Translate call (text + auto-detected source language).
+#[derive(Debug, Clone)]
+pub struct TranslateOutput {
+    pub text: String,
+    /// ISO language code from Google (e.g. "ru", "ja"), empty if unknown.
+    pub source_lang: String,
+}
+
+/// Translate `text` into `target_lang` (source auto-detected).
+/// Returns None on network/parse failure or empty translation.
+pub fn google_translate_detailed(text: &str, target_lang: &str) -> Option<TranslateOutput> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+
     let url = format!(
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
         urlencoding::encode(target_lang),
         urlencoding::encode(text)
     );
 
-    let resp = HTTP.get(&url).send().ok()?;
+    let resp = match HTTP.get(&url).send() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("[ChatText] Translate request failed: {}", e);
+            return None;
+        }
+    };
     if !resp.status().is_success() {
         tracing::warn!(
             "[ChatText] Translate HTTP {} for tl={}",
@@ -292,7 +312,13 @@ pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
         return None;
     }
 
-    let body: serde_json::Value = resp.json().ok()?;
+    let body: serde_json::Value = match resp.json() {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("[ChatText] Translate JSON parse failed: {}", e);
+            return None;
+        }
+    };
     let segments = body.get(0)?.as_array()?;
     let mut out = String::new();
     for seg in segments {
@@ -302,10 +328,25 @@ pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
     }
     let out = out.trim().to_string();
     if out.is_empty() {
-        None
-    } else {
-        Some(out)
+        return None;
     }
+
+    // data[2] is the detected source language code when present.
+    let source_lang = body
+        .get(2)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Some(TranslateOutput {
+        text: out,
+        source_lang,
+    })
+}
+
+/// Translate `text` into `target_lang` (source auto-detected). Returns None on failure.
+pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
+    google_translate_detailed(text, target_lang).map(|r| r.text)
 }
 
 /// Apply all outgoing shortcuts. Safe to call from any thread (uses blocking HTTP

@@ -112,6 +112,7 @@ pub fn run() -> RunResult {
             commands::focus_window,
             commands::open_log_file,
             commands::log_frontend_message,
+            commands::translate_text,
         ])
         .setup(move |app| {
             // Initialize logger first

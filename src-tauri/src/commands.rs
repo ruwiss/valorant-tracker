@@ -2351,3 +2351,40 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
 pub fn get_app_constants() -> crate::constants::AppConstants {
     crate::constants::APP_CONSTANTS.clone()
 }
+
+#[derive(serde::Serialize, Clone)]
+pub struct TranslateResult {
+    pub text: String,
+    pub source_lang: String,
+}
+
+/// Translate free text via Google Translate (same path as chat `!t` shortcuts).
+/// Runs on a blocking thread so the async runtime is not stalled.
+/// Returns Err when the network/API fails so the UI can show an error state.
+#[tauri::command]
+pub async fn translate_text(
+    text: String,
+    target_lang: String,
+) -> Result<TranslateResult, String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Empty text".into());
+    }
+    if target_lang.trim().is_empty() || target_lang.len() > 12 {
+        return Err("Invalid target language".into());
+    }
+
+    let target_lang = target_lang.trim().to_string();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::chat_text::google_translate_detailed(&text, &target_lang)
+    })
+    .await
+    .map_err(|e| format!("Translate task failed: {}", e))?;
+
+    result
+        .map(|r| TranslateResult {
+            text: r.text,
+            source_lang: r.source_lang,
+        })
+        .ok_or_else(|| "Translation failed".into())
+}
