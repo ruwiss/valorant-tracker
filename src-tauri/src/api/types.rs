@@ -225,11 +225,30 @@ pub struct PartyMember {
 }
 
 // MMR types
+// Note: CompetitiveTier/RankedRating live under SeasonalInfoBySeasonID entries,
+// not on the queue-skill object itself. Current rank is best read from
+// LatestCompetitiveUpdate.TierAfterUpdate when present.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MmrResponse {
     pub queue_skills: Option<QueueSkills>,
+    #[serde(default)]
+    pub latest_competitive_update: Option<LatestCompetitiveUpdate>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LatestCompetitiveUpdate {
+    #[serde(default)]
+    pub tier_after_update: Option<u32>,
+    #[serde(default)]
+    pub ranked_rating_after_update: Option<u32>,
+    #[serde(default)]
+    pub tier_before_update: Option<u32>,
+    #[serde(default)]
+    pub ranked_rating_before_update: Option<u32>,
 }
 
 #[allow(dead_code)]
@@ -242,9 +261,13 @@ pub struct QueueSkills {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CompetitiveSkill {
+    // These top-level fields are not in current API docs but kept optional
+    // for forward/backward compatibility with older payloads.
+    #[serde(default)]
     pub competitive_tier: Option<u32>,
+    #[serde(default)]
     pub ranked_rating: Option<u32>,
-    #[serde(rename = "SeasonalInfoBySeasonID")]
+    #[serde(rename = "SeasonalInfoBySeasonID", default)]
     pub seasonal_info_by_season_id: Option<std::collections::HashMap<String, SeasonalInfo>>,
 }
 
@@ -252,15 +275,21 @@ pub struct CompetitiveSkill {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct SeasonalInfo {
-    #[serde(rename = "SeasonID")]
+    #[serde(rename = "SeasonID", default)]
     pub season_id: Option<String>,
+    #[serde(default)]
     pub competitive_tier: Option<u32>,
+    #[serde(default)]
     pub ranked_rating: Option<u32>,
+    #[serde(default)]
     pub number_of_wins: Option<u32>,
+    #[serde(default)]
     pub number_of_wins_with_placements: Option<u32>,
+    #[serde(default)]
     pub number_of_games: Option<u32>,
+    #[serde(default)]
     pub leaderboard_rank: Option<u32>,
-    #[serde(rename = "WinsByTier")]
+    #[serde(rename = "WinsByTier", default)]
     pub wins_by_tier: Option<std::collections::HashMap<String, u32>>,
 }
 

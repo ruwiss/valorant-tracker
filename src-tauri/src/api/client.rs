@@ -604,7 +604,18 @@ impl ValorantAPI {
             .map_err(|e| format!("deflate finish error: {}", e))
     }
 
+    /// Resolve the Riot client version used in remote PD/GLZ headers.
+    ///
+    /// **Order matters:** PD endpoints (especially `/mmr/v1/players/...`) return
+    /// HTTP 404 `RESOURCE_NOT_FOUND` when `X-Riot-ClientVersion` does not match
+    /// the locally installed build. `valorant-api.com` can lag a few shipping
+    /// builds behind, so we prefer parsing `ShooterGame.log` first.
     async fn get_client_version(&self) -> String {
+        if let Some(v) = Self::client_version_from_shooter_log() {
+            tracing::info!("[Initialize] Client version from ShooterGame.log: {}", v);
+            return v;
+        }
+
         if let Ok(resp) = self
             .client
             .get("https://valorant-api.com/v1/version")
@@ -614,12 +625,66 @@ impl ValorantAPI {
             if let Ok(data) = resp.json::<VersionResponse>().await {
                 if let Some(d) = data.data {
                     if let Some(v) = d.riot_client_version {
+                        tracing::warn!(
+                            "[Initialize] Client version from valorant-api.com (log unavailable): {}",
+                            v
+                        );
                         return v;
                     }
                 }
             }
         }
-        "release-09.10-shipping-18-2775386".to_string()
+
+        tracing::warn!("[Initialize] Using hardcoded fallback client version");
+        "release-13.02-shipping-10-5229475".to_string()
+    }
+
+    /// Parse `CI server version: release-XX.YY-shipping-N-NNNNNNN` from the
+    /// local Valorant log (most accurate source while the game is running).
+    fn client_version_from_shooter_log() -> Option<String> {
+        let local = std::env::var("LOCALAPPDATA").ok()?;
+        let log_path = PathBuf::from(local)
+            .join("VALORANT")
+            .join("Saved")
+            .join("Logs")
+            .join("ShooterGame.log");
+
+        let content = std::fs::read_to_string(&log_path).ok()?;
+
+        // Prefer the last "CI server version:" line — log is append-only across sessions.
+        let mut found: Option<String> = None;
+        for line in content.lines() {
+            // Example: "CI server version: release-13.02-shipping-10-5229475"
+            if let Some(idx) = line.find("CI server version:") {
+                let rest = line[idx + "CI server version:".len()..].trim();
+                let ver = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if ver.starts_with("release-") {
+                    found = Some(ver);
+                }
+            }
+        }
+
+        // Fallback: any release-*-shipping-*-* token near the end of the file
+        if found.is_none() {
+            for line in content.lines().rev().take(400) {
+                for token in line.split_whitespace() {
+                    if token.starts_with("release-") && token.contains("shipping") {
+                        // Strip trailing punctuation if any
+                        let clean = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.');
+                        if clean.starts_with("release-") {
+                            return Some(clean.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        found
     }
 
     fn glz_url(&self, endpoint: &str) -> String {
@@ -1552,20 +1617,63 @@ impl ValorantAPI {
         party_map
     }
 
-    /// Get player MMR/rank
-    #[allow(dead_code)]
+    /// Get player current competitive tier + RR.
+    /// Prefer LatestCompetitiveUpdate (actual current rank). Fall back to the
+    /// seasonal CompetitiveTier with the most games, then any top-level tier.
     pub async fn get_player_mmr(&self, puuid: &str) -> (u32, u32) {
         let url = self.pd_url(&format!("/mmr/v1/players/{}", puuid));
-        if let Some(data) = self.get_remote::<MmrResponse>(&url).await {
-            if let Some(queue_skills) = data.queue_skills {
-                if let Some(competitive) = queue_skills.competitive {
-                    return (
-                        competitive.competitive_tier.unwrap_or(0),
-                        competitive.ranked_rating.unwrap_or(0),
-                    );
-                }
+        let Some(data) = self.get_remote::<MmrResponse>(&url).await else {
+            return (0, 0);
+        };
+
+        // 1) Latest ranked match update — most accurate "current rank"
+        if let Some(update) = data.latest_competitive_update.as_ref() {
+            let tier = update.tier_after_update.unwrap_or(0);
+            if tier > 0 {
+                return (
+                    tier,
+                    update.ranked_rating_after_update.unwrap_or(0),
+                );
             }
         }
+
+        // 2) Seasonal info: pick the season with most games, else highest tier
+        if let Some(competitive) = data
+            .queue_skills
+            .as_ref()
+            .and_then(|q| q.competitive.as_ref())
+        {
+            if let Some(seasons) = competitive.seasonal_info_by_season_id.as_ref() {
+                let mut best: Option<(u32, u32, u32)> = None; // (games, tier, rr)
+                for season in seasons.values() {
+                    let tier = season.competitive_tier.unwrap_or(0);
+                    if tier == 0 {
+                        continue;
+                    }
+                    let games = season.number_of_games.unwrap_or(0);
+                    let rr = season.ranked_rating.unwrap_or(0);
+                    let replace = match best {
+                        None => true,
+                        Some((best_games, best_tier, _)) => {
+                            games > best_games || (games == best_games && tier > best_tier)
+                        }
+                    };
+                    if replace {
+                        best = Some((games, tier, rr));
+                    }
+                }
+                if let Some((_, tier, rr)) = best {
+                    return (tier, rr);
+                }
+            }
+
+            // 3) Legacy top-level fields (rarely populated now)
+            let tier = competitive.competitive_tier.unwrap_or(0);
+            if tier > 0 {
+                return (tier, competitive.ranked_rating.unwrap_or(0));
+            }
+        }
+
         (0, 0)
     }
 

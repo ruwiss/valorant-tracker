@@ -26,6 +26,14 @@ pub struct AppState {
     // Cache for player loadouts - puuid -> skins
     pub cached_loadouts: RwLock<HashMap<String, PlayerSkinData>>,
     pub loadouts_match_id: RwLock<Option<String>>,
+    // Rank cache (puuid -> competitive tier). Pregame CompetitiveTier and MMR
+    // fallbacks are stored here so coregame can keep showing ranks even when
+    // SeasonalBadgeInfo.Rank is zeroed by Riot.
+    pub cached_ranks: RwLock<HashMap<String, i32>>,
+    // Puuids we already attempted MMR for this match (avoids re-fetch spam
+    // when a player truly has no competitive tier).
+    pub ranks_mmr_fetched: RwLock<HashSet<String>>,
+    pub cached_ranks_match_id: RwLock<Option<String>>,
     // Track if the background connection supervisor (connect + watch + reconnect + autolock) is running
     pub supervisor_started: RwLock<bool>,
     // User paused match watching - supervisor stops polling/autolock while true
@@ -83,6 +91,9 @@ impl AppState {
             fetched_history_players: RwLock::new(HashSet::new()),
             cached_loadouts: RwLock::new(HashMap::new()),
             loadouts_match_id: RwLock::new(None),
+            cached_ranks: RwLock::new(HashMap::new()),
+            ranks_mmr_fetched: RwLock::new(HashSet::new()),
+            cached_ranks_match_id: RwLock::new(None),
             supervisor_started: RwLock::new(false),
             is_paused: RwLock::new(false),
             consecutive_idle_count: RwLock::new(0),

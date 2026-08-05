@@ -706,6 +706,8 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             locked: p.character_selection_state == "locked",
                             party,
                             is_me: p.subject == my_puuid,
+                            // Pregame still has CompetitiveTier; if Riot zeros it,
+                            // enrich_missing_ranks below falls back to MMR.
                             rank_tier: p.competitive_tier,
                             rank_rr: 0,
                             level,
@@ -715,6 +717,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             player_card_id,
                         });
                     }
+
+                    // Fill zero ranks via cache + MMR (CompetitiveTier can be 0 in
+                    // unrated / when Riot blanks match payloads).
+                    enrich_missing_ranks(&state, api, &match_id, &mut allies).await;
 
                     // Reset idle/menus counters and update last known state on successful pregame
                     *state.consecutive_idle_count.write() = 0;
@@ -872,6 +878,11 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         }
                     }
 
+                    // Coregame only has SeasonalBadgeInfo.Rank (often 0). Carry
+                    // pregame CompetitiveTier from cache and fill the rest via MMR.
+                    enrich_missing_ranks(&state, api, &match_id, &mut allies).await;
+                    enrich_missing_ranks(&state, api, &match_id, &mut enemies).await;
+
                     // Reset idle/menus counters and update last known state on successful ingame
                     *state.consecutive_idle_count.write() = 0;
                     *state.consecutive_menus_count.write() = 0;
@@ -1024,6 +1035,100 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         state: "idle".into(),
         ..Default::default()
     })
+}
+
+/// Reset rank cache when the match id changes (same lifecycle as party cache).
+fn ensure_rank_cache_match(state: &AppState, match_id: &str) {
+    let cached_match_id = state.cached_ranks_match_id.read().clone();
+    if cached_match_id.as_deref() != Some(match_id) {
+        if cached_match_id.is_some() {
+            tracing::info!(
+                "[rank_cache] Match changed from {:?} to {}, clearing rank cache",
+                cached_match_id,
+                match_id
+            );
+        }
+        state.cached_ranks.write().clear();
+        state.ranks_mmr_fetched.write().clear();
+        *state.cached_ranks_match_id.write() = Some(match_id.to_string());
+    }
+}
+
+fn store_rank_in_cache(state: &AppState, puuid: &str, tier: i32) {
+    if tier > 0 {
+        state.cached_ranks.write().insert(puuid.to_string(), tier);
+    }
+}
+
+fn cached_rank(state: &AppState, puuid: &str) -> i32 {
+    state.cached_ranks.read().get(puuid).copied().unwrap_or(0)
+}
+
+/// Fill missing ranks for a set of players (parallel MMR lookups, once per match).
+///
+/// Coregame no longer reliably exposes ranks (`SeasonalBadgeInfo.Rank` is often 0).
+/// Order: match payload → match-scoped cache → `/mmr/v1/players/{puuid}`.
+async fn enrich_missing_ranks(
+    state: &AppState,
+    api: &crate::api::ValorantAPI,
+    match_id: &str,
+    players: &mut [PlayerData],
+) {
+    ensure_rank_cache_match(state, match_id);
+
+    // Seed cache from any non-zero ranks already on the roster
+    for p in players.iter() {
+        if p.rank_tier > 0 {
+            store_rank_in_cache(state, &p.puuid, p.rank_tier);
+        }
+    }
+
+    // Apply cache first (free)
+    for p in players.iter_mut() {
+        if p.rank_tier <= 0 {
+            let cached = cached_rank(state, &p.puuid);
+            if cached > 0 {
+                p.rank_tier = cached;
+            }
+        }
+    }
+
+    let missing: Vec<String> = {
+        let already_tried = state.ranks_mmr_fetched.read();
+        players
+            .iter()
+            .filter(|p| p.rank_tier <= 0 && !already_tried.contains(&p.puuid))
+            .map(|p| p.puuid.clone())
+            .collect()
+    };
+
+    if missing.is_empty() {
+        return;
+    }
+
+    // Parallel MMR fetches — only for players still missing a tier
+    let futs: Vec<_> = missing
+        .iter()
+        .map(|puuid| {
+            let api = api;
+            let puuid = puuid.clone();
+            async move {
+                let (tier, _) = api.get_player_mmr(&puuid).await;
+                (puuid, tier as i32)
+            }
+        })
+        .collect();
+
+    let results = futures_util::future::join_all(futs).await;
+    for (puuid, tier) in results {
+        state.ranks_mmr_fetched.write().insert(puuid.clone());
+        if tier > 0 {
+            store_rank_in_cache(state, &puuid, tier);
+            if let Some(p) = players.iter_mut().find(|p| p.puuid == puuid) {
+                p.rank_tier = tier;
+            }
+        }
+    }
 }
 
 /// Get parties with caching - persists across pregame->ingame transition
