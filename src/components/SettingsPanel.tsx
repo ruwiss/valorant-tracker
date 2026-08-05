@@ -10,6 +10,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
 import { PresetsTab } from "./PresetsTab";
+import { ChatShortcutsEditor } from "./ChatShortcutsEditor";
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
 const BLOCKED_KEYS = ["Escape", "Tab", "CapsLock", "Enter", "Backspace", "Space"];
@@ -34,15 +35,15 @@ function buildHotkeyString(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-type Tab = "autolock" | "presets" | "general";
+type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
   const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
-  const { setHoveredAgent } = usePanelStore();
   const { constants } = useConstantsStore();
+  const { settingsSubView, setSettingsSubView, setHoveredAgent } = usePanelStore();
 
   const [activeTab, setActiveTab] = useState<Tab>("autolock");
   const [recording, setRecording] = useState(false);
@@ -191,21 +192,23 @@ export function SettingsPanel() {
     }
   }, [recording, handleHotkeyRecord]);
 
+  // Nested editor views (after all hooks — rules of hooks).
+  if (settingsSubView === "chat_shortcuts") {
+    return <ChatShortcutsEditor />;
+  }
+  if (settingsSubView === "presets") {
+    return <PresetsTab />;
+  }
+
   return (
     <div className="flex flex-col h-full bg-dark/40 backdrop-blur-md">
-      {/* Tabs */}
+      {/* Tabs: Agent | Options only */}
       <div className="flex p-2 gap-1 border-b border-white/5 bg-white/2">
         <button
           onClick={() => setActiveTab("autolock")}
           className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "autolock" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
         >
           {locale === "tr" ? "Ajan" : "Agent"}
-        </button>
-        <button
-          onClick={() => setActiveTab("presets")}
-          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "presets" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
-        >
-          {t("presets.tab")}
         </button>
         <button
           onClick={() => setActiveTab("general")}
@@ -216,9 +219,7 @@ export function SettingsPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 selection:bg-accent-cyan/30">
-        {activeTab === "presets" ? (
-          <PresetsTab />
-        ) : activeTab === "autolock" ? (
+        {activeTab === "autolock" ? (
           /* Agent Selection Tab - Map-based */
           <div className="flex flex-col h-full">
             {/* Global Default Section */}
@@ -467,37 +468,49 @@ export function SettingsPanel() {
             </div>
           </div>
         ) : (
-          /* General Settings Tab */
-          <div className="p-3 space-y-4">
-            {/* Language */}
-            <div>
-              <label className="text-[10px] text-dim block mb-1.5">{t("settings.language")}</label>
-              <div className="flex gap-1.5">
-                <button onClick={() => setLocale("en")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "en" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  EN
-                </button>
-                <button onClick={() => setLocale("tr")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "tr" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  TR
-                </button>
+          /* General Settings Tab — flat grouped sections */
+          <div className="p-3 space-y-5">
+            {/* Appearance */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionAppearance")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
               </div>
-            </div>
-
-            {/* Window Style */}
-            <div>
-              <label className="text-[10px] text-dim block mb-1.5">{t("settings.windowStyle")}</label>
-              <div className="flex gap-1.5">
-                <button onClick={() => setWindowStyle("free")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "free" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.windowStyleFree")}
-                </button>
-                <button onClick={() => setWindowStyle("docked")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "docked" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.windowStyleDocked")}
-                </button>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{t("settings.language")}</label>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setLocale("en")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "en" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    EN
+                  </button>
+                  <button onClick={() => setLocale("tr")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "tr" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    TR
+                  </button>
+                </div>
               </div>
-            </div>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{t("settings.windowStyle")}</label>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setWindowStyle("free")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "free" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    {t("settings.windowStyleFree")}
+                  </button>
+                  <button onClick={() => setWindowStyle("docked")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "docked" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    {t("settings.windowStyleDocked")}
+                  </button>
+                </div>
+              </div>
+            </section>
 
-            {/* Discord Rich Presence */}
-            <div>
-              <label className="text-[10px] text-dim block mb-1.5">{t("settings.discordRpc")}</label>
+            {/* Integrations */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionIntegrations")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
+              <label className="text-[10px] text-dim block mb-1">{t("settings.discordRpc")}</label>
               <div className="flex gap-1.5">
                 <button onClick={() => setDiscordRpcEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${discordRpcEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
                   {t("settings.on")}
@@ -506,12 +519,18 @@ export function SettingsPanel() {
                   {t("settings.off")}
                 </button>
               </div>
-              <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.discordRpcDesc")}</p>
-            </div>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.discordRpcDesc")}</p>
+            </section>
 
-            {/* Chat shortcuts (sa / as / <3 / !t) */}
-            <div>
-              <label className="text-[10px] text-dim block mb-1.5">{t("settings.chatShortcuts")}</label>
+            {/* Chat */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionChat")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
+              <label className="text-[10px] text-dim block mb-1">{t("settings.chatShortcuts")}</label>
               <div className="flex gap-1.5">
                 <button onClick={() => setChatShortcutsEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${chatShortcutsEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
                   {t("settings.on")}
@@ -520,12 +539,43 @@ export function SettingsPanel() {
                   {t("settings.off")}
                 </button>
               </div>
-              <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.chatShortcutsDesc")}</p>
-            </div>
+              <button
+                type="button"
+                onClick={() => setSettingsSubView("chat_shortcuts")}
+                className="w-full h-7 rounded text-[10px] font-semibold border border-border/60 text-secondary hover:bg-white/5 hover:text-primary transition-all"
+              >
+                {t("settings.chatShortcutsEdit")}
+              </button>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.chatShortcutsDesc")}</p>
+            </section>
 
-            {/* Hotkey */}
-            <div>
-              <label className="text-[10px] text-dim block mb-1.5">{t("settings.hotkey")}</label>
+            {/* Presets */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionPresets")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.sectionPresetsDesc")}</p>
+              <button
+                type="button"
+                onClick={() => setSettingsSubView("presets")}
+                className="w-full h-8 rounded text-[10px] font-bold border border-accent-cyan/40 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 transition-all"
+              >
+                {t("settings.sectionPresetsOpen")}
+              </button>
+            </section>
+
+            {/* Controls */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionControls")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
+              <label className="text-[10px] text-dim block mb-1">{t("settings.hotkey")}</label>
               {recording ? (
                 <div className="flex gap-1.5">
                   <div className="flex-1 h-8 rounded text-[11px] font-bold border bg-accent-cyan/20 border-accent-cyan text-accent-cyan animate-pulse flex items-center justify-center">{recordingDisplay || "..."}</div>
@@ -534,21 +584,25 @@ export function SettingsPanel() {
                   </button>
                 </div>
               ) : (
-                <button onClick={startRecording} className="w-full h-8 rounded text-[11px] font-bold border bg-card border-border text-primary hover:bg-card-hover transition-all">
+                <button onClick={startRecording} className="w-full h-8 rounded text-[11px] font-bold border border-border text-primary hover:bg-white/5 transition-all">
                   {hotkey}
                 </button>
               )}
               {hotkeyError && <p className="text-[9px] text-error mt-1">{hotkeyError}</p>}
-              <p className="text-[9px] text-dim/70 mt-1.5 leading-relaxed">{t("settings.hotkeyNote")}</p>
-            </div>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.hotkeyNote")}</p>
+            </section>
 
-            <div className="h-px bg-border/50 my-2" />
-
-            {/* Logs */}
-            <div>
+            {/* Advanced */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionAdvanced")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
               <button
                 onClick={() => invoke("open_log_file").catch((e) => console.error("Failed to open log file:", e))}
-                className="w-full h-8 flex items-center justify-center gap-2 rounded text-[10px] font-semibold border border-border bg-card text-secondary hover:bg-card-hover hover:text-primary transition-all"
+                className="w-full h-8 flex items-center justify-center gap-2 rounded text-[10px] font-semibold border border-border/60 text-secondary hover:bg-white/5 hover:text-primary transition-all"
               >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -559,21 +613,22 @@ export function SettingsPanel() {
                 </svg>
                 {t("settings.openLogs")}
               </button>
-              <p className="text-[8px] text-dim/60 mt-1 text-center">{t("settings.logsNote")}</p>
-            </div>
+              <p className="text-[8px] text-dim/60 text-center">{t("settings.logsNote")}</p>
+            </section>
 
-            <div className="h-px bg-border/50 my-2" />
-
-            {/* About Info */}
-            <div>
-              <h3 className="text-[10px] font-semibold text-primary mb-2">{locale === "tr" ? "Hakkında" : "About"}</h3>
-              <div className="bg-card/50 rounded p-2 space-y-1.5">
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-dim">{t("settings.version")}</span>
-                  <span className="text-primary font-mono">{appVersion}</span>
-                </div>
+            {/* About */}
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
+                  {t("settings.sectionAbout")}
+                </span>
+                <div className="flex-1 h-px bg-border/40" />
               </div>
-            </div>
+              <div className="flex justify-between text-[10px] px-0.5">
+                <span className="text-dim">{t("settings.version")}</span>
+                <span className="text-primary font-mono">{appVersion}</span>
+              </div>
+            </section>
           </div>
         )}
       </div>

@@ -202,44 +202,6 @@ fn has_resolvable_agent_mention(s: &str) -> bool {
     before != after
 }
 
-/// ASCII → Unicode symbols that Valorant chat actually renders.
-/// Faces (☺ ☹ ☻) and many math glyphs show as blank boxes — not included.
-const SYMBOL_REPLACEMENTS: &[(&str, &str)] = &[
-    // Hearts (confirmed working in Valorant)
-    ("</3", "\u{2661}"), // ♡
-    ("<3", "\u{2665}"),  // ♥
-    // Simple arrows (BMP, widely accepted)
-    ("->", "\u{2192}"), // →
-    ("<-", "\u{2190}"), // ←
-    // Ellipsis
-    ("...", "\u{2026}"), // …
-    // Status / icons (user-confirmed visible in-game)
-    (":check:", "\u{2713}"),    // ✓
-    (":yes:", "\u{2713}"),      // ✓ (alias)
-    (":wrong:", "\u{2717}"),    // ✗
-    (":x:", "\u{2717}"),        // ✗ (alias)
-    (":warn:", "\u{26A0}"),     // ⚠
-    (":skull:", "\u{2620}"),    // ☠
-    (":kurukafa:", "\u{2620}"), // ☠ (TR alias)
-];
-
-/// Apply symbol shortcuts (Valorant-safe set only).
-fn apply_symbol_shortcuts(input: &str) -> String {
-    let mut out = input.to_string();
-
-    for (from, to) in SYMBOL_REPLACEMENTS {
-        if out.contains(from) {
-            out = out.replace(from, to);
-        }
-    }
-
-    out
-}
-
-fn has_symbol_shortcut(s: &str) -> bool {
-    SYMBOL_REPLACEMENTS.iter().any(|(from, _)| s.contains(from))
-}
-
 /// `!t <lang> <message>` — lang is any Google-supported code (`en`, `tr`, `de`,
 /// `zh-CN`, `pt-BR`, …). Message must be non-empty.
 pub fn parse_translate_command(raw: &str) -> Option<(&str, &str)> {
@@ -351,6 +313,14 @@ pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
 
 /// Apply all outgoing shortcuts. Safe to call from any thread (uses blocking HTTP
 /// only when `!t` is present).
+///
+/// Order:
+/// 1. `!t <lang> …` translate (always available)
+/// 2. User/system **equals** + **contains** rules (`chat_rules`)
+/// 3. Agent mentions (`<sage` / `>jett`)
+/// 4. Contains rules again only if agent mentions changed text? — no:
+///    Agent mentions run after equals, then contains so symbols still apply
+///    to the remaining text. Equals already replaced the whole message.
 pub fn transform_outgoing_chat(message: &str) -> String {
     if !shortcuts_enabled() {
         return message.to_string();
@@ -374,22 +344,16 @@ pub fn transform_outgoing_chat(message: &str) -> String {
             }
         }
     } else {
-        let lower = trimmed.to_lowercase();
-        if lower == "sa" {
-            "Selamun Aleyküm".to_string()
-        } else if lower == "as" {
-            "Aleyküm Selam".to_string()
-        } else {
-            trimmed.to_string()
-        }
+        // 2) Equals rules (whole message, e.g. sa → Selamun Aleyküm).
+        crate::chat_rules::apply_equals_rules(trimmed)
     };
 
-    // 2) Agent tags BEFORE symbol shortcuts so `<sage` is not eaten by `<3` rules
-    //    (and so `</3` still works — no agent named `/3`).
+    // 3) Agent tags (`<sage` / `>jett`) — before symbol/contains so `<3` still works.
     out = apply_agent_mentions(&out);
 
-    // 3) Symbol / emoticon shortcuts.
-    out = apply_symbol_shortcuts(&out);
+    // 4) Contains rules (symbols + user "contains" phrases).
+    out = crate::chat_rules::apply_contains_rules(&out);
+
     out
 }
 
@@ -406,12 +370,8 @@ pub fn needs_chat_expansion(raw: &str) -> bool {
     if parse_translate_command(t).is_some() {
         return true;
     }
-    let lower = t.to_lowercase();
-    if lower == "sa" || lower == "as" {
+    if crate::chat_rules::needs_rule_expansion(t) {
         return true;
     }
-    if has_resolvable_agent_mention(t) {
-        return true;
-    }
-    has_symbol_shortcut(t)
+    has_resolvable_agent_mention(t)
 }

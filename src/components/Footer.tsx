@@ -25,7 +25,9 @@ export function Footer() {
   const getAgentByUuid = useConstantsStore((s) => s.getAgentByUuid);
 
   const getAutoLockStatus = () => {
-    const resolveName = (uuid: string | null) => uuid ? (getAgentByUuid(uuid)?.name || uuid).toUpperCase() : null;
+    const resolveName = (uuid: string | null) =>
+      uuid ? (getAgentByUuid(uuid)?.name || uuid).toUpperCase() : null;
+    const mapBasedLabel = t("footer.mapBased");
 
     if (gameState.map_name) {
       const agentUuid = getAgentForMap(gameState.map_name);
@@ -33,16 +35,16 @@ export function Footer() {
     }
     if (autoLockAgent) {
       if (Object.keys(mapAgentPreferences).length > 0) {
-        return t("locale") === "tr" ? "ÖZEL" : "CUSTOM";
+        return mapBasedLabel;
       }
       return resolveName(autoLockAgent);
     }
     if (Object.keys(mapAgentPreferences).length > 0) {
-      return t("locale") === "tr" ? "ÖZEL" : "CUSTOM";
+      return mapBasedLabel;
     }
     if (pausedAutoLockAgent) {
       if (Object.keys(mapAgentPreferences).length > 0) {
-        return t("locale") === "tr" ? "ÖZEL" : "CUSTOM";
+        return mapBasedLabel;
       }
       return resolveName(pausedAutoLockAgent);
     }
@@ -105,7 +107,7 @@ export function Footer() {
         <button
           onClick={openShop}
           className={`w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer border transition-all duration-300 shrink-0 ${isOpen && panelType === "shop" ? "text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]" : "text-dim hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"}`}
-          title={t("header.shop") || "Store"}
+          title={t("header.shop")}
         >
           <svg className="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />

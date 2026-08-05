@@ -3,6 +3,7 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import type { PlayerData, CrosshairLayer } from "../lib/types";
 
 type PanelType = "settings" | "player" | "stats" | "shop" | null;
+export type SettingsSubView = "main" | "chat_shortcuts" | "presets";
 
 const BASE_WIDTH = 380;
 const PANEL_WIDTH = 260;
@@ -45,6 +46,8 @@ export interface HoveredCrosshair {
 interface PanelStore {
   isOpen: boolean;
   panelType: PanelType;
+  /** Nested view when panelType is "settings". */
+  settingsSubView: SettingsSubView;
   selectedPlayer: PlayerData | null;
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
@@ -55,6 +58,7 @@ interface PanelStore {
   openStats: (player: PlayerData) => Promise<void>;
   openShop: () => Promise<void>;
   close: () => Promise<void>;
+  setSettingsSubView: (view: SettingsSubView) => void;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
   setHoveredAgent: (agent: HoveredAgent | null) => void;
   setHoveredCrosshair: (crosshair: HoveredCrosshair | null) => void;
@@ -94,6 +98,7 @@ async function waitForResize(targetLogicalWidth: number) {
 export const usePanelStore = create<PanelStore>((set, get) => ({
   isOpen: false,
   panelType: null,
+  settingsSubView: "main",
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
@@ -106,8 +111,17 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       await resizeWindow(true);
       await waitForResize(targetWidth);
     }
-    set({ isOpen: true, panelType: "settings", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
+    set({
+      isOpen: true,
+      panelType: "settings",
+      settingsSubView: "main",
+      selectedPlayer: null,
+      hoveredWeapon: null,
+      hoveredAgent: null,
+    });
   },
+
+  setSettingsSubView: (view) => set({ settingsSubView: view }),
 
   openShop: async () => {
     const { isOpen, panelType } = get();
@@ -163,7 +177,15 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   close: async () => {
-    set({ isOpen: false, panelType: null, selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null, hoveredCrosshair: null });
+    set({
+      isOpen: false,
+      panelType: null,
+      settingsSubView: "main",
+      selectedPlayer: null,
+      hoveredWeapon: null,
+      hoveredAgent: null,
+      hoveredCrosshair: null,
+    });
     // Wait for exit animation or state update to clear
     await new Promise(resolve => setTimeout(resolve, 300));
     await resizeWindow(false);

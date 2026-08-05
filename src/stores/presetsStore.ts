@@ -16,6 +16,7 @@ interface PresetsStore {
   capture: (name: string) => Promise<boolean>;
   remove: (id: string) => Promise<void>;
   rename: (id: string, name: string) => Promise<boolean>;
+  duplicate: (id: string, name: string) => Promise<boolean>;
   apply: (id: string) => Promise<boolean>;
   arm: (id: string) => Promise<void>;
   // Close the Riot stack (game + client) and arm the preset; it auto-applies
@@ -82,6 +83,20 @@ export const usePresetsStore = create<PresetsStore>((set, get) => ({
         "rename_preset",
         { id, name },
         { successMessage: t("presets.renamed") },
+      );
+      await get().refresh();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  duplicate: async (id: string, name: string) => {
+    try {
+      await invokeCommand(
+        "duplicate_preset",
+        { id, name },
+        { successMessage: t("presets.duplicated") },
       );
       await get().refresh();
       return true;

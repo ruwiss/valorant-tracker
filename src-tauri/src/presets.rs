@@ -170,6 +170,20 @@ impl PresetStore {
         self.persist(&guard)
     }
 
+    /// Clone a preset under a new name (fresh id/timestamp, not marked as auto-backup).
+    pub fn duplicate(&self, id: &str, name: &str) -> Result<PresetMeta, String> {
+        let source = self
+            .get(id)
+            .ok_or_else(|| "Preset not found".to_string())?;
+        let clone = new_preset(
+            name.to_string(),
+            source.source_puuid,
+            false,
+            source.data,
+        );
+        self.add(clone)
+    }
+
     /// True if an auto-backup already exists for this account (puuid). We keep at
     /// most one backup per account — the original settings captured the first
     /// time a preset was applied to it — so repeated applies don't overwrite the

@@ -8,7 +8,7 @@ import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
 
 export function SidePanel() {
-  const { isOpen, panelType, close } = usePanelStore();
+  const { isOpen, panelType, settingsSubView, close } = usePanelStore();
   const { t } = useI18n();
   const gameState = useGameStore((s) => s.gameState);
 
@@ -21,23 +21,38 @@ export function SidePanel() {
     }
   }, [gameState.state, isOpen, panelType, close]);
 
-  // ESC to close
+  const setSettingsSubView = usePanelStore((s) => s.setSettingsSubView);
+
+  // ESC: back from shortcut editor, otherwise close panel
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        close();
+        if (
+          panelType === "settings" &&
+          (settingsSubView === "chat_shortcuts" || settingsSubView === "presets")
+        ) {
+          setSettingsSubView("main");
+        } else {
+          close();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, close]);
+  }, [isOpen, close, panelType, settingsSubView, setSettingsSubView]);
 
   if (!isOpen) return null;
 
   const getTitle = () => {
     switch (panelType) {
       case "settings":
+        if (settingsSubView === "chat_shortcuts") {
+          return t("settings.chatShortcutsEditorTitle");
+        }
+        if (settingsSubView === "presets") {
+          return t("presets.title");
+        }
         return t("settings.title");
       case "stats":
         return t("stats.title");

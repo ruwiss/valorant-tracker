@@ -1,6 +1,7 @@
 mod api;
 #[cfg(windows)]
 mod chat_expander;
+mod chat_rules;
 mod chat_text;
 mod commands;
 mod constants;
@@ -73,6 +74,9 @@ pub fn run() -> RunResult {
             commands::get_discord_rpc,
             commands::set_chat_shortcuts,
             commands::get_chat_shortcuts,
+            commands::get_chat_shortcut_rules,
+            commands::save_chat_shortcut_rules,
+            commands::reset_chat_shortcut_rules,
             commands::get_connection_status,
             commands::get_player_loadout,
             commands::get_chat_messages,
@@ -92,6 +96,7 @@ pub fn run() -> RunResult {
             commands::delete_preset,
             commands::apply_preset,
             commands::rename_preset,
+            commands::duplicate_preset,
             commands::arm_preset,
             commands::close_riot_and_arm_preset,
             commands::disarm_preset,
@@ -123,8 +128,12 @@ pub fn run() -> RunResult {
             if let Ok(data_dir) = app.path().app_data_dir() {
                 let store = presets::PresetStore::load(presets::presets_path(&data_dir));
                 *app.state::<AppState>().presets.write() = Some(Arc::new(store));
+                // Editable chat shortcuts (sa/as/symbols + user rules)
+                chat_rules::init(chat_rules::rules_path(&data_dir));
             } else {
                 tracing::error!("[Presets] Could not resolve app_data_dir; presets disabled");
+                // Still seed in-memory defaults so shortcuts work without persistence.
+                chat_rules::init(std::env::temp_dir().join("valorant-tracker-chat_shortcuts.json"));
             }
 
             // Start the named pipe server to listen for signals from other instances

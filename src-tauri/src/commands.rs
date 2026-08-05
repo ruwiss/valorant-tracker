@@ -1288,6 +1288,26 @@ pub fn get_chat_shortcuts() -> bool {
     crate::chat_text::shortcuts_enabled()
 }
 
+/// List editable chat shortcut rules (system defaults + user rules).
+#[tauri::command]
+pub fn get_chat_shortcut_rules() -> Vec<crate::chat_rules::ChatRule> {
+    crate::chat_rules::get_rules()
+}
+
+/// Replace the full rules list and persist to disk.
+#[tauri::command]
+pub fn save_chat_shortcut_rules(
+    rules: Vec<crate::chat_rules::ChatRule>,
+) -> Result<Vec<crate::chat_rules::ChatRule>, String> {
+    crate::chat_rules::set_rules(rules)
+}
+
+/// Restore factory default shortcuts (`sa`/`as`/symbols) and persist.
+#[tauri::command]
+pub fn reset_chat_shortcut_rules() -> Result<Vec<crate::chat_rules::ChatRule>, String> {
+    crate::chat_rules::reset_to_defaults()
+}
+
 /// Initial-sync helper: returns the current connection status so the frontend
 /// can render correctly without waiting for the next `connection_changed` event.
 #[tauri::command]
@@ -1824,6 +1844,21 @@ pub async fn rename_preset(
     }
     let store = preset_store(&state)?;
     store.rename(&id, name)
+}
+
+/// Duplicate a preset under a new name.
+#[tauri::command]
+pub async fn duplicate_preset(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<crate::presets::PresetMeta, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("EMPTY_NAME".into());
+    }
+    let store = preset_store(&state)?;
+    store.duplicate(&id, name)
 }
 
 /// Ensure a one-time safety backup of the signed-in account's current settings

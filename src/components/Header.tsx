@@ -104,7 +104,7 @@ export function Header() {
 
       {/* Right: Actions */}
       <div className="relative z-10 flex items-center gap-1 bg-dark/40 p-1 rounded-xl border border-white/[0.03] shrink-0">
-        <button onClick={handleOpenChat} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded-lg transition-all" title={t("header.chat") || "Open Chat"}>
+        <button onClick={handleOpenChat} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded-lg transition-all" title={t("header.chat")}>
           <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
