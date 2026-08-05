@@ -7,13 +7,26 @@
 //!   - buffers what is typed
 //!   - on Enter (send), expands `sa` / `as` / `<3` / `!t <lang> …` before send
 //!
-//! Expansion: swallow Enter → clear line → paste expanded text via clipboard
-//! (Unicode SendInput was dropping mid-string in Valorant) → Enter.
-//! Translate (`!t`) runs on a background thread so the hook never blocks.
+//! Expansion: swallow Enter (down **and** matching up) → clear line → paste
+//! expanded text via clipboard (Unicode SendInput was dropping mid-string in
+//! Valorant) → Enter. Translate (`!t`) runs on a background thread so the
+//! hook never blocks.
 //!
 //! Valorant keeps the chat bar **open after send** until Escape — so we must
 //! keep `chat_open = true` after a send, otherwise the next line is not
 //! buffered and shortcuts randomly "stop working".
+//!
+//! # Reliability notes
+//!
+//! - Swallowing only Enter **keydown** left the real **keyup** free to reach
+//!   Valorant; the game sometimes treated that as a send of the short form
+//!   (`sa`) before our inject thread finished. Both edges are suppressed for
+//!   the expansion window.
+//! - `Focus::Unknown` (foreground poller lag) used to drop keystrokes entirely,
+//!   so short messages like `sa` intermittently never buffered. While the chat
+//!   bar is already open we keep buffering through Unknown.
+//! - Paste + send pacing is intentionally slower than a human mash — Valorant
+//!   drops clipboard paste / mid-string input when the inject is too tight.
 //!
 //! # Staying alive
 //!
@@ -22,7 +35,7 @@
 //! **silently removed** — no error, no callback, ever again. That is why the
 //! shortcuts used to die mid-session and only came back after an app restart.
 //! Two things guard against it now:
-//!   1. The hook body is cheap: no `OpenProcess`, no allocations. A 150 ms
+//!   1. The hook body is cheap: no `OpenProcess`, no allocations. A ~80 ms
 //!      background poller resolves the foreground process instead.
 //!   2. A watchdog probes the hook with a swallowed synthetic keystroke and
 //!      reinstalls it when Windows has dropped it.
@@ -73,8 +86,25 @@ const WM_REINSTALL_HOOK: u32 = 0x8000 + 71; // WM_APP + 71
 /// send, which flips the state machine and silently skips one expansion.
 const CHAT_IDLE_TIMEOUT_MS: u64 = 20_000;
 
+/// After we swallow Enter-down for an expansion, suppress real Enter events
+/// (especially keyup) until this many ms have elapsed. Prevents Valorant from
+/// sending the unexpanded short form on the orphaned keyup.
+const ENTER_SUPPRESS_MS: u64 = 900;
+
 /// A callback this recent means Windows still owns the hook — skip the probe.
 const HOOK_FRESH_MS: u64 = 5_000;
+
+// --- inject pacing (Valorant is picky; too tight → empty send / dropped paste) ---
+const SETTLE_AFTER_SWALLOW_MS: u64 = 100;
+const CTRL_CHORD_GAP_MS: u64 = 25;
+const TAP_HOLD_MS: u64 = 14;
+const TAP_GAP_MS: u64 = 12;
+const AFTER_CLEAR_MS: u64 = 45;
+const AFTER_PASTE_MS: u64 = 90;
+const BEFORE_SEND_ENTER_MS: u64 = 70;
+const AFTER_SEND_ENTER_MS: u64 = 80;
+const BACKSPACE_GAP_MS: u64 = 8;
+const UNICODE_FALLBACK_GAP_MS: u64 = 18;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -111,6 +141,9 @@ struct ExpanderState {
     last_activity_ms: u64,
     /// Escape was pressed mid-injection — drop the pending expansion.
     abort_injection: bool,
+    /// Monotonic deadline: swallow real Enter (down/up) until this ms.
+    /// Set when an expansion starts so the user's Enter keyup cannot race us.
+    suppress_enter_until_ms: u64,
 }
 
 static STATE: Mutex<ExpanderState> = Mutex::new(ExpanderState {
@@ -119,6 +152,7 @@ static STATE: Mutex<ExpanderState> = Mutex::new(ExpanderState {
     injecting: false,
     last_activity_ms: 0,
     abort_injection: false,
+    suppress_enter_until_ms: 0,
 });
 
 fn needs_expansion(raw: &str) -> bool {
@@ -201,7 +235,9 @@ fn start_foreground_poller() {
                 FG_IS_VALORANT.store(is_valorant, Ordering::Relaxed);
                 FG_PID.store(pid, Ordering::Release);
             }
-            std::thread::sleep(Duration::from_millis(150));
+            // Faster than the old 150 ms — reduces Focus::Unknown windows that
+            // used to drop short shortcuts like `sa` mid-type.
+            std::thread::sleep(Duration::from_millis(80));
         })
         .ok();
 }
@@ -337,15 +373,15 @@ fn send_unicode_string_slow(s: &str) {
     // Fallback only — Valorant often drops mid-string when fed too fast.
     for ch in s.chars() {
         send_unicode_char(ch);
-        std::thread::sleep(Duration::from_millis(12));
+        std::thread::sleep(Duration::from_millis(UNICODE_FALLBACK_GAP_MS));
     }
 }
 
 fn tap_key(vk: VIRTUAL_KEY) {
     send_vk(vk, true);
-    std::thread::sleep(Duration::from_millis(8));
+    std::thread::sleep(Duration::from_millis(TAP_HOLD_MS));
     send_vk(vk, false);
-    std::thread::sleep(Duration::from_millis(8));
+    std::thread::sleep(Duration::from_millis(TAP_GAP_MS));
 }
 
 /// Put Unicode text on the Windows clipboard (CF_UNICODETEXT).
@@ -397,31 +433,45 @@ fn set_clipboard_text(text: &str) -> bool {
 fn clear_chat_line(original: &str) {
     // Select-all + delete
     send_vk(VK_CONTROL, true);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
     tap_key(VK_A);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
     send_vk(VK_CONTROL, false);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
     tap_key(VK_DELETE);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
 
-    // Backspace original length (+2) if select-all failed.
+    // Backspace original length (+2) if select-all failed (caret still on short form).
     let n = original.chars().count().saturating_add(2).min(64);
     for _ in 0..n {
         send_vk(VK_BACK, true);
+        std::thread::sleep(Duration::from_millis(TAP_HOLD_MS / 2));
         send_vk(VK_BACK, false);
-        std::thread::sleep(Duration::from_millis(6));
+        std::thread::sleep(Duration::from_millis(BACKSPACE_GAP_MS));
     }
-    std::thread::sleep(Duration::from_millis(20));
+    std::thread::sleep(Duration::from_millis(AFTER_CLEAR_MS));
 }
 
 fn paste_clipboard() {
     send_vk(VK_CONTROL, true);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
     tap_key(VK_V);
-    std::thread::sleep(Duration::from_millis(15));
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
     send_vk(VK_CONTROL, false);
-    std::thread::sleep(Duration::from_millis(40));
+    // Give Valorant's chat widget time to accept the paste before we hit Enter.
+    std::thread::sleep(Duration::from_millis(AFTER_PASTE_MS));
+}
+
+/// Extra settle after paste for longer expansions (`!t`, agent tags, …).
+fn paste_settle_extra(text: &str) -> u64 {
+    let n = text.chars().count() as u64;
+    if n > 40 {
+        40
+    } else if n > 20 {
+        20
+    } else {
+        0
+    }
 }
 
 /// Expand (may network for `!t`) then inject into the game chat box.
@@ -436,6 +486,8 @@ fn inject_expanded_from_raw(raw: String) {
             st.injecting = true;
             st.abort_injection = false;
             st.buffer.clear();
+            // Cover the user's Enter keyup + our whole inject sequence.
+            st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
         }
 
         let text = crate::chat_text::transform_outgoing_chat(&raw);
@@ -448,43 +500,82 @@ fn inject_expanded_from_raw(raw: String) {
                 st.injecting = false;
                 st.abort_injection = false;
                 st.buffer.clear();
+                st.suppress_enter_until_ms = 0;
                 tracing::info!("[ChatExpander] Expansion aborted (Escape)");
                 return;
             }
+            // Extend suppress for slow `!t` transforms so the window still
+            // covers clear/paste/send after the network wait.
+            st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
         }
 
-        // Let the swallowed Enter settle; Valorant needs a beat before input.
-        std::thread::sleep(Duration::from_millis(50));
+        // Let the swallowed Enter (and any orphaned keyup suppress) settle.
+        std::thread::sleep(Duration::from_millis(SETTLE_AFTER_SWALLOW_MS));
+
+        if STATE.lock().abort_injection {
+            let mut st = STATE.lock();
+            st.injecting = false;
+            st.abort_injection = false;
+            st.buffer.clear();
+            st.suppress_enter_until_ms = 0;
+            tracing::info!("[ChatExpander] Expansion aborted before inject");
+            return;
+        }
 
         // Wipe short form (`sa`, `<3`, …) so we never get `saSelamun…`.
         clear_chat_line(&raw);
 
         // Prefer clipboard paste — full string at once, no mid-cut "Selamun A".
-        let pasted = if set_clipboard_text(&text) {
-            paste_clipboard();
-            true
-        } else {
-            false
-        };
+        // Retry once: clipboard managers often hold the clip on first OpenClipboard.
+        let mut pasted = false;
+        for attempt in 0..2 {
+            if set_clipboard_text(&text) {
+                paste_clipboard();
+                pasted = true;
+                break;
+            }
+            if attempt == 0 {
+                tracing::debug!("[ChatExpander] Clipboard busy, retrying once");
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        }
 
         if !pasted {
             tracing::warn!("[ChatExpander] Clipboard paste failed; slow Unicode fallback");
             send_unicode_string_slow(&text);
-            std::thread::sleep(Duration::from_millis(30));
+            std::thread::sleep(Duration::from_millis(AFTER_PASTE_MS));
+        } else {
+            let extra = paste_settle_extra(&text);
+            if extra > 0 {
+                std::thread::sleep(Duration::from_millis(extra));
+            }
         }
 
-        // Send the line.
-        std::thread::sleep(Duration::from_millis(40));
+        if STATE.lock().abort_injection {
+            let mut st = STATE.lock();
+            st.injecting = false;
+            st.abort_injection = false;
+            st.buffer.clear();
+            st.suppress_enter_until_ms = 0;
+            tracing::info!("[ChatExpander] Expansion aborted before send");
+            return;
+        }
+
+        // Send the expanded line.
+        std::thread::sleep(Duration::from_millis(BEFORE_SEND_ENTER_MS));
         tap_key(VK_RETURN);
 
         // Keep chat_open — Valorant leaves the bar open after send.
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(AFTER_SEND_ENTER_MS));
         let mut st = STATE.lock();
         st.injecting = false;
         st.abort_injection = false;
         st.chat_open = true;
         st.buffer.clear();
         st.last_activity_ms = now_ms();
+        // Brief tail suppress so our synthetic Enter's pair can't double-send
+        // if the user still holds the physical key.
+        st.suppress_enter_until_ms = now_ms().saturating_add(200);
         tracing::info!(
             "[ChatExpander] Injected {:?} → {:?} (paste={})",
             raw.trim(),
@@ -539,7 +630,18 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                 st.chat_open = false;
                 st.buffer.clear();
             }
+            // Swallow physical Enter while we own the send sequence so a held
+            // key cannot double-fire alongside our synthetic Enter.
+            if vk == VK_RETURN.0 as u32 {
+                return LRESULT(1);
+            }
             return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        }
+
+        // Orphan Enter keyup (or a held Enter) after we swallowed the down edge
+        // for expansion — must not reach Valorant or it may send `sa` raw.
+        if vk == VK_RETURN.0 as u32 && now_ms() < st.suppress_enter_until_ms {
+            return LRESULT(1);
         }
     }
 
@@ -549,6 +651,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
     }
 
+    // Focus::Unknown used to hard-drop keys (poller lag) — fatal for 2-letter
+    // shortcuts like `sa`. If chat is already open, keep buffering.
     match focus_state() {
         Focus::Valorant => {}
         Focus::Other => {
@@ -559,7 +663,11 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
             }
             return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
         }
-        Focus::Unknown => return CallNextHookEx(HHOOK::default(), code, wparam, lparam),
+        Focus::Unknown => {
+            if !STATE.lock().chat_open {
+                return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+            }
+        }
     }
 
     // A mouse click, an alternate chat bind or Valorant's own auto-hide can
@@ -616,8 +724,12 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
 
         if needs_expansion(&raw) {
             tracing::info!("[ChatExpander] Expanding: {:?}", raw.trim());
-            // Swallow Enter; background thread will expand + re-send.
+            // Swallow Enter down; suppress matching up + inject expanded text.
             // chat_open stays true after inject.
+            {
+                let mut st = STATE.lock();
+                st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
+            }
             inject_expanded_from_raw(raw);
             return LRESULT(1);
         }
@@ -814,6 +926,7 @@ pub fn on_enabled_changed(on: bool) {
     let mut st = STATE.lock();
     st.chat_open = false;
     st.buffer.clear();
+    st.suppress_enter_until_ms = 0;
     if !on && st.injecting {
         st.abort_injection = true;
     }
