@@ -66,6 +66,9 @@ pub struct AppState {
 
     // Discord Rich Presence integration (mirrors map/score into Discord profile).
     pub discord: Arc<crate::discord::DiscordPresence>,
+
+    // Last completed match recap (idle screen). Refreshed on connect / match end.
+    pub last_match: RwLock<Option<crate::api::types::LastMatch>>,
 }
 
 #[derive(Clone)]
@@ -110,6 +113,7 @@ impl AppState {
             presets: RwLock::new(None),
             armed_preset: RwLock::new(None),
             discord: Arc::new(crate::discord::DiscordPresence::new()),
+            last_match: RwLock::new(None),
         }
     }
 }

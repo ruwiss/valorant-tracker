@@ -116,6 +116,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
         tracing::info!("[Supervisor] Started (connect + watch + reconnect + autolock)");
         let mut last_emitted_state_json = String::new();
         let mut last_conn_json = String::new();
+        let mut last_phase = String::new();
         let autolock_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut backoff_ms: u64 = 1000;
         const MAX_BACKOFF_MS: u64 = 10_000;
@@ -133,9 +134,15 @@ pub fn start_supervisor(app: tauri::AppHandle) {
         const POLL_PAUSED_MS: u64 = 2000; // user paused watching
         const POLL_WAITING_MS: u64 = 1500; // connecting / waiting for game
         let mut poll_interval_ms: u64 = POLL_WAITING_MS;
+        // Manual reconnect (or a mid-poll disconnect) should re-init on the next
+        // iteration without waiting out the current idle/live interval.
+        let mut skip_sleep = false;
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval_ms)).await;
+            if !skip_sleep {
+                tokio::time::sleep(tokio::time::Duration::from_millis(poll_interval_ms)).await;
+            }
+            skip_sleep = false;
 
             // 0. Respect user pause - stop watching but keep the task alive.
             if *app.state::<AppState>().is_paused.read() {
@@ -153,6 +160,32 @@ pub fn start_supervisor(app: tauri::AppHandle) {
             if !connected || needs_reinit {
                 poll_interval_ms = POLL_WAITING_MS;
                 emit_connection(&app, &mut last_conn_json, "connecting", "");
+
+                // Game process gone (quit to desktop / range exit + close): drop the
+                // live cache immediately so we don't keep a phantom LIVE panel.
+                if !crate::process::is_game_running() {
+                    {
+                        let state = app.state::<AppState>();
+                        drop_range_or_dead_cache(&state);
+                    }
+                    let idle = GameState {
+                        state: "idle".into(),
+                        ..Default::default()
+                    };
+                    if let Ok(json) = serde_json::to_string(&idle) {
+                        if json != last_emitted_state_json {
+                            let _ = app.emit("game_state_changed", &idle);
+                            last_emitted_state_json = json;
+                        }
+                    }
+                    discord.update(&idle, "waiting_for_game");
+                    emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                    poll_interval_ms = POLL_WAITING_MS;
+                    consecutive_connect_failures = WAITING_AFTER_FAILURES;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                    backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
+                    continue;
+                }
 
                 // Mid-match token blip: keep feeding the last live snapshot so the
                 // UI never falls through to the waiting screen while we reconnect.
@@ -203,6 +236,12 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         // Fresh token just arrived. If a preset is armed, apply it
                         // now — before the game reads its settings (~46s window).
                         try_apply_armed_preset(&app).await;
+
+                        // Idle recap: last completed match (map + score).
+                        crate::last_match::spawn_refresh(
+                            app.clone(),
+                            crate::last_match::LastMatchReason::Connected,
+                        );
                     }
                     Err(e) => {
                         consecutive_connect_failures += 1;
@@ -241,6 +280,16 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     }
                 }
 
+                // Live match just ended → refresh last-match recap (details lag).
+                let phase = current_state.state.as_str();
+                if (last_phase == "pregame" || last_phase == "ingame") && phase == "idle" {
+                    crate::last_match::spawn_refresh(
+                        app.clone(),
+                        crate::last_match::LastMatchReason::MatchEnd,
+                    );
+                }
+                last_phase = phase.to_string();
+
                 // Pace the next tick from the phase we just observed.
                 poll_interval_ms = match current_state.state.as_str() {
                     "pregame" | "ingame" => POLL_LIVE_MS,
@@ -254,6 +303,17 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 // only hit this on a true cold disconnect with no cache.
                 if current_state.state == "disconnected" {
                     *api.needs_reinit.write() = true;
+                    skip_sleep = true;
+                    continue;
+                }
+
+                // A manual reconnect (or lockfile/token refresh) was requested
+                // during this poll. Do not advertise "connected" — that was
+                // overwriting the UI's RECONNECTING state instantly — and skip
+                // the next sleep so initialize() runs immediately.
+                if *api.needs_reinit.read() {
+                    emit_connection(&app, &mut last_conn_json, "connecting", "");
+                    skip_sleep = true;
                     continue;
                 }
 
@@ -428,12 +488,51 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
     get_game_state_internal(&state).await
 }
 
+/// Practice range is a coregame session with no real match. Never treat it as LIVE.
+fn is_practice_range_map(map_id: &str) -> bool {
+    let id = map_id.to_ascii_lowercase();
+    id.contains("range") || id.contains("poveglia")
+}
+
+fn is_range_like_state(gs: &GameState) -> bool {
+    let map = gs.map_name.as_deref().unwrap_or("");
+    let map_l = map.to_ascii_lowercase();
+    if map_l.contains("range") || map_l.contains("poveglia") {
+        return true;
+    }
+    // Range often fails MAP_NAMES lookup → "Unknown" + only ourselves.
+    map.eq_ignore_ascii_case("Unknown")
+        && gs.enemies.is_empty()
+        && gs.allies.len() <= 1
+}
+
+fn drop_range_or_dead_cache(state: &AppState) {
+    let range_like = state
+        .last_full_game_state
+        .read()
+        .as_ref()
+        .is_some_and(is_range_like_state);
+    let game_gone = !crate::process::is_game_running();
+    if range_like || game_gone {
+        *state.last_full_game_state.write() = None;
+        let last = state.last_known_state.read().clone();
+        if last == "pregame" || last == "ingame" {
+            *state.last_known_state.write() = "idle".into();
+        }
+    }
+}
+
 /// Prefer the last full live snapshot over an empty "disconnected" payload so the
 /// UI/Discord keep map/score while the supervisor re-establishes tokens.
 fn cached_live_or_disconnected(state: &AppState) -> GameState {
-    if let Some(cached) = state.last_full_game_state.read().clone() {
-        if cached.state == "pregame" || cached.state == "ingame" {
-            return cached;
+    drop_range_or_dead_cache(state);
+    if crate::process::is_game_running() {
+        if let Some(cached) = state.last_full_game_state.read().clone() {
+            if (cached.state == "pregame" || cached.state == "ingame")
+                && !is_range_like_state(&cached)
+            {
+                return cached;
+            }
         }
     }
     GameState {
@@ -446,11 +545,16 @@ fn cached_live_or_disconnected(state: &AppState) -> GameState {
 /// advancing idle debounce. Used when APIs are flaky mid-match.
 fn hold_live_snapshot(state: &AppState, reason: &str) -> GameState {
     tracing::debug!("[get_game_state] Holding live snapshot: {}", reason);
+    drop_range_or_dead_cache(state);
     // Do not count this tick as an idle confirmation.
     *state.consecutive_idle_count.write() = 0;
-    if let Some(cached) = state.last_full_game_state.read().clone() {
-        if cached.state == "pregame" || cached.state == "ingame" {
-            return cached;
+    if crate::process::is_game_running() {
+        if let Some(cached) = state.last_full_game_state.read().clone() {
+            if (cached.state == "pregame" || cached.state == "ingame")
+                && !is_range_like_state(&cached)
+            {
+                return cached;
+            }
         }
     }
     let last = state.last_known_state.read().clone();
@@ -789,6 +893,17 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     // Residual id; fall through to idle logic.
                 }
                 RemoteResult::Ok(match_data) => {
+                    if is_practice_range_map(&match_data.map_id) {
+                        tracing::info!(
+                            "[get_game_state] Practice range ({}) — not a live match",
+                            match_data.map_id
+                        );
+                        *state.last_full_game_state.write() = None;
+                        *state.last_known_state.write() = "idle".to_string();
+                        *state.consecutive_idle_count.write() = 0;
+                        *state.consecutive_menus_count.write() = 0;
+                        // Fall through to idle (do not hold a LIVE roster).
+                    } else {
                     let map_name = MAP_NAMES
                         .get(match_data.map_id.as_str())
                         .map(|s| s.to_string())
@@ -880,8 +995,16 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                     // Coregame only has SeasonalBadgeInfo.Rank (often 0). Carry
                     // pregame CompetitiveTier from cache and fill the rest via MMR.
-                    enrich_missing_ranks(&state, api, &match_id, &mut allies).await;
-                    enrich_missing_ranks(&state, api, &match_id, &mut enemies).await;
+                    // Enrich both teams in one pass so enemy ranks get the same
+                    // cache/MMR treatment as allies (enemies were never in pregame).
+                    enrich_missing_ranks_for_roster(
+                        &state,
+                        api,
+                        &match_id,
+                        &mut allies,
+                        &mut enemies,
+                    )
+                    .await;
 
                     // Reset idle/menus counters and update last known state on successful ingame
                     *state.consecutive_idle_count.write() = 0;
@@ -906,9 +1029,19 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         ally_score,
                         enemy_score,
                     };
-                    *state.last_full_game_state.write() = Some(gs.clone());
-                    crate::chat_text::update_roster_from_game(&gs);
-                    return Ok(gs);
+                    if is_range_like_state(&gs) {
+                        tracing::info!(
+                            "[get_game_state] Range-like coregame (map={:?}) — not LIVE",
+                            gs.map_name
+                        );
+                        *state.last_full_game_state.write() = None;
+                        *state.last_known_state.write() = "idle".to_string();
+                    } else {
+                        *state.last_full_game_state.write() = Some(gs.clone());
+                        crate::chat_text::update_roster_from_game(&gs);
+                        return Ok(gs);
+                    }
+                    }
                 }
             }
         }
@@ -1064,39 +1197,31 @@ fn cached_rank(state: &AppState, puuid: &str) -> i32 {
     state.cached_ranks.read().get(puuid).copied().unwrap_or(0)
 }
 
-/// Fill missing ranks for a set of players (parallel MMR lookups, once per match).
-///
-/// Coregame no longer reliably exposes ranks (`SeasonalBadgeInfo.Rank` is often 0).
-/// Order: match payload → match-scoped cache → `/mmr/v1/players/{puuid}`.
-async fn enrich_missing_ranks(
+/// Fill missing ranks for both teams in one pass (shared cache + parallel MMR).
+async fn enrich_missing_ranks_for_roster(
     state: &AppState,
     api: &crate::api::ValorantAPI,
     match_id: &str,
-    players: &mut [PlayerData],
+    allies: &mut [PlayerData],
+    enemies: &mut [PlayerData],
 ) {
     ensure_rank_cache_match(state, match_id);
 
-    // Seed cache from any non-zero ranks already on the roster
-    for p in players.iter() {
+    // Seed cache from any non-zero ranks already on either team
+    for p in allies.iter().chain(enemies.iter()) {
         if p.rank_tier > 0 {
             store_rank_in_cache(state, &p.puuid, p.rank_tier);
         }
     }
 
-    // Apply cache first (free)
-    for p in players.iter_mut() {
-        if p.rank_tier <= 0 {
-            let cached = cached_rank(state, &p.puuid);
-            if cached > 0 {
-                p.rank_tier = cached;
-            }
-        }
-    }
+    apply_cached_ranks(state, allies);
+    apply_cached_ranks(state, enemies);
 
     let missing: Vec<String> = {
         let already_tried = state.ranks_mmr_fetched.read();
-        players
+        allies
             .iter()
+            .chain(enemies.iter())
             .filter(|p| p.rank_tier <= 0 && !already_tried.contains(&p.puuid))
             .map(|p| p.puuid.clone())
             .collect()
@@ -1106,6 +1231,12 @@ async fn enrich_missing_ranks(
         return;
     }
 
+    tracing::debug!(
+        "[rank] MMR lookup for {} player(s) missing tiers (match {})",
+        missing.len(),
+        match_id
+    );
+
     // Parallel MMR fetches — only for players still missing a tier
     let futs: Vec<_> = missing
         .iter()
@@ -1113,22 +1244,63 @@ async fn enrich_missing_ranks(
             let api = api;
             let puuid = puuid.clone();
             async move {
-                let (tier, _) = api.get_player_mmr(&puuid).await;
-                (puuid, tier as i32)
+                let result = api.get_player_mmr(&puuid).await;
+                (puuid, result)
             }
         })
         .collect();
 
     let results = futures_util::future::join_all(futs).await;
-    for (puuid, tier) in results {
-        state.ranks_mmr_fetched.write().insert(puuid.clone());
-        if tier > 0 {
-            store_rank_in_cache(state, &puuid, tier);
-            if let Some(p) = players.iter_mut().find(|p| p.puuid == puuid) {
-                p.rank_tier = tier;
+    for (puuid, result) in results {
+        match result {
+            // Transient failure — do NOT mark as fetched so the next poll retries.
+            None => {
+                tracing::debug!("[rank] MMR miss (will retry) for {}", puuid);
+            }
+            // Confirmed response (tier may be 0 = unranked)
+            Some((tier, rr)) => {
+                state.ranks_mmr_fetched.write().insert(puuid.clone());
+                let tier = tier as i32;
+                if tier > 0 {
+                    store_rank_in_cache(state, &puuid, tier);
+                    if let Some(p) = allies
+                        .iter_mut()
+                        .chain(enemies.iter_mut())
+                        .find(|p| p.puuid == puuid)
+                    {
+                        p.rank_tier = tier;
+                        p.rank_rr = rr as i32;
+                    }
+                }
             }
         }
     }
+}
+
+fn apply_cached_ranks(state: &AppState, players: &mut [PlayerData]) {
+    for p in players.iter_mut() {
+        if p.rank_tier <= 0 {
+            let cached = cached_rank(state, &p.puuid);
+            if cached > 0 {
+                p.rank_tier = cached;
+            }
+        }
+    }
+}
+
+/// Fill missing ranks for a single team (pregame — only allies exist).
+///
+/// Coregame no longer reliably exposes ranks (`SeasonalBadgeInfo.Rank` is often 0).
+/// Order: match payload → match-scoped cache → `/mmr/v1/players/{puuid}`.
+async fn enrich_missing_ranks(
+    state: &AppState,
+    api: &crate::api::ValorantAPI,
+    match_id: &str,
+    players: &mut [PlayerData],
+) {
+    // Empty second team — same code path as roster enrich.
+    let mut empty: Vec<PlayerData> = Vec::new();
+    enrich_missing_ranks_for_roster(state, api, match_id, players, &mut empty).await;
 }
 
 /// Get parties with caching - persists across pregame->ingame transition
@@ -1252,10 +1424,16 @@ pub fn resume_watching(state: State<'_, AppState>) {
 }
 
 /// Manual reconnect - asks the supervisor to re-initialize the connection now.
+/// Emits `connecting` immediately so the UI does not wait for the next poll tick.
 #[tauri::command]
-pub fn reconnect(state: State<'_, AppState>) {
+pub fn reconnect(app: tauri::AppHandle, state: State<'_, AppState>) {
     *state.api.needs_reinit.write() = true;
     tracing::info!("[Command] reconnect requested");
+    let ev = ConnectionEvent {
+        status: "connecting".to_string(),
+        region: state.api.region.read().to_uppercase(),
+    };
+    let _ = app.emit("connection_changed", &ev);
 }
 
 /// Enable/disable the Discord Rich Presence integration. The supervisor pushes
@@ -1314,8 +1492,11 @@ pub fn reset_chat_shortcut_rules() -> Result<Vec<crate::chat_rules::ChatRule>, S
 pub fn get_connection_status(state: State<'_, AppState>) -> ConnectionEvent {
     let paused = *state.is_paused.read();
     let connected = *state.api.connected.read();
+    let needs_reinit = *state.api.needs_reinit.read();
     let status = if paused {
         "paused"
+    } else if needs_reinit {
+        "connecting"
     } else if connected {
         "connected"
     } else {
@@ -1349,6 +1530,86 @@ fn capitalize_first(s: &str) -> String {
             .chain(chars.flat_map(|c| c.to_lowercase()))
             .collect(),
     }
+}
+
+const SPRAY_ITEM_TYPE_ID: &str = "d5f120f8-ff8c-4aac-92ea-f2b5acbe9475";
+const CHROMA_ITEM_TYPE_ID: &str = "3ad1b2b2-acdb-4524-852f-954a76ddae0a";
+const BUDDY_ITEM_TYPE_ID: &str = "dd3bf334-87f3-40bd-b043-682a57a8dc3a";
+
+fn parse_weapon_skins(items: std::collections::HashMap<String, LoadoutItem>) -> Vec<WeaponSkin> {
+    let mut skins = Vec::new();
+    for (weapon_id, item) in items {
+        let mut chroma_id = None;
+        let mut buddy_id = None;
+
+        if let Some(sockets) = &item.sockets {
+            for (_socket_id, socket_item) in sockets {
+                if socket_item.item.type_id == CHROMA_ITEM_TYPE_ID {
+                    chroma_id = Some(socket_item.item.id.clone());
+                }
+                if socket_item.item.type_id == BUDDY_ITEM_TYPE_ID {
+                    buddy_id = Some(socket_item.item.id.clone());
+                }
+            }
+        }
+
+        skins.push(WeaponSkin {
+            weapon_id,
+            skin_id: item.id,
+            chroma_id,
+            buddy_id,
+        });
+    }
+    skins
+}
+
+fn is_empty_expression_id(id: &str) -> bool {
+    let trimmed = id.trim();
+    trimmed.is_empty()
+        || trimmed == "00000000-0000-0000-0000-000000000000"
+        // Unequip / "None" flex slot
+        || trimmed.eq_ignore_ascii_case("90f0a554-41b3-355b-6846-74a27aa3f7b9")
+}
+
+fn collect_expressions(
+    sprays: Option<&LoadoutSprays>,
+    expressions: Option<&LoadoutExpressions>,
+) -> Vec<EquippedExpression> {
+    if let Some(expr) = expressions {
+        if let Some(sels) = expr.aes_selections.as_ref() {
+            if !sels.is_empty() {
+                return sels
+                    .iter()
+                    .filter(|s| !is_empty_expression_id(&s.asset_id))
+                    .map(|s| EquippedExpression {
+                        socket_id: s.socket_id.clone(),
+                        asset_id: s.asset_id.clone(),
+                        kind: if s.type_id.eq_ignore_ascii_case(SPRAY_ITEM_TYPE_ID) {
+                            "spray".into()
+                        } else {
+                            "flex".into()
+                        },
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    if let Some(sp) = sprays {
+        if let Some(sels) = sp.spray_selections.as_ref() {
+            return sels
+                .iter()
+                .filter(|s| !is_empty_expression_id(&s.spray_id))
+                .map(|s| EquippedExpression {
+                    socket_id: s.socket_id.clone(),
+                    asset_id: s.spray_id.clone(),
+                    kind: "spray".into(),
+                })
+                .collect();
+        }
+    }
+
+    Vec::new()
 }
 
 #[tauri::command]
@@ -1397,38 +1658,18 @@ pub async fn get_player_loadout(
 
             for loadout_data in loadouts_response.loadouts {
                 let player_puuid = loadout_data.subject.clone();
-                let mut skins = Vec::new();
-
-                for (weapon_id, item) in loadout_data.items {
-                    let mut chroma_id = None;
-                    let mut buddy_id = None;
-
-                    if let Some(sockets) = &item.sockets {
-                        for (_socket_id, socket_item) in sockets {
-                            // Chroma/Skin Variant
-                            if socket_item.item.type_id == "3ad1b2b2-acdb-4524-852f-954a76ddae0a" {
-                                chroma_id = Some(socket_item.item.id.clone());
-                            }
-                            // Gun Buddy
-                            if socket_item.item.type_id == "dd3bf334-87f3-40bd-b043-682a57a8dc3a" {
-                                buddy_id = Some(socket_item.item.id.clone());
-                            }
-                        }
-                    }
-
-                    skins.push(crate::api::types::WeaponSkin {
-                        weapon_id,
-                        skin_id: item.id,
-                        chroma_id,
-                        buddy_id,
-                    });
-                }
+                let skins = parse_weapon_skins(loadout_data.items);
+                let expressions = collect_expressions(
+                    loadout_data.sprays.as_ref(),
+                    loadout_data.expressions.as_ref(),
+                );
 
                 cache.insert(
                     player_puuid.clone(),
                     crate::api::types::PlayerSkinData {
                         puuid: player_puuid,
                         skins,
+                        expressions,
                     },
                 );
             }
@@ -1442,38 +1683,18 @@ pub async fn get_player_loadout(
 
             for player_loadout in loadouts_response.loadouts {
                 let player_puuid = player_loadout.loadout.subject.clone();
-                let mut skins = Vec::new();
-
-                for (weapon_id, item) in player_loadout.loadout.items {
-                    let mut chroma_id = None;
-                    let mut buddy_id = None;
-
-                    if let Some(sockets) = &item.sockets {
-                        for (_socket_id, socket_item) in sockets {
-                            // Chroma/Skin Variant
-                            if socket_item.item.type_id == "3ad1b2b2-acdb-4524-852f-954a76ddae0a" {
-                                chroma_id = Some(socket_item.item.id.clone());
-                            }
-                            // Gun Buddy
-                            if socket_item.item.type_id == "dd3bf334-87f3-40bd-b043-682a57a8dc3a" {
-                                buddy_id = Some(socket_item.item.id.clone());
-                            }
-                        }
-                    }
-
-                    skins.push(crate::api::types::WeaponSkin {
-                        weapon_id,
-                        skin_id: item.id,
-                        chroma_id,
-                        buddy_id,
-                    });
-                }
+                let skins = parse_weapon_skins(player_loadout.loadout.items);
+                let expressions = collect_expressions(
+                    player_loadout.loadout.sprays.as_ref(),
+                    player_loadout.loadout.expressions.as_ref(),
+                );
 
                 cache.insert(
                     player_puuid.clone(),
                     crate::api::types::PlayerSkinData {
                         puuid: player_puuid,
                         skins,
+                        expressions,
                     },
                 );
             }
@@ -1704,6 +1925,74 @@ pub async fn get_friends(state: State<'_, AppState>) -> Result<Vec<Friend>, Stri
         Ok(friends.friends)
     } else {
         Ok(vec![])
+    }
+}
+
+/// Outgoing friend requests (`subscription == pending_out`).
+#[tauri::command]
+pub async fn get_outgoing_friend_requests(
+    state: State<'_, AppState>,
+) -> Result<Vec<FriendRequest>, String> {
+    let api = &state.api;
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+
+    if let Some(resp) = api.get_friend_requests().await {
+        Ok(resp
+            .requests
+            .into_iter()
+            .filter(|r| r.subscription.eq_ignore_ascii_case("pending_out"))
+            .collect())
+    } else {
+        Ok(vec![])
+    }
+}
+
+/// Send a friend request by Riot ID (`Name#TAG`).
+#[tauri::command]
+pub async fn send_friend_request(
+    state: State<'_, AppState>,
+    game_name: String,
+    game_tag: String,
+) -> Result<bool, String> {
+    let api = &state.api;
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+    let game_name = game_name.trim().to_string();
+    let game_tag = game_tag.trim().to_string();
+    if game_name.is_empty() || game_tag.is_empty() {
+        return Err("Missing riot id".into());
+    }
+
+    tracing::info!("[send_friend_request] {}#{}", game_name, game_tag);
+    if api.send_friend_request(&game_name, &game_tag).await {
+        Ok(true)
+    } else {
+        Err("Friend request failed".into())
+    }
+}
+
+/// Cancel an outgoing friend request.
+#[tauri::command]
+pub async fn cancel_friend_request(
+    state: State<'_, AppState>,
+    puuid: String,
+) -> Result<bool, String> {
+    let api = &state.api;
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+    if puuid.trim().is_empty() {
+        return Err("Missing puuid".into());
+    }
+
+    tracing::info!("[cancel_friend_request] puuid={}", puuid);
+    if api.cancel_friend_request(&puuid).await {
+        Ok(true)
+    } else {
+        Err("Friend request cancel failed".into())
     }
 }
 
@@ -2413,6 +2702,15 @@ pub fn get_license_info(_state: State<'_, AppState>) -> Option<LicenseData> {
 #[tauri::command]
 pub fn reset_license(_state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
+}
+
+/// Unique-install total. Increments the remote counter at most once per machine.
+#[tauri::command]
+pub async fn get_install_count(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<u64>, String> {
+    Ok(crate::usage::report(&app, &state.http_client).await)
 }
 
 #[tauri::command]

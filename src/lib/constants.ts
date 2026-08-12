@@ -37,6 +37,7 @@ export const AGENT_COLORS: Record<string, string> = {
   miks: "#462b75",      // derin mor - sonik enerji
 };
 
+/** [englishName, color] — use englishName only as fallback; display via getLocalizedRank. */
 export const RANK_TIERS: Record<number, [string, string]> = {
   0: ["—", "#768079"],
   3: ["Iron 1", "#4a5568"], 4: ["Iron 2", "#4a5568"], 5: ["Iron 3", "#4a5568"],

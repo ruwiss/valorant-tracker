@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CachedImage } from "./CachedImage";
 import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
-import { useI18n } from "../lib/i18n";
+import { getLocalizedRank, useI18n } from "../lib/i18n";
 import { invokeCommand } from "../utils/ipc";
 
 // Valorant Themed Colors
@@ -20,7 +20,7 @@ export function PlayerStatsPanel() {
   const { selectedPlayer } = usePanelStore();
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { fetchStats, getStats, isLoading, getError, clearError } = usePlayerStatsStore();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   const puuid = selectedPlayer?.puuid || "";
   const playerName = selectedPlayer?.name || "";
@@ -285,7 +285,7 @@ export function PlayerStatsPanel() {
                           className="text-sm font-black tracking-wide"
                           style={{ color: peakRank.rank_color }}
                         >
-                          {peakRank.rank_name}
+                          {getLocalizedRank(peakRank.tier, locale)}
                         </div>
                         <div className="text-[9px] text-white/40 font-medium tracking-wider">
                           ALL-TIME HIGHEST

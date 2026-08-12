@@ -3,7 +3,7 @@ import { invokeCommand } from "../utils/ipc";
 import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
-import { useI18n, SKIN_API_LOCALES } from "../lib/i18n";
+import { useI18n, SKIN_API_LOCALES, getLocalizedRank } from "../lib/i18n";
 import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
 
@@ -28,9 +28,15 @@ interface WeaponSkin {
 	chroma_id: string | null;
 	buddy_id: string | null;
 }
+interface EquippedExpression {
+	socket_id: string;
+	asset_id: string;
+	kind: "spray" | "flex" | string;
+}
 interface PlayerSkinData {
 	puuid: string;
 	skins: WeaponSkin[];
+	expressions?: EquippedExpression[];
 }
 interface SkinInfo {
 	name: string;
@@ -42,6 +48,59 @@ interface BuddyInfo {
 }
 interface WeaponInfo {
 	displayIcon: string;
+}
+interface ExpressionInfo {
+	name: string;
+	icon: string;
+	kind: "spray" | "flex";
+	midRoundLocked: boolean;
+}
+
+type WheelSlot = "top" | "right" | "bottom" | "left";
+
+const WHEEL_SLOT_ORDER: WheelSlot[] = ["top", "right", "bottom", "left"];
+
+// Known expression-wheel socket IDs (clockwise from top). Unknown sockets fall back to API order.
+const WHEEL_SOCKETS: Record<string, WheelSlot> = {
+	"0814b2fe-4513-70a4-5117-a6eef18593c5": "top",
+	"04af080a-4071-487b-61c0-5b9c0cfaac74": "right",
+	"5863985e-43ac-b05d-cb2d-139e72970014": "bottom",
+	"7cc032a6-4c8c-e34b-c58d-e8488944f442": "left",
+	"d7374f95-450b-a891-7714-eac36837cd29": "top",
+};
+
+// Icon *center* sits on the cardinal axis, ~2/3 of the radius out — the
+// visual middle of each X-slice, not the rim and not the hub.
+const WHEEL_SLOT_CLASS: Record<WheelSlot, string> = {
+	top: "left-1/2 top-[20%] -translate-x-1/2 -translate-y-1/2",
+	right: "left-[80%] top-1/2 -translate-x-1/2 -translate-y-1/2",
+	bottom: "left-1/2 top-[80%] -translate-x-1/2 -translate-y-1/2",
+	left: "left-[20%] top-1/2 -translate-x-1/2 -translate-y-1/2",
+};
+
+function WheelIcon({ src }: { src?: string }) {
+	const [ready, setReady] = useState(false);
+
+	useEffect(() => {
+		setReady(false);
+	}, [src]);
+
+	return (
+		<div className="relative flex h-14 w-14 items-center justify-center">
+			{!ready && (
+				<div className="absolute h-8 w-8 rounded-full bg-accent-gold/10 ring-1 ring-accent-gold/15" />
+			)}
+			{src && (
+				<CachedImage
+					silent
+					src={src}
+					alt=""
+					onLoad={() => setReady(true)}
+					className="max-h-14 max-w-14 object-contain drop-shadow-[0_4px_12px_rgba(0,0,0,0.75)] transition-[filter] duration-200 group-hover:drop-shadow-[0_0_14px_rgba(0,212,170,0.55)]"
+				/>
+			)}
+		</div>
+	);
 }
 
 interface PeakRankData {
@@ -84,6 +143,7 @@ const WEAPON_CATEGORIES = {
 const skinMetaCache = new Map<string, Map<string, SkinInfo>>();
 const buddyMetaCache = new Map<string, Map<string, BuddyInfo>>();
 const weaponIconCache = new Map<string, WeaponInfo>();
+const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 
 export function PlayerPanel() {
 	const { selectedPlayer, setHoveredWeapon } = usePanelStore();
@@ -91,8 +151,12 @@ export function PlayerPanel() {
 	const matchId = useGameStore((state) => state.gameState.match_id); // Get match_id
 	const { t, locale } = useI18n();
 	const [skins, setSkins] = useState<WeaponSkin[]>([]);
+	const [expressions, setExpressions] = useState<EquippedExpression[]>([]);
 	const [skinMeta, setSkinMeta] = useState<Map<string, SkinInfo>>(new Map());
 	const [buddyMeta, setBuddyMeta] = useState<Map<string, BuddyInfo>>(new Map());
+	const [expressionMeta, setExpressionMeta] = useState<
+		Map<string, ExpressionInfo>
+	>(new Map());
 	const [weaponIcons, setWeaponIcons] = useState<Map<string, WeaponInfo>>(
 		new Map(),
 	);
@@ -108,8 +172,10 @@ export function PlayerPanel() {
 	// Reset state when player changes
 	useEffect(() => {
 		setSkins([]);
+		setExpressions([]);
 		setSkinMeta(new Map());
 		setBuddyMeta(new Map());
+		setExpressionMeta(new Map());
 		setError(null);
 		setLoading(false);
 		setTranslatedName(null);
@@ -179,6 +245,8 @@ export function PlayerPanel() {
 			}
 
 			setSkins(data.skins);
+			const equippedExpressions = data.expressions || [];
+			setExpressions(equippedExpressions);
 			const apiLocale = SKIN_API_LOCALES[locale];
 
 			// Skin meta cache
@@ -215,6 +283,22 @@ export function PlayerPanel() {
 				}
 			});
 			setBuddyMeta(bMeta);
+
+			if (!expressionMetaCache.has(apiLocale))
+				expressionMetaCache.set(apiLocale, new Map());
+			const exprCache = expressionMetaCache.get(apiLocale)!;
+			const exprIds = equippedExpressions
+				.map((e) => e.asset_id.toLowerCase())
+				.filter((id) => !exprCache.has(id));
+			if (exprIds.length > 0)
+				await fetchExpressionMeta(exprIds, apiLocale, exprCache);
+			const eMeta = new Map<string, ExpressionInfo>();
+			equippedExpressions.forEach((e) => {
+				const id = e.asset_id.toLowerCase();
+				const info = exprCache.get(id);
+				if (info) eMeta.set(id, info);
+			});
+			setExpressionMeta(eMeta);
 		} catch {
 			setError(t("player.connectionError"));
 		} finally {
@@ -294,6 +378,66 @@ export function PlayerPanel() {
 		}
 	};
 
+	const fetchExpressionMeta = async (
+		assetIds: string[],
+		apiLocale: string,
+		cache: Map<string, ExpressionInfo>,
+	) => {
+		const wanted = new Set(assetIds.map((id) => id.toLowerCase()));
+		try {
+			const [sprayRes, flexRes] = await Promise.all([
+				fetch(`https://valorant-api.com/v1/sprays?language=${apiLocale}`),
+				fetch(`https://valorant-api.com/v1/flex?language=${apiLocale}`),
+			]);
+
+			if (sprayRes.ok) {
+				const json = await sprayRes.json();
+				for (const spray of json.data || []) {
+					const sprayId = String(spray.uuid || "").toLowerCase();
+					const info: ExpressionInfo = {
+						name: spray.displayName || "Spray",
+						icon:
+							spray.fullTransparentIcon ||
+							spray.fullIcon ||
+							spray.displayIcon ||
+							"",
+						kind: "spray",
+						midRoundLocked:
+							spray.category === "EAresSprayCategory::Contextual",
+					};
+					if (wanted.has(sprayId)) cache.set(sprayId, info);
+					for (const level of spray.levels || []) {
+						const levelId = String(level.uuid || "").toLowerCase();
+						if (wanted.has(levelId)) {
+							cache.set(levelId, {
+								...info,
+								icon:
+									level.displayIcon ||
+									info.icon,
+							});
+						}
+					}
+				}
+			}
+
+			if (flexRes.ok) {
+				const json = await flexRes.json();
+				for (const flex of json.data || []) {
+					const flexId = String(flex.uuid || "").toLowerCase();
+					if (!wanted.has(flexId)) continue;
+					cache.set(flexId, {
+						name: flex.displayName || "Flex",
+						icon: flex.displayIcon || "",
+						kind: "flex",
+						midRoundLocked: false,
+					});
+				}
+			}
+		} catch (err) {
+			console.debug("[PlayerPanel] expression meta fetch failed:", err);
+		}
+	};
+
 	/** True once a successful translate finished (empty string = no useful change). */
 	const translateDone =
 		translatedName !== null && translatedName !== "Hata";
@@ -342,10 +486,19 @@ export function PlayerPanel() {
 			const targetLang = locale === "tr" ? "tr" : "en";
 
 			// Translate name and tag independently so one can succeed without the other.
-			const [nameResult, tagResult] = await Promise.all([
+			const [nameSettled, tagSettled] = await Promise.allSettled([
 				translateFragment(namePart, targetLang),
 				tagPart ? translateFragment(tagPart, targetLang) : Promise.resolve(null),
 			]);
+			const nameResult =
+				nameSettled.status === "fulfilled" ? nameSettled.value : null;
+			const tagResult =
+				tagSettled.status === "fulfilled" ? tagSettled.value : null;
+			const nameFailed = nameSettled.status === "rejected";
+			const tagFailed = Boolean(tagPart) && tagSettled.status === "rejected";
+			if (nameFailed && (tagFailed || !tagPart)) {
+				throw new Error("Translation failed");
+			}
 
 			// Build display: only include parts that actually changed.
 			// - only name  → "Name"
@@ -392,33 +545,8 @@ export function PlayerPanel() {
 	const agentColor =
 		AGENT_COLORS[selectedPlayer.agent?.toLowerCase()] || "#768079";
 
-	// Helper to localize rank name
-	const getLocalizedRank = (tier: number) => {
-		if (tier < 3) return t("rank.unranked");
-		if (tier >= 27) return t("rank.radiant");
-
-		const ranks = [
-			"rank.iron",
-			"rank.bronze",
-			"rank.silver",
-			"rank.gold",
-			"rank.platinum",
-			"rank.diamond",
-			"rank.ascendant",
-			"rank.immortal",
-		];
-
-		const rankIndex = Math.floor((tier - 3) / 3);
-		const level = ((tier - 3) % 3) + 1;
-
-		if (rankIndex >= 0 && rankIndex < ranks.length) {
-			return `${t(ranks[rankIndex])} ${level}`;
-		}
-		return "";
-	};
-
 	const [, rankColor] = RANK_TIERS[selectedPlayer.rank_tier] || ["", "#768079"];
-	const rankName = getLocalizedRank(selectedPlayer.rank_tier);
+	const rankName = getLocalizedRank(selectedPlayer.rank_tier, locale);
 
 	const cardBannerUrl = selectedPlayer.player_card_id
 		? `https://media.valorant-api.com/playercards/${selectedPlayer.player_card_id}/wideart.png`
@@ -455,6 +583,39 @@ export function PlayerPanel() {
 			weaponType,
 			buddy,
 		});
+	};
+
+	const handleExpressionHover = (expr: EquippedExpression | null) => {
+		if (!expr) {
+			setHoveredWeapon(null);
+			return;
+		}
+		const info = expressionMeta.get(expr.asset_id.toLowerCase());
+		const kind = info?.kind || (expr.kind === "flex" ? "flex" : "spray");
+		setHoveredWeapon({
+			name: info?.name || (kind === "flex" ? t("weapons.flex") : t("weapons.spray")),
+			icon: info?.icon || "",
+			weaponType: kind === "flex" ? t("weapons.flex") : t("weapons.spray"),
+			note: info?.midRoundLocked ? t("player.midRoundLocked") : undefined,
+		});
+	};
+
+	const assignWheelSlots = (
+		items: EquippedExpression[],
+	): Partial<Record<WheelSlot, EquippedExpression>> => {
+		const assigned: Partial<Record<WheelSlot, EquippedExpression>> = {};
+		const leftovers: EquippedExpression[] = [];
+		for (const item of items) {
+			const slot = WHEEL_SOCKETS[item.socket_id.toLowerCase()];
+			if (slot && !assigned[slot]) assigned[slot] = item;
+			else leftovers.push(item);
+		}
+		for (const item of leftovers) {
+			const free = WHEEL_SLOT_ORDER.find((s) => !assigned[s]);
+			if (!free) break;
+			assigned[free] = item;
+		}
+		return assigned;
 	};
 
 	const renderWeaponCard = (weaponId: string, isPrimary = false) => {
@@ -551,6 +712,126 @@ export function PlayerPanel() {
 					<div className="w-1.5 h-1.5 rounded-full bg-accent-gold/60 shrink-0" />
 				)}
 			</div>
+		);
+	};
+
+	const renderExpressionWheel = () => {
+		if (expressions.length === 0) return null;
+		const slotted = assignWheelSlots(expressions);
+
+		return (
+			<section>
+				<div className="flex items-center gap-1.5 mb-1.5 px-1">
+					<div className="w-1 h-3 bg-accent-gold/80 rounded-full" />
+					<span className="text-[9px] font-bold uppercase tracking-wider text-accent-gold/80">
+						{t("player.expressions")}
+					</span>
+				</div>
+
+				<div className="relative mx-auto h-52 w-52">
+					<div className="pointer-events-none absolute -inset-3 rounded-full bg-[radial-gradient(circle,rgba(0,212,170,0.14)_0%,rgba(236,178,46,0.06)_42%,transparent_70%)] blur-md" />
+
+					<svg
+						className="pointer-events-none absolute inset-0"
+						viewBox="0 0 100 100"
+						aria-hidden
+					>
+						<defs>
+							<radialGradient id="exprWheelFill" cx="50%" cy="42%" r="58%">
+								<stop offset="0%" stopColor="rgba(0,212,170,0.16)" />
+								<stop offset="55%" stopColor="rgba(236,178,46,0.05)" />
+								<stop offset="100%" stopColor="rgba(13,17,23,0.35)" />
+							</radialGradient>
+							<linearGradient id="exprWheelRing" x1="0" y1="0" x2="1" y2="1">
+								<stop offset="0%" stopColor="rgba(0,212,170,0.75)" />
+								<stop offset="50%" stopColor="rgba(236,178,46,0.55)" />
+								<stop offset="100%" stopColor="rgba(0,212,170,0.7)" />
+							</linearGradient>
+							<linearGradient id="exprWheelX" x1="0" y1="0" x2="1" y2="1">
+								<stop offset="0%" stopColor="rgba(236,178,46,0.08)" />
+								<stop offset="50%" stopColor="rgba(236,178,46,0.45)" />
+								<stop offset="100%" stopColor="rgba(0,212,170,0.12)" />
+							</linearGradient>
+						</defs>
+						<circle cx="50" cy="50" r="47.5" fill="url(#exprWheelFill)" />
+						<circle
+							cx="50"
+							cy="50"
+							r="47.5"
+							fill="none"
+							stroke="url(#exprWheelRing)"
+							strokeWidth="0.85"
+						/>
+						<circle
+							cx="50"
+							cy="50"
+							r="45.6"
+							fill="none"
+							stroke="rgba(255,255,255,0.08)"
+							strokeWidth="0.35"
+						/>
+						<line
+							x1="16.5"
+							y1="16.5"
+							x2="83.5"
+							y2="83.5"
+							stroke="url(#exprWheelX)"
+							strokeWidth="0.55"
+						/>
+						<line
+							x1="83.5"
+							y1="16.5"
+							x2="16.5"
+							y2="83.5"
+							stroke="url(#exprWheelX)"
+							strokeWidth="0.55"
+						/>
+						<circle
+							cx="50"
+							cy="50"
+							r="10.5"
+							fill="#0d1117"
+							stroke="rgba(0,212,170,0.35)"
+							strokeWidth="0.55"
+						/>
+						<circle
+							cx="50"
+							cy="50"
+							r="3.2"
+							fill="none"
+							stroke="rgba(236,178,46,0.7)"
+							strokeWidth="0.55"
+						/>
+					</svg>
+
+					<div className="pointer-events-none absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border border-accent-gold/70 shadow-[0_0_8px_rgba(236,178,46,0.45)]" />
+
+					{WHEEL_SLOT_ORDER.map((slot) => {
+						const expr = slotted[slot];
+						const info = expr
+							? expressionMeta.get(expr.asset_id.toLowerCase())
+							: undefined;
+						return (
+							<button
+								key={slot}
+								type="button"
+								disabled={!expr}
+								title={info?.name}
+								aria-label={info?.name || slot}
+								className={`group absolute ${WHEEL_SLOT_CLASS[slot]} flex h-16 w-16 items-center justify-center rounded-full bg-transparent transition-transform duration-200 ${
+									expr
+										? "cursor-pointer hover:scale-110"
+										: "cursor-default opacity-30"
+								}`}
+								onMouseEnter={() => expr && handleExpressionHover(expr)}
+							>
+								<div className="pointer-events-none absolute inset-1 rounded-full bg-accent-cyan/0 opacity-0 blur-md transition-all duration-200 group-hover:bg-accent-cyan/25 group-hover:opacity-100" />
+								<WheelIcon src={info?.icon} />
+							</button>
+						);
+					})}
+				</div>
+			</section>
 		);
 	};
 
@@ -719,7 +1000,7 @@ export function PlayerPanel() {
 										<span className="text-[8px] text-dim/50">•</span>
 										<div
 											className="flex items-center gap-1"
-											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier)}`}
+											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier, locale)}`}
 										>
 											<span className="text-[8px] font-bold text-dim uppercase tracking-wider">
 												{t("player.peak")}
@@ -728,7 +1009,7 @@ export function PlayerPanel() {
 												className="text-[9px] font-bold"
 												style={{ color: peakRank.rank_color }}
 											>
-												{getLocalizedRank(peakRank.tier)}
+												{getLocalizedRank(peakRank.tier, locale)}
 											</span>
 										</div>
 									</>
@@ -754,9 +1035,10 @@ export function PlayerPanel() {
 					<div className="text-center py-6 text-error text-[10px]">{error}</div>
 				)}
 
-				{!loading && !error && skins.length > 0 && (
+				{!loading && !error && (skins.length > 0 || expressions.length > 0) && (
 					<div className="p-2 space-y-3">
 						{/* PRIMARY - Grid of large cards */}
+						{skins.length > 0 && (
 						<section>
 							<div className="flex items-center gap-1.5 mb-1.5 px-1">
 								<div className="w-1 h-3 bg-accent-cyan rounded-full" />
@@ -770,8 +1052,10 @@ export function PlayerPanel() {
 								)}
 							</div>
 						</section>
+						)}
 
 						{/* SECONDARY - Compact list */}
+						{skins.length > 0 && (
 						<section>
 							<div className="flex items-center gap-1.5 mb-1 px-1">
 								<div className="w-1 h-3 bg-accent-gold/70 rounded-full" />
@@ -783,8 +1067,10 @@ export function PlayerPanel() {
 								{WEAPON_CATEGORIES.secondary.map((id) => renderWeaponCard(id))}
 							</div>
 						</section>
+						)}
 
 						{/* OTHER - Compact list */}
+						{skins.length > 0 && (
 						<section>
 							<div className="flex items-center gap-1.5 mb-1 px-1">
 								<div className="w-1 h-3 bg-dim/50 rounded-full" />
@@ -796,10 +1082,13 @@ export function PlayerPanel() {
 								{WEAPON_CATEGORIES.other.map((id) => renderWeaponCard(id))}
 							</div>
 						</section>
+						)}
+
+						{renderExpressionWheel()}
 					</div>
 				)}
 
-				{!loading && !error && skins.length === 0 && (
+				{!loading && !error && skins.length === 0 && expressions.length === 0 && (
 					<div className="text-center py-6 text-dim text-[10px]">
 						{t("player.noSkinData")}
 					</div>

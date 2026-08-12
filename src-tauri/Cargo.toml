@@ -1,6 +1,6 @@
 [package]
 name = "valorant-tracker"
-version = "1.8.7"
+version = "1.8.8"
 description = "Valorant Match Tracker"
 authors = ["omerg"]
 edition = "2021"
@@ -50,6 +50,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Single-instance mechanism (Windows only)
 [target.'cfg(windows)'.dependencies]
+# Same version as tauri 2.9 — disable WebView2 Ctrl+F / Ctrl+P / etc.
+webview2-com = "0.38"
+windows-core = "0.61"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_Threading",

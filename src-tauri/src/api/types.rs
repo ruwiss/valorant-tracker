@@ -1,4 +1,17 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Missing/null/unexpected JSON becomes `None` instead of failing the parent payload.
+fn lenient_opt<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    Ok(serde_json::from_value(value).ok())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitlementsResponse {
@@ -279,6 +292,9 @@ pub struct SeasonalInfo {
     pub season_id: Option<String>,
     #[serde(default)]
     pub competitive_tier: Option<u32>,
+    /// Some payloads expose current act rank as `Rank` instead of / in addition to CompetitiveTier.
+    #[serde(default)]
+    pub rank: Option<u32>,
     #[serde(default)]
     pub ranked_rating: Option<u32>,
     #[serde(default)]
@@ -291,6 +307,17 @@ pub struct SeasonalInfo {
     pub leaderboard_rank: Option<u32>,
     #[serde(rename = "WinsByTier", default)]
     pub wins_by_tier: Option<std::collections::HashMap<String, u32>>,
+}
+
+impl SeasonalInfo {
+    /// Prefer CompetitiveTier; fall back to Rank when tier is missing/zero.
+    pub fn effective_tier(&self) -> u32 {
+        let ct = self.competitive_tier.unwrap_or(0);
+        if ct > 0 {
+            return ct;
+        }
+        self.rank.unwrap_or(0)
+    }
 }
 
 // Match History types
@@ -317,6 +344,8 @@ pub struct MatchHistoryEntry {
 pub struct MatchDetailsResponse {
     pub match_info: Option<MatchInfo>,
     pub players: Option<Vec<MatchPlayer>>,
+    #[serde(default)]
+    pub teams: Option<Vec<MatchTeam>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,14 +354,113 @@ pub struct MatchInfo {
     pub match_id: Option<String>,
     #[serde(rename = "queueID")]
     pub queue_id: Option<String>,
+    #[serde(default)]
+    pub map_id: Option<String>,
+    #[serde(default)]
+    pub game_start_millis: Option<u64>,
+    #[serde(default)]
+    pub game_length_millis: Option<u64>,
+    #[serde(default)]
+    pub is_completed: Option<bool>,
+    #[serde(default)]
+    pub is_ranked: Option<bool>,
+    #[serde(default)]
+    pub completion_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchPlayer {
     pub subject: String,
+    #[serde(default)]
     pub party_id: String,
     pub team_id: Option<String>,
+    #[serde(default, alias = "GameName")]
+    pub game_name: Option<String>,
+    #[serde(default, alias = "TagLine")]
+    pub tag_line: Option<String>,
+    #[serde(default)]
+    pub character_id: Option<String>,
+    #[serde(default)]
+    pub stats: Option<MatchPlayerStats>,
+    #[serde(default)]
+    pub competitive_tier: Option<i32>,
+    #[serde(default)]
+    pub account_level: Option<i32>,
+    #[serde(default)]
+    pub player_card: Option<String>,
+    #[serde(default)]
+    pub is_observer: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchPlayerStats {
+    #[serde(default)]
+    pub score: Option<i32>,
+    #[serde(default)]
+    pub rounds_played: Option<i32>,
+    #[serde(default)]
+    pub kills: Option<i32>,
+    #[serde(default)]
+    pub deaths: Option<i32>,
+    #[serde(default)]
+    pub assists: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchTeam {
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub won: Option<bool>,
+    #[serde(default)]
+    pub rounds_played: Option<i32>,
+    #[serde(default)]
+    pub rounds_won: Option<i32>,
+    #[serde(default)]
+    pub num_points: Option<i32>,
+}
+
+/// Finished-match recap shown on the idle screen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastMatch {
+    pub match_id: String,
+    pub map_name: String,
+    pub queue_id: String,
+    pub game_start_millis: u64,
+    pub game_length_millis: Option<u64>,
+    pub ally_score: i32,
+    pub enemy_score: i32,
+    /// `true` win, `false` loss, `None` draw / unknown.
+    pub won: Option<bool>,
+    pub completion_state: String,
+    pub is_ranked: bool,
+    pub is_ffa: bool,
+    pub rounds_played: i32,
+    pub placement: Option<i32>,
+    pub me: LastMatchPlayer,
+    pub allies: Vec<LastMatchPlayer>,
+    pub enemies: Vec<LastMatchPlayer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastMatchPlayer {
+    pub puuid: String,
+    pub name: String,
+    pub agent: String,
+    pub team_id: String,
+    pub party: String,
+    pub is_me: bool,
+    pub rank_tier: i32,
+    pub level: i32,
+    pub player_card_id: Option<String>,
+    pub kills: i32,
+    pub deaths: i32,
+    pub assists: i32,
+    pub score: i32,
+    pub acs: i32,
 }
 
 // Loadout types
@@ -355,6 +483,10 @@ pub struct PlayerLoadout {
 pub struct LoadoutData {
     pub subject: String,
     pub items: std::collections::HashMap<String, LoadoutItem>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub sprays: Option<LoadoutSprays>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub expressions: Option<LoadoutExpressions>,
 }
 
 // Pregame loadout types (different structure)
@@ -370,6 +502,46 @@ pub struct PregameLoadoutsResponse {
 pub struct PregameLoadoutData {
     pub subject: String,
     pub items: std::collections::HashMap<String, LoadoutItem>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub sprays: Option<LoadoutSprays>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub expressions: Option<LoadoutExpressions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct LoadoutSprays {
+    #[serde(default)]
+    pub spray_selections: Option<Vec<SpraySelection>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SpraySelection {
+    #[serde(rename = "SocketID", default)]
+    pub socket_id: String,
+    #[serde(rename = "SprayID", default)]
+    pub spray_id: String,
+    #[serde(rename = "LevelID", default)]
+    pub level_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct LoadoutExpressions {
+    #[serde(rename = "AESSelections", default)]
+    pub aes_selections: Option<Vec<AesSelection>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AesSelection {
+    #[serde(rename = "SocketID", default)]
+    pub socket_id: String,
+    #[serde(rename = "AssetID", default)]
+    pub asset_id: String,
+    #[serde(rename = "TypeID", default)]
+    pub type_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +576,17 @@ pub struct SocketItemData {
 pub struct PlayerSkinData {
     pub puuid: String,
     pub skins: Vec<WeaponSkin>,
+    #[serde(default)]
+    pub expressions: Vec<EquippedExpression>,
+}
+
+/// Equipped spray-wheel slot (spray or flex/donatı).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquippedExpression {
+    pub socket_id: String,
+    pub asset_id: String,
+    /// "spray" | "flex"
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +681,44 @@ pub struct Friend {
     pub pid: String,
     pub puuid: String,
     pub region: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendRequestsResponse {
+    #[serde(default)]
+    pub requests: Vec<FriendRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendRequest {
+    #[serde(default)]
+    pub game_name: String,
+    #[serde(default)]
+    pub game_tag: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub pid: String,
+    #[serde(default)]
+    pub puuid: String,
+    #[serde(default)]
+    pub region: String,
+    /// `"pending_out"` (we sent it) or `"pending_in"` (they sent it).
+    #[serde(default)]
+    pub subscription: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoveFriendRequestBody {
+    pub puuid: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SendFriendRequestBody {
+    pub game_name: String,
+    pub game_tag: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

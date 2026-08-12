@@ -1,7 +1,7 @@
 import type { PlayerData } from "../lib/types";
 import { CachedImage } from "./CachedImage";
 import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
-import { useI18n } from "../lib/i18n";
+import { getLocalizedRank, useI18n } from "../lib/i18n";
 import { useAssetsStore } from "../stores/assetsStore";
 import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function PlayerCard({ player, slotIndex = 1 }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
   const { getError, getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
@@ -23,7 +23,8 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const isSelected = panelType === "player" && selectedPlayer?.puuid === player.puuid;
 
   const agentColor = AGENT_COLORS[player.agent?.toLowerCase()] || "#768079";
-  const [rankName, rankColor] = RANK_TIERS[player.rank_tier] || ["", "#768079"];
+  const rankColor = RANK_TIERS[player.rank_tier]?.[1] || "#768079";
+  const rankName = getLocalizedRank(player.rank_tier, locale);
   const partyIndex = player.party.startsWith("Grup-") || player.party.startsWith("Group-") ? parseInt(player.party.split("-")[1]) - 1 : -1;
   const partyColor = partyIndex >= 0 ? PARTY_COLORS[partyIndex % 4] : null;
   const agentIcon = player.agent ? getAgentIcon(player.agent) : null;

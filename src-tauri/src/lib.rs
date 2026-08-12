@@ -4,6 +4,7 @@ mod chat_expander;
 mod chat_rules;
 mod chat_text;
 mod commands;
+mod translate;
 mod constants;
 mod discord;
 mod logger;
@@ -11,11 +12,41 @@ mod presets;
 mod process;
 mod single_instance;
 mod state;
+mod usage;
+mod last_match;
 
 use single_instance::{SingleInstanceGuard, SingleInstanceResult};
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+
+/// Turn off WebView2 browser chrome shortcuts (Ctrl+F find, Ctrl+P print, …).
+#[cfg(windows)]
+fn disable_browser_accelerator_keys(webview: &tauri::webview::PlatformWebview) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+
+    let controller = webview.controller();
+    unsafe {
+        let Ok(core) = controller.CoreWebView2() else {
+            tracing::warn!("[WebView] CoreWebView2 unavailable; Ctrl+F still enabled");
+            return;
+        };
+        let Ok(settings) = core.Settings() else {
+            tracing::warn!("[WebView] Settings unavailable; Ctrl+F still enabled");
+            return;
+        };
+        let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() else {
+            tracing::warn!("[WebView] Settings3 unavailable; Ctrl+F still enabled");
+            return;
+        };
+        if let Err(e) = settings3.SetAreBrowserAcceleratorKeysEnabled(false) {
+            tracing::warn!("[WebView] Failed to disable accelerator keys: {e}");
+        } else {
+            tracing::info!("[WebView] Browser accelerator keys disabled (Ctrl+F / Ctrl+P / …)");
+        }
+    }
+}
 
 /// Result of attempting to run the application
 pub enum RunResult {
@@ -84,6 +115,9 @@ pub fn run() -> RunResult {
             commands::send_message,
             commands::get_paginated_chat_messages,
             commands::get_friends,
+            commands::get_outgoing_friend_requests,
+            commands::send_friend_request,
+            commands::cancel_friend_request,
             commands::get_dm_cid,
             commands::get_cached_image,
             commands::get_tracker_stats,
@@ -118,6 +152,8 @@ pub fn run() -> RunResult {
             commands::open_log_file,
             commands::log_frontend_message,
             commands::translate_text,
+            commands::get_install_count,
+            last_match::get_last_match,
         ])
         .setup(move |app| {
             // Initialize logger first
@@ -136,6 +172,15 @@ pub fn run() -> RunResult {
                 chat_rules::init(std::env::temp_dir().join("valorant-tracker-chat_shortcuts.json"));
             }
 
+            // One-time unique-install ping (does not block startup).
+            {
+                let handle = app.handle().clone();
+                let client = app.state::<AppState>().http_client.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::usage::report(&handle, &client).await;
+                });
+            }
+
             // Start the named pipe server to listen for signals from other instances
             single_instance::start_pipe_server(app.handle().clone(), shutdown_flag.clone());
 
@@ -143,6 +188,16 @@ pub fn run() -> RunResult {
             // lifecycle (connect, watch, self-reconnect, autolock) and emits
             // `connection_changed` / `game_state_changed` events to the frontend.
             commands::start_supervisor(app.handle().clone());
+
+            // WebView2 treats Ctrl+F / Ctrl+P / F3 as browser chrome. The
+            // tauri.conf `browserAcceleratorKeys` field isn't in 2.8/2.9
+            // schema, so flip the setting on the live controller instead.
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| {
+                    disable_browser_accelerator_keys(&webview);
+                });
+            }
 
             // In-game chat shortcuts (sa / as / <3) — native game chat box only
             // works via keyboard expansion; the HTTP API never sees those keys.

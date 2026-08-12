@@ -29,6 +29,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "status.connecting": "CONNECTING...",
     "status.reconnecting": "RECONNECTING...",
     "status.offline": "OFFLINE",
+    "toast.reconnecting": "Reconnecting to Valorant...",
+    "toast.reconnected": "Reconnected",
+    "toast.reconnectNoGame": "Valorant is not running",
+    "toast.reconnectFailed": "Reconnect failed",
 
     // Dialog
     "dialog.closeTitle": "Close Application",
@@ -60,6 +64,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "tabs.dm": "DM",
     "tabs.friends": "FRIENDS",
     "chat.search_placeholder": "SEARCH PLAYERS...",
+    "chat.outgoing_requests": "OUTGOING",
+    "chat.pending": "PENDING",
+    "chat.cancel_request": "Cancel",
+    "chat.cancel_request_success": "Friend request cancelled",
+    "chat.cancel_request_failed": "Could not cancel friend request",
 
     // Footer
     "footer.autoLock": "AUTO-LOCK",
@@ -108,6 +117,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.loadoutNotFound": "Loadout not found",
     "player.connectionError": "Connection error",
     "player.noSkinData": "No skin data",
+    "player.expressions": "Sprays & Flex",
+    "player.midRoundLocked": "Can't use mid-round",
     "player.copy": "Copy",
     "player.close": "Close",
 
@@ -116,6 +127,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "weapons.secondary": "SECONDARY",
     "weapons.other": "OTHER",
     "weapons.buddy": "Buddy",
+    "weapons.spray": "Spray",
+    "weapons.flex": "Flex",
 
     // Shop / Store
     "shop.title": "Store",
@@ -144,6 +157,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.windowStyle": "Window Style",
     "settings.windowStyleFree": "Free (Draggable)",
     "settings.windowStyleDocked": "Docked",
+    "settings.minimizeToTray": "Minimize to tray",
+    "settings.minimizeToTrayDesc": "When hiding, send the overlay to the system tray. Turn off to minimize to the taskbar instead.",
     "settings.discordRpc": "Discord Rich Presence",
     "settings.discordRpcDesc": "Show your map & score on your Discord profile",
     "settings.chatShortcuts": "Chat Shortcuts",
@@ -255,6 +270,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "activation.matchedComponents": "Matched Components:",
     "activation.mismatchedComponents": "Mismatched Components:",
     "settings.version": "Version",
+    "settings.installs": "Installs",
+    "settings.installsLine": "{n} installs",
+    "settings.installsHint": "{n} unique installs",
     "settings.openLogs": "View Logs",
     "settings.logsNote": "Opens app.log file for debugging",
 
@@ -344,6 +362,48 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.recentEncounterShort2": "2 MATCHES AGO",
     "player.encounterEnemySuffix": " (enemy)",
     "player.previousAgent": "Played {agent} in that match",
+
+    // Last match recap
+    "lastMatch.title": "Last Match",
+    "lastMatch.tapForRoster": "Tap for roster",
+    "lastMatch.loading": "Loading last match...",
+    "lastMatch.processing": "Match is being processed...",
+    "lastMatch.empty": "No recent match",
+    "lastMatch.error": "Could not load match — tap to retry",
+    "lastMatch.retry": "Retry",
+    "lastMatch.victory": "Victory",
+    "lastMatch.defeat": "Defeat",
+    "lastMatch.draw": "Draw",
+    "lastMatch.surrender": "Surrender",
+    "lastMatch.allies": "ALLIES",
+    "lastMatch.enemies": "ENEMIES",
+    "lastMatch.placement": "PLACEMENT",
+    "lastMatch.kills": "Kills",
+    "lastMatch.justNow": "just now",
+    "lastMatch.minutesAgo": "{n}m ago",
+    "lastMatch.hoursAgo": "{n}h ago",
+    "lastMatch.daysAgo": "{n}d ago",
+    "lastMatch.refresh": "Refresh",
+    "lastMatch.acs": "ACS",
+    "lastMatch.copyName": "Copy name",
+    "lastMatch.addFriend": "Add friend",
+    "lastMatch.friendSent": "Friend request sent",
+    "lastMatch.friendFailed": "Could not send friend request",
+    "lastMatch.alreadyFriend": "Already friends",
+    "lastMatch.alreadyPending": "Request pending",
+    "queue.competitive": "Competitive",
+    "queue.unrated": "Unrated",
+    "queue.spikerush": "Spike Rush",
+    "queue.deathmatch": "Deathmatch",
+    "queue.ggteam": "Escalation",
+    "queue.swiftplay": "Swiftplay",
+    "queue.hurm": "Team Deathmatch",
+    "queue.premier": "Premier",
+    "queue.custom": "Custom",
+    "queue.newmap": "New Map",
+    "queue.onefa": "Replication",
+    "queue.snowball": "Snowball Fight",
+    "queue.premierteam": "Premier",
   },
   tr: {
     // Header
@@ -364,6 +424,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "status.connecting": "BAĞLANIYOR...",
     "status.reconnecting": "TEKRAR DENENİYOR...",
     "status.offline": "ÇEVRİMDIŞI",
+    "toast.reconnecting": "Valorant'a yeniden bağlanılıyor...",
+    "toast.reconnected": "Yeniden bağlandı",
+    "toast.reconnectNoGame": "Valorant açık değil",
+    "toast.reconnectFailed": "Yeniden bağlanma başarısız",
     "settings.version": "Sürüm",
 
     // Dialog
@@ -396,6 +460,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "tabs.dm": "DM",
     "tabs.friends": "ARKADAŞLAR",
     "chat.search_placeholder": "ARKADAŞ ARA...",
+    "chat.outgoing_requests": "GİDEN İSTEKLER",
+    "chat.pending": "BEKLEMEDE",
+    "chat.cancel_request": "İptal",
+    "chat.cancel_request_success": "Arkadaşlık isteği iptal edildi",
+    "chat.cancel_request_failed": "İstek iptal edilemedi",
 
     // Footer
     "footer.autoLock": "OTO-KİLİT",
@@ -444,6 +513,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.loadoutNotFound": "Loadout bulunamadı",
     "player.connectionError": "Bağlantı hatası",
     "player.noSkinData": "Skin verisi yok",
+    "player.expressions": "Spreyler & Donatılar",
+    "player.midRoundLocked": "Tur ortasında kullanılamaz",
     "player.copy": "Kopyala",
     "player.close": "Kapat",
 
@@ -452,6 +523,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "weapons.secondary": "YARDIMCI",
     "weapons.other": "DİĞER",
     "weapons.buddy": "Anahtarlık",
+    "weapons.spray": "Sprey",
+    "weapons.flex": "Donatı",
 
     // Shop / Store
     "shop.title": "Mağaza",
@@ -480,6 +553,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.windowStyle": "Pencere Stili",
     "settings.windowStyleFree": "Serbest (Sürüklenebilir)",
     "settings.windowStyleDocked": "Yerleşik (Sabit)",
+    "settings.minimizeToTray": "Sistem tepsisine küçült",
+    "settings.minimizeToTrayDesc": "Gizlerken overlay sistem tepsisine gider. Kapalıysa görev çubuğuna normal küçülür.",
     "settings.discordRpc": "Discord Zengin Durum",
     "settings.discordRpcDesc": "Discord profilinde harita & skoru göster",
     "settings.chatShortcuts": "Sohbet Kısayolları",
@@ -590,6 +665,9 @@ const translations: Record<Locale, Record<string, string>> = {
     "activation.hwMatched": "Donanım Eşleşme Skoru:",
     "activation.matchedComponents": "Eşleşen Bileşenler:",
     "activation.mismatchedComponents": "Eşleşmeyen Bileşenler:",
+    "settings.installs": "Kurulum",
+    "settings.installsLine": "{n} kurulum",
+    "settings.installsHint": "{n} benzersiz kurulum",
     "settings.openLogs": "Logları Görüntüle",
     "settings.logsNote": "Hata ayıklama için app.log dosyasını açar",
 
@@ -679,6 +757,48 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.recentEncounterShort2": "2 MAÇ ÖNCE",
     "player.encounterEnemySuffix": " (rakip)",
     "player.previousAgent": "O maçta {agent} oynadı",
+
+    // Last match recap
+    "lastMatch.title": "Son Maç",
+    "lastMatch.tapForRoster": "Kadro için tıkla",
+    "lastMatch.loading": "Son maç yükleniyor...",
+    "lastMatch.processing": "Maç işleniyor...",
+    "lastMatch.empty": "Son maç yok",
+    "lastMatch.error": "Maç yüklenemedi — tekrar denemek için tıkla",
+    "lastMatch.retry": "Tekrar dene",
+    "lastMatch.victory": "Zafer",
+    "lastMatch.defeat": "Yenilgi",
+    "lastMatch.draw": "Berabere",
+    "lastMatch.surrender": "Teslim",
+    "lastMatch.allies": "TAKIMIM",
+    "lastMatch.enemies": "RAKİP",
+    "lastMatch.placement": "SIRALAMA",
+    "lastMatch.kills": "Kill",
+    "lastMatch.justNow": "az önce",
+    "lastMatch.minutesAgo": "{n} dk önce",
+    "lastMatch.hoursAgo": "{n} sa önce",
+    "lastMatch.daysAgo": "{n} gün önce",
+    "lastMatch.refresh": "Yenile",
+    "lastMatch.acs": "ACS",
+    "lastMatch.copyName": "İsmi kopyala",
+    "lastMatch.addFriend": "Arkadaş ekle",
+    "lastMatch.friendSent": "Arkadaşlık isteği gönderildi",
+    "lastMatch.friendFailed": "İstek gönderilemedi",
+    "lastMatch.alreadyFriend": "Zaten arkadaş",
+    "lastMatch.alreadyPending": "İstek beklemede",
+    "queue.competitive": "Rekabetçi",
+    "queue.unrated": "Derecesiz",
+    "queue.spikerush": "Spike Hücumu",
+    "queue.deathmatch": "Ölüm Kalım",
+    "queue.ggteam": "Tırmanış",
+    "queue.swiftplay": "Tamgaz",
+    "queue.hurm": "Takım Ölüm Kalım",
+    "queue.premier": "Premier",
+    "queue.custom": "Özel Oyun",
+    "queue.newmap": "Yeni Harita",
+    "queue.onefa": "Replikasyon",
+    "queue.snowball": "Kartopu Savaşı",
+    "queue.premierteam": "Premier",
   },
 };
 
@@ -687,6 +807,34 @@ export const SKIN_API_LOCALES: Record<Locale, string> = {
   en: "en-US",
   tr: "tr-TR",
 };
+
+/** Competitive tier → localized rank label (e.g. "Altın 2" / "Gold 2"). */
+export function getLocalizedRank(tier: number, locale: Locale): string {
+  const dict = translations[locale] ?? translations.en;
+  const name = (key: string) => dict[key] || translations.en[key] || key;
+
+  if (tier < 3) return name("rank.unranked");
+  if (tier >= 27) return name("rank.radiant");
+
+  const ranks = [
+    "rank.iron",
+    "rank.bronze",
+    "rank.silver",
+    "rank.gold",
+    "rank.platinum",
+    "rank.diamond",
+    "rank.ascendant",
+    "rank.immortal",
+  ] as const;
+
+  const rankIndex = Math.floor((tier - 3) / 3);
+  const level = ((tier - 3) % 3) + 1;
+
+  if (rankIndex >= 0 && rankIndex < ranks.length) {
+    return `${name(ranks[rankIndex])} ${level}`;
+  }
+  return "";
+}
 
 export const useI18n = create<I18nStore>()(
   persist(

@@ -76,13 +76,14 @@ export function WeaponOverlay() {
             <div className="absolute inset-0 scan-lines" />
           </div>
 
-          {!imageLoaded && (
+          {!imageLoaded && hoveredWeapon.icon && (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-8 h-8 border-2 border-accent-cyan/30 border-t-accent-cyan rounded-full animate-spin" />
             </div>
           )}
 
           {/* Weapon image with smooth RGB split */}
+          {hoveredWeapon.icon && (
           <div className={`relative ${!imageLoaded ? "opacity-0" : "opacity-100"} transition-opacity duration-200`}>
             {/* Red channel - left offset */}
             {isGlitching && (
@@ -128,12 +129,19 @@ export function WeaponOverlay() {
               />
             )}
           </div>
+          )}
         </div>
 
         {/* Weapon name */}
         <h2 className="text-lg font-black text-primary tracking-wide transition-transform duration-75 ease-out" style={{ transform: isGlitching ? `translateX(${glitchIntensity * -1}px)` : "none" }}>
           {hoveredWeapon.name}
         </h2>
+
+        {hoveredWeapon.note && (
+          <p className="mt-1.5 text-[10px] text-dim/80">
+            {hoveredWeapon.note}
+          </p>
+        )}
 
         {/* Price (shop) */}
         {hoveredWeapon.price && (

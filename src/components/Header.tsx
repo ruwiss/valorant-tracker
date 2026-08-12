@@ -13,6 +13,7 @@ export function Header() {
   const region = useGameStore((s) => s.region);
   const gameState = useGameStore((s) => s.gameState);
   const status = useGameStore((s) => s.status);
+  const pendingReconnect = useGameStore((s) => s.pendingReconnect);
   const reconnect = useGameStore((s) => s.reconnect);
   const hotkey = useSettingsStore((s) => s.hotkey);
   const hideWindow = useSettingsStore((s) => s.hideWindow);
@@ -28,6 +29,8 @@ export function Header() {
   }, []);
 
   const mapSplash = gameState.map_name ? getMapSplash(gameState.map_name) : null;
+  const isReconnecting = pendingReconnect || status === "RECONNECTING";
+  const isBusy = isReconnecting || status === "CONNECTING";
 
   const closeApp = async () => {
     const isConfirmed = await confirm(t("dialog.closeMessage"), {
@@ -83,8 +86,8 @@ export function Header() {
           {/* Durum Göstergesi (Minimal Sinyal Noktası) */}
           <div 
             className={`relative w-2 h-2 rounded-full shrink-0 ${
-              status === 'CONNECTED' ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]' :
-              status === 'CONNECTING' || status === 'RECONNECTING' ? 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6)] animate-pulse' :
+              status === 'CONNECTED' && !pendingReconnect ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]' :
+              status === 'CONNECTING' || status === 'RECONNECTING' || pendingReconnect ? 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6)] animate-pulse' :
               status === 'WAITING_FOR_GAME' ? 'bg-accent-cyan shadow-[0_0_8px_rgba(0,212,170,0.6)] animate-pulse' :
               'bg-accent-red shadow-[0_0_8px_rgba(255,70,85,0.6)]'
             }`}
@@ -99,7 +102,9 @@ export function Header() {
           <h1 className="text-[15px] font-black text-white tracking-widest leading-none drop-shadow-md truncate">VALORANT</h1>
           {region && <span className="text-[8px] font-bold text-accent-cyan uppercase bg-accent-cyan/10 border border-accent-cyan/20 px-1 py-0.5 rounded-md tracking-widest leading-none shadow-[0_0_5px_rgba(0,212,170,0.2)] shrink-0">{region}</span>}
         </div>
-        <span className="text-[8px] text-dim/80 uppercase tracking-[0.2em] font-semibold mt-1.5 ml-4 truncate">{hotkey} Overlay</span>
+        <span className={`text-[8px] uppercase tracking-[0.2em] font-semibold mt-1.5 ml-4 truncate ${isReconnecting ? "text-accent-gold" : isBusy ? "text-accent-gold/80" : "text-dim/80"}`}>
+          {isReconnecting ? t("waiting.reconnecting") : isBusy ? t("header.connecting") : `${hotkey} Overlay`}
+        </span>
       </div>
 
       {/* Right: Actions */}
@@ -110,8 +115,18 @@ export function Header() {
           </svg>
         </button>
 
-        <button onClick={() => reconnect(false)} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded-lg transition-all" title={t("header.reconnect")}>
-          <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <button
+          type="button"
+          onClick={() => reconnect()}
+          disabled={isBusy}
+          className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all ${
+            isBusy
+              ? "text-accent-gold bg-accent-gold/15 cursor-wait"
+              : "text-dim hover:text-white hover:bg-white/10"
+          }`}
+          title={isReconnecting ? t("waiting.reconnecting") : t("header.reconnect")}
+        >
+          <svg className={`w-[15px] h-[15px] ${isBusy ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M23 4v6h-6M1 20v-6h6" />
             <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
           </svg>

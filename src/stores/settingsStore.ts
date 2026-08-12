@@ -65,6 +65,8 @@ interface SettingsState {
   autoLockDelaySeconds: number;
   discordRpcEnabled: boolean;
   chatShortcutsEnabled: boolean;
+  /** Hide to tray (true, default) vs normal taskbar minimize (false). */
+  minimizeToTray: boolean;
   /** First-launch tip toast; shown once then persisted as seen. */
   hasSeenWelcome: boolean;
 }
@@ -91,6 +93,7 @@ interface SettingsStore extends SettingsState {
   syncDiscordRpc: () => void;
   setChatShortcutsEnabled: (enabled: boolean) => void;
   syncChatShortcuts: () => void;
+  setMinimizeToTray: (enabled: boolean) => void;
   markWelcomeSeen: () => void;
 }
 
@@ -177,6 +180,47 @@ async function slideWindow(win: any, direction: "in" | "out") {
   }
 }
 
+async function isOverlayShown(win: Awaited<ReturnType<typeof getCurrentWindow>>): Promise<boolean> {
+  const visible = await win.isVisible();
+  if (!visible) return false;
+  return !(await win.isMinimized());
+}
+
+async function concealWindow(
+  win: Awaited<ReturnType<typeof getCurrentWindow>>,
+  { windowStyle, minimizeToTray }: { windowStyle: WindowStyle; minimizeToTray: boolean },
+) {
+  if (minimizeToTray) {
+    if (windowStyle === "docked") {
+      await slideWindow(win, "out");
+    }
+    await win.hide();
+    return;
+  }
+  await win.minimize();
+}
+
+async function revealWindow(
+  win: Awaited<ReturnType<typeof getCurrentWindow>>,
+  windowStyle: WindowStyle,
+  fromMinimize: boolean,
+) {
+  if (fromMinimize) {
+    await win.unminimize();
+    await win.show();
+    await win.setFocus();
+    return;
+  }
+  if (windowStyle === "docked") {
+    await positionOffScreen(win);
+  }
+  await win.show();
+  await win.setFocus();
+  if (windowStyle === "docked") {
+    await slideWindow(win, "in");
+  }
+}
+
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
@@ -189,6 +233,7 @@ export const useSettingsStore = create<SettingsStore>()(
       autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
       chatShortcutsEnabled: true,
+      minimizeToTray: true,
       hasSeenWelcome: false,
 
       markWelcomeSeen: () => {
@@ -231,6 +276,10 @@ export const useSettingsStore = create<SettingsStore>()(
         afterSettingsHydrated(() => {
           invokeCommand("set_chat_shortcuts", { enabled: get().chatShortcutsEnabled }).catch(console.error);
         });
+      },
+
+      setMinimizeToTray: (enabled: boolean) => {
+        set({ minimizeToTray: enabled });
       },
 
       fetchContactInfo: async () => {
@@ -380,14 +429,7 @@ export const useSettingsStore = create<SettingsStore>()(
       hideWindow: async () => {
         try {
           const win = getCurrentWindow();
-          const { windowStyle } = get();
-
-          if (windowStyle === "docked") {
-            // Slide out animation
-            await slideWindow(win, "out");
-          }
-
-          await win.hide();
+          await concealWindow(win, get());
           set({ isWindowVisible: false });
         } catch (error) {
           console.error("Failed to hide window:", error);
@@ -398,27 +440,21 @@ export const useSettingsStore = create<SettingsStore>()(
         if (isToggling) return;
         isToggling = true;
 
-        const win = getCurrentWindow();
-        const visible = await win.isVisible();
-        const { windowStyle } = get();
+        try {
+          const win = getCurrentWindow();
+          const { windowStyle } = get();
+          const shown = await isOverlayShown(win);
 
-        if (visible) {
-          if (windowStyle === "docked") {
-            await slideWindow(win, "out");
+          if (shown) {
+            await concealWindow(win, get());
+            set({ isWindowVisible: false });
+          } else {
+            const minimized = await win.isMinimized();
+            await revealWindow(win, windowStyle, minimized);
+            set({ isWindowVisible: true });
           }
-          await win.hide();
-          set({ isWindowVisible: false });
-        } else {
-          if (windowStyle === "docked") {
-            // Position off-screen first, then show and slide in
-            await positionOffScreen(win);
-          }
-          await win.show();
-          await win.setFocus();
-          set({ isWindowVisible: true });
-          if (windowStyle === "docked") {
-            await slideWindow(win, "in");
-          }
+        } catch (error) {
+          console.error("Failed to toggle window:", error);
         }
 
         setTimeout(() => {
@@ -469,6 +505,7 @@ export const useSettingsStore = create<SettingsStore>()(
         autoLockDelaySeconds: state.autoLockDelaySeconds,
         discordRpcEnabled: state.discordRpcEnabled,
         chatShortcutsEnabled: state.chatShortcutsEnabled,
+        minimizeToTray: state.minimizeToTray,
         hasSeenWelcome: state.hasSeenWelcome,
       }),
       merge: (persisted, current) => {
@@ -480,6 +517,8 @@ export const useSettingsStore = create<SettingsStore>()(
           autoLockDelaySeconds: clampAutoLockDelay(
             p.autoLockDelaySeconds ?? current.autoLockDelaySeconds,
           ),
+          // Legacy saves without this key keep the default (tray).
+          minimizeToTray: p.minimizeToTray ?? current.minimizeToTray,
         };
       },
       onRehydrateStorage: () => (_state, error) => {

@@ -23,6 +23,7 @@ export interface HoveredWeapon {
     discountedVp?: number;
   };
   tierColor?: string;
+  note?: string;
 }
 
 export interface HoveredAgent {

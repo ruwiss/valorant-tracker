@@ -16,9 +16,13 @@ export function ChatPanel() {
     setActiveTab, // Use from store
     messages,
     friends,
+    outgoingRequests,
+    cancellingPuuid,
     fetchConversations,
     fetchMessages,
     fetchFriends,
+    fetchOutgoingRequests,
+    cancelOutgoingRequest,
     loadMoreMessages,
     sendMessage,
     startDm,
@@ -121,6 +125,7 @@ export function ChatPanel() {
       fetchConversations();
       fetchMessages(true);
       fetchFriends();
+      fetchOutgoingRequests();
     }
 
     // Only set interval if visible
@@ -133,6 +138,7 @@ export function ChatPanel() {
         fetchMessages();
       }
       fetchFriends();
+      fetchOutgoingRequests();
     }, 2000);
 
     return () => clearInterval(interval);
@@ -273,6 +279,19 @@ export function ChatPanel() {
     return friends.filter((f) => f.game_name.toLowerCase().includes(lower) || f.game_tag.toLowerCase().includes(lower));
   }, [friends, friendSearch]);
 
+  const filteredOutgoing = useMemo(() => {
+    if (!friendSearch) return outgoingRequests;
+    const lower = friendSearch.toLowerCase();
+    return outgoingRequests.filter(
+      (r) => r.game_name.toLowerCase().includes(lower) || r.game_tag.toLowerCase().includes(lower),
+    );
+  }, [outgoingRequests, friendSearch]);
+
+  const handleCancelRequest = async (e: React.MouseEvent, puuid: string) => {
+    e.stopPropagation();
+    await cancelOutgoingRequest(puuid);
+  };
+
   const handleFriendClick = async (puuid: string) => {
     await startDm(puuid);
     setActiveTab("DM"); // Switch to DM tab to see the chat
@@ -328,6 +347,11 @@ export function ChatPanel() {
           {(["DM", "FRIENDS"] as Tab[]).map((tab) => (
             <button key={tab} onClick={() => handleTabChange(tab)} className={clsx("flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative uppercase hover:bg-white/5 rounded-t-sm flex items-center justify-center", activeTab === tab ? "text-white bg-white/5" : "text-dim")}>
               {t(`tabs.${tab.toLowerCase()}`)}
+              {tab === "FRIENDS" && outgoingRequests.length > 0 && (
+                <span className="ml-1.5 min-w-[16px] h-4 px-1 rounded-sm bg-accent-red/80 text-white text-[9px] leading-4 font-bold">
+                  {outgoingRequests.length}
+                </span>
+              )}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent-red shadow-[0_0_10px_#ff4655]" />}
             </button>
           ))}
@@ -358,6 +382,52 @@ export function ChatPanel() {
 
               {/* Friend List */}
               <div ref={friendListRef} onScroll={handleFriendListScroll} className="flex-1 overflow-y-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-white/10">
+                {filteredOutgoing.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between px-1 mb-2">
+                      <span className="text-[9px] font-bold tracking-widest text-dim uppercase">
+                        {t("chat.outgoing_requests")}
+                      </span>
+                      <span className="text-[9px] font-mono text-dim/70">{filteredOutgoing.length}</span>
+                    </div>
+                    <div className="space-y-1">
+                      {filteredOutgoing.map((req) => {
+                        const busy = cancellingPuuid === req.puuid;
+                        return (
+                          <div
+                            key={req.puuid}
+                            className="relative w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-white/5 bg-white/[0.02] overflow-hidden"
+                          >
+                            <div className="w-1 h-full absolute left-0 top-0 bg-accent-gold/60" />
+                            <div className="w-8 h-8 rounded-sm bg-white/10 flex items-center justify-center text-[10px] font-bold text-dim shrink-0">
+                              {(req.game_name || "?").charAt(0)}
+                            </div>
+                            <div className="flex flex-col items-start gap-0.5 overflow-hidden flex-1 min-w-0">
+                              <div className="flex items-baseline gap-1.5 w-full">
+                                <span className="text-sm font-bold text-white truncate max-w-[160px]">
+                                  {req.game_name}
+                                </span>
+                                <span className="text-[10px] text-dim font-mono">#{req.game_tag}</span>
+                              </div>
+                              <span className="text-[9px] uppercase tracking-wider font-medium text-accent-gold">
+                                {t("chat.pending")}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={(e) => handleCancelRequest(e, req.puuid)}
+                              className="shrink-0 px-2.5 py-1.5 rounded-sm border border-accent-red/40 bg-accent-red/15 text-[9px] font-bold uppercase tracking-wider text-white hover:bg-accent-red/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {t("chat.cancel_request")}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {filteredFriends.length > 0 && <div className="mt-3 mb-1 h-px bg-white/5" />}
+                  </div>
+                )}
                 {filteredFriends.map((friend) => (
                   <button key={friend.puuid} onClick={() => handleFriendClick(friend.puuid)} className="w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-transparent hover:border-white/10 hover:bg-white/5 transition-all group relative overflow-hidden">
                     {/* Status Line */}
@@ -388,7 +458,7 @@ export function ChatPanel() {
                     </div>
                   </button>
                 ))}
-                {filteredFriends.length === 0 && (
+                {filteredFriends.length === 0 && filteredOutgoing.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 opacity-80 animate-fade-in px-8">
                     <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/10 shadow-[0_0_20px_rgba(255,255,255,0.05)]">
                       <svg className="w-8 h-8 text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">

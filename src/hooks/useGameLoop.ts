@@ -5,8 +5,9 @@ import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
+import { useLastMatchStore } from "../stores/lastMatchStore";
 import { invokeCommand } from "../utils/ipc";
-import type { ConnectionEvent, GameState } from "../lib/types";
+import type { ConnectionEvent, GameState, LastMatch } from "../lib/types";
 
 /** Guard StrictMode double-mount so we don't spam backend / console on boot. */
 let bootstrapped = false;
@@ -59,6 +60,35 @@ export function useGameLoop() {
         if (!(await win.isVisible())) await win.show();
         if (await win.isMinimized()) await win.unminimize();
         await win.setFocus();
+        useSettingsStore.setState({ isWindowVisible: true });
+      });
+
+    const setupVisibilityListener = async () => {
+      const win = getCurrentWindow();
+      const sync = async () => {
+        const visible = await win.isVisible();
+        const minimized = await win.isMinimized();
+        useSettingsStore.setState({ isWindowVisible: visible && !minimized });
+      };
+      const unlistenFocus = await win.onFocusChanged(async ({ payload: focused }) => {
+        if (focused) {
+          useSettingsStore.setState({ isWindowVisible: true });
+          return;
+        }
+        await sync();
+      });
+      const unlistenResize = await win.onResized(sync);
+      return () => {
+        unlistenFocus();
+        unlistenResize();
+      };
+    };
+
+    const setupLastMatchListener = () =>
+      listen<LastMatch>("last_match_updated", (event) => {
+        if (event.payload) {
+          useLastMatchStore.getState().setMatch(event.payload);
+        }
       });
 
     // 4. Initial sync - render correct state without waiting for the next event.
@@ -81,11 +111,19 @@ export function useGameLoop() {
     let unlistenConnection: (() => void) | undefined;
     let unlistenState: (() => void) | undefined;
     let unlistenShowOverlay: (() => void) | undefined;
+    let unlistenVisibility: (() => void) | undefined;
+    let unlistenLastMatch: (() => void) | undefined;
 
     setupConnectionListener().then((u) => { unlistenConnection = u; });
     setupStateListener().then((u) => { unlistenState = u; });
     setupOverlayListener().then((u) => { unlistenShowOverlay = u; }).catch((e) =>
       console.error("[GameLoop] Failed to setup show-overlay listener:", e)
+    );
+    setupVisibilityListener().then((u) => { unlistenVisibility = u; }).catch((e) =>
+      console.error("[GameLoop] Failed to setup visibility listener:", e)
+    );
+    setupLastMatchListener().then((u) => { unlistenLastMatch = u; }).catch((e) =>
+      console.error("[GameLoop] Failed to setup last-match listener:", e)
     );
     initialSync();
 
@@ -93,6 +131,8 @@ export function useGameLoop() {
       if (unlistenConnection) unlistenConnection();
       if (unlistenState) unlistenState();
       if (unlistenShowOverlay) unlistenShowOverlay();
+      if (unlistenVisibility) unlistenVisibility();
+      if (unlistenLastMatch) unlistenLastMatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

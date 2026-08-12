@@ -1,7 +1,29 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { toast } from "sonner";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionEvent, GameState } from "../lib/types";
+import { useI18n } from "../lib/i18n";
+import { usePanelStore } from "./panelStore";
+import { useLastMatchStore } from "./lastMatchStore";
+
+/** Ignore a stale "connected" emit that races a just-clicked reconnect. */
+const RECONNECT_MIN_VISIBLE_MS = 600;
+const RECONNECT_SAFETY_MS = 20_000;
+
+let reconnectSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectMinTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearReconnectTimers() {
+	if (reconnectSafetyTimer) {
+		clearTimeout(reconnectSafetyTimer);
+		reconnectSafetyTimer = null;
+	}
+	if (reconnectMinTimer) {
+		clearTimeout(reconnectMinTimer);
+		reconnectMinTimer = null;
+	}
+}
 
 // Connection status as the UI understands it. The backend supervisor is the
 // single source of truth and drives this via `connection_changed` events; the
@@ -31,6 +53,13 @@ interface GameStore {
 	// Kept only so existing UI (WaitingState) keeps compiling; the frontend no
 	// longer tracks reconnect attempts - the backend owns reconnection.
 	reconnectAttempts: number;
+
+	// Manual reconnect: stays true until the supervisor actually cycles
+	// connecting → connected/waiting. Prevents an in-flight "connected" emit
+	// from wiping the spinner the instant the user clicks.
+	pendingReconnect: boolean;
+	reconnectAcked: boolean;
+	reconnectStartedAt: number;
 
 	// Event-driven setters
 	setGameState: (newState: GameState) => void;
@@ -93,44 +122,87 @@ export const useGameStore = create<GameStore>()(
 			pausedAutoLockAgent: null,
 			pausedByUser: false,
 			reconnectAttempts: 0,
+			pendingReconnect: false,
+			reconnectAcked: false,
+			reconnectStartedAt: 0,
 
 			// Computed helpers
 			isConnected: () => get().status === "CONNECTED",
 			isLoading: () =>
-				get().status === "CONNECTING" || get().status === "RECONNECTING",
+				get().status === "CONNECTING" ||
+				get().status === "RECONNECTING" ||
+				get().pendingReconnect,
 			isPaused: () => get().status === "PAUSED",
 			isWaitingForGame: () => get().status === "WAITING_FOR_GAME",
 
 			// --- Event-driven setters (called from useGameLoop listeners) ---
 
 			setGameState: (newState: GameState) => {
+				const prev = get().gameState;
+				const prevState = prev.state;
+				const wasLive = prevState === "pregame" || prevState === "ingame";
+				const prevLooksLikeRange =
+					(prev.map_name || "").toLowerCase().includes("range") ||
+					((prev.map_name || "").toLowerCase() === "unknown" &&
+						prev.enemies.length === 0 &&
+						prev.allies.length <= 1);
+
 				set((s) => {
-					const wasLive =
+					const live =
 						s.gameState.state === "pregame" || s.gameState.state === "ingame";
 
 					// Transient disconnect mid-match: keep the live panel. Backend
 					// reconnects and re-emits shortly; wiping here is the classic
 					// "stuck on Oyun Bekleniyor" flash.
-					if (newState.state === "disconnected" && wasLive) {
+					// Game actually gone (WAITING_FOR_GAME) or a range leftover: drop it.
+					if (newState.state === "disconnected" && live) {
+						const st = get().status;
+						if (st === "WAITING_FOR_GAME" || prevLooksLikeRange) {
+							return { gameState: initialGameState };
+						}
 						return s;
 					}
 
 					// Ignore idle while we are still (re)connecting — a false idle during
 					// token refresh / pregame→ingame load must not clobber the panel.
-					// Once status is CONNECTED, trust the backend (it already debounces).
-					if (newState.state === "idle" && wasLive) {
+					// WAITING_FOR_GAME means Valorant is not running: accept idle.
+					if (newState.state === "idle" && live) {
 						const st = get().status;
-						if (
-							st === "CONNECTING" ||
-							st === "RECONNECTING" ||
-							st === "WAITING_FOR_GAME"
-						) {
+						if (st === "CONNECTING" || st === "RECONNECTING") {
 							return s;
 						}
 					}
 
 					return { gameState: newState };
 				});
+
+				if (
+					wasLive &&
+					!prevLooksLikeRange &&
+					newState.state === "idle" &&
+					get().gameState.state === "idle"
+				) {
+					useLastMatchStore.getState().markPending();
+				}
+
+				// Keep open player panel rank/level in sync when MMR enrichment
+				// fills enemy ranks on a later poll (selectedPlayer is a snapshot).
+				const selected = usePanelStore.getState().selectedPlayer;
+				if (!selected) return;
+				const updated = [...newState.allies, ...newState.enemies].find(
+					(p) => p.puuid === selected.puuid,
+				);
+				if (
+					updated &&
+					(updated.rank_tier !== selected.rank_tier ||
+						updated.level !== selected.level ||
+						updated.name !== selected.name ||
+						updated.agent !== selected.agent)
+				) {
+					usePanelStore.setState({
+						selectedPlayer: { ...selected, ...updated },
+					});
+				}
 			},
 
 			applyConnectionEvent: (ev: ConnectionEvent) => {
@@ -140,41 +212,83 @@ export const useGameStore = create<GameStore>()(
 				// user explicitly resumes (prevents the backend racing us back online).
 				if (get().pausedByUser && next !== "PAUSED") return;
 
+				const pending = get().pendingReconnect;
+				if (pending) {
+					if (next === "CONNECTING") {
+						set({
+							status: "RECONNECTING",
+							reconnectAcked: true,
+							region: ev.region || get().region,
+						});
+						return;
+					}
+
+					// In-flight "connected" from the poll that was already running
+					// when the user clicked — ignore until we have seen "connecting".
+					if (next === "CONNECTED" && !get().reconnectAcked) {
+						return;
+					}
+
+					const applyTerminal = () => {
+						clearReconnectTimers();
+						const t = useI18n.getState().t;
+						if (next === "CONNECTED") {
+							toast.success(t("toast.reconnected"), { id: "reconnect" });
+						} else if (next === "WAITING_FOR_GAME") {
+							toast.error(t("toast.reconnectNoGame"), { id: "reconnect" });
+						} else {
+							toast.dismiss("reconnect");
+						}
+						set({ pendingReconnect: false, reconnectAcked: false });
+						get().applyConnectionEvent(ev);
+					};
+
+					const elapsed = Date.now() - (get().reconnectStartedAt || 0);
+					const wait = Math.max(0, RECONNECT_MIN_VISIBLE_MS - elapsed);
+					if (wait > 0) {
+						if (reconnectMinTimer) clearTimeout(reconnectMinTimer);
+						reconnectMinTimer = setTimeout(applyTerminal, wait);
+						return;
+					}
+					applyTerminal();
+					return;
+				}
+
 				const prev = get().status;
 
 				set((s) => ({
 					status: next,
 					region: ev.region || s.region,
-					// Only an explicit PAUSE wipes the live panel. We must NOT reset on
-					// WAITING_FOR_GAME: a transient/stale "waiting_for_game" connection
-					// event (e.g. the boot-time initial sync racing a live
-					// game_state_changed: pregame, or a brief mid-match token hiccup) would
-					// otherwise blow away a real pregame/ingame state. The backend then
-					// suppresses re-emitting the identical game state (last_emitted_state_json
-					// guard), leaving the UI stuck on "Maç Bekleniyor" while the game is live.
-					// The authoritative game-state reset comes from game_state_changed
-					// (idle/disconnected), not from the connection status.
-					gameState: next === "PAUSED" ? initialGameState : s.gameState,
+					// Pause always clears. WAITING_FOR_GAME + a range leftover (solo /
+					// Unknown map) also clears — a real live match stays, because mid-match
+					// token blips must not wipe the roster.
+					gameState: next === "PAUSED"
+						? initialGameState
+						: next === "WAITING_FOR_GAME" &&
+							  ((s.gameState.map_name || "").toLowerCase().includes("range") ||
+									((s.gameState.map_name || "").toLowerCase() === "unknown" &&
+										s.gameState.enemies.length === 0 &&
+										s.gameState.allies.length <= 1))
+							? initialGameState
+							: s.gameState,
 				}));
 
-				// Reconnected after a blip / cold start: if we are not already on a live
-				// panel, pull game state once so we do not stay on "Oyun Bekleniyor"
-				// when the supervisor's re-emit was suppressed or missed.
+				// Reconnected after a blip / cold start / manual refresh: pull
+				// game state so the panel does not stay stale (or on "Oyun
+				// Bekleniyor" if the supervisor's re-emit was suppressed).
 				if (
 					next === "CONNECTED" &&
 					prev !== "CONNECTED" &&
 					!get().pausedByUser
 				) {
-					const gs = get().gameState;
-					if (gs.state !== "pregame" && gs.state !== "ingame") {
-						invokeCommand<GameState>("get_game_state", undefined, {
-							suppressErrorToast: true,
+					invokeCommand<GameState>("get_game_state", undefined, {
+						suppressErrorToast: true,
+					})
+						.then((fresh) => {
+							if (fresh) get().setGameState(fresh);
 						})
-							.then((fresh) => {
-								if (fresh) get().setGameState(fresh);
-							})
-							.catch(() => {});
-					}
+						.catch(() => {});
+					useLastMatchStore.getState().fetchLastMatch(true).catch(() => {});
 				}
 			},
 
@@ -252,14 +366,40 @@ export const useGameStore = create<GameStore>()(
 			// Manual reconnect button - asks the supervisor to re-init now.
 			reconnect: () => {
 				if (get().pausedByUser) return;
-				set({ status: "RECONNECTING" });
-				invokeCommand("reconnect").catch(console.error);
+				if (get().pendingReconnect) return;
+
+				clearReconnectTimers();
+				const t = useI18n.getState().t;
+				set({
+					status: "RECONNECTING",
+					pendingReconnect: true,
+					reconnectAcked: false,
+					reconnectStartedAt: Date.now(),
+				});
+				toast.loading(t("toast.reconnecting"), { id: "reconnect" });
+
+				reconnectSafetyTimer = setTimeout(() => {
+					if (!get().pendingReconnect) return;
+					clearReconnectTimers();
+					set({
+						pendingReconnect: false,
+						reconnectAcked: false,
+						status: "CONNECTING",
+					});
+					toast.error(t("toast.reconnectFailed"), { id: "reconnect" });
+				}, RECONNECT_SAFETY_MS);
+
+				invokeCommand("reconnect").catch((err) => {
+					console.error(err);
+					clearReconnectTimers();
+					set({ pendingReconnect: false, reconnectAcked: false });
+					toast.error(t("toast.reconnectFailed"), { id: "reconnect" });
+				});
 			},
 
-			// "Check for game" button while waiting - also a forced reconnect.
+			// "Check for game" button while waiting - same forced reconnect path.
 			checkGameProcess: () => {
-				if (get().pausedByUser) return;
-				invokeCommand("reconnect").catch(console.error);
+				get().reconnect();
 			},
 
 			// --- Startup sync ---

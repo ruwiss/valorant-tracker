@@ -5515,7 +5515,7 @@ dependencies = [
 
 [[package]]
 name = "valorant-tracker"
-version = "1.8.7"
+version = "1.8.8"
 dependencies = [
  "base64 0.22.1",
  "discord-rich-presence",
@@ -5546,7 +5546,9 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid 1.19.0",
+ "webview2-com",
  "windows 0.58.0",
+ "windows-core 0.61.2",
  "winreg",
 ]
 

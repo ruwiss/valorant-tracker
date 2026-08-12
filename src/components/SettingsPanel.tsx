@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
 import { PresetsTab } from "./PresetsTab";
 import { ChatShortcutsEditor } from "./ChatShortcutsEditor";
+import { invokeCommand } from "../utils/ipc";
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
 const BLOCKED_KEYS = ["Escape", "Tab", "CapsLock", "Enter", "Backspace", "Space"];
@@ -39,7 +40,7 @@ type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled, minimizeToTray, setMinimizeToTray } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { constants } = useConstantsStore();
@@ -50,6 +51,7 @@ export function SettingsPanel() {
   const [recordingDisplay, setRecordingDisplay] = useState("");
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("...");
+  const [installs, setInstalls] = useState<number | null>(null);
   const [expandedMap, setExpandedMap] = useState<CompetitiveMap | null>(null);
   const [hoveredAgents, setHoveredAgents] = useState<Record<string, string | null>>({});
   /** Debounce map-only restore so agent-to-agent moves don't flash the map title. */
@@ -57,7 +59,15 @@ export function SettingsPanel() {
 
   useEffect(() => {
     getVersion().then(setAppVersion);
+    invokeCommand<number | null>("get_install_count", undefined, { suppressErrorToast: true })
+      .then((n) => {
+        if (typeof n === "number" && Number.isFinite(n)) setInstalls(n);
+      })
+      .catch(() => {});
   }, []);
+
+  const formattedInstalls =
+    installs !== null ? installs.toLocaleString(locale === "tr" ? "tr-TR" : "en-US") : "";
 
   // If a previous failed load left us with empty icons, retry when settings opens
   useEffect(() => {
@@ -500,6 +510,18 @@ export function SettingsPanel() {
                   </button>
                 </div>
               </div>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{t("settings.minimizeToTray")}</label>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setMinimizeToTray(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${minimizeToTray ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    {t("settings.on")}
+                  </button>
+                  <button onClick={() => setMinimizeToTray(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!minimizeToTray ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                    {t("settings.off")}
+                  </button>
+                </div>
+                <p className="text-[9px] text-dim/70 leading-relaxed mt-1">{t("settings.minimizeToTrayDesc")}</p>
+              </div>
             </section>
 
             {/* Integrations */}
@@ -628,6 +650,15 @@ export function SettingsPanel() {
                 <span className="text-dim">{t("settings.version")}</span>
                 <span className="text-primary font-mono">{appVersion}</span>
               </div>
+              {installs !== null && (
+                <div
+                  className="flex justify-between text-[9px] px-0.5"
+                  title={t("settings.installsHint", { n: formattedInstalls })}
+                >
+                  <span className="text-dim/50">{t("settings.installs")}</span>
+                  <span className="text-dim/60 font-mono tabular-nums">{formattedInstalls}</span>
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -648,6 +679,14 @@ export function SettingsPanel() {
             @ruwiss
           </a>
         </p>
+        {installs !== null && (
+          <p
+            className="text-[8px] text-dim/40 text-center mt-0.5 tabular-nums tracking-wide"
+            title={t("settings.installsHint", { n: formattedInstalls })}
+          >
+            {t("settings.installsLine", { n: formattedInstalls })}
+          </p>
+        )}
       </div>
     </div>
   );

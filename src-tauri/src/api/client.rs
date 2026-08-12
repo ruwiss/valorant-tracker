@@ -1618,22 +1618,36 @@ impl ValorantAPI {
     }
 
     /// Get player current competitive tier + RR.
+    ///
+    /// Returns `None` when the MMR request failed (network/auth/parse) so callers
+    /// can retry later. Returns `Some((0, 0))` when the player is confirmed
+    /// unranked / has no competitive data.
+    ///
     /// Prefer LatestCompetitiveUpdate (actual current rank). Fall back to the
-    /// seasonal CompetitiveTier with the most games, then any top-level tier.
-    pub async fn get_player_mmr(&self, puuid: &str) -> (u32, u32) {
+    /// seasonal CompetitiveTier/Rank with the most games, then any top-level tier.
+    pub async fn get_player_mmr(&self, puuid: &str) -> Option<(u32, u32)> {
         let url = self.pd_url(&format!("/mmr/v1/players/{}", puuid));
-        let Some(data) = self.get_remote::<MmrResponse>(&url).await else {
-            return (0, 0);
+        // Distinguish "not found / transport error" from a successful empty rank.
+        let data = match self.get_remote_ex::<MmrResponse>(&url).await {
+            RemoteResult::Ok(data) => data,
+            RemoteResult::NotFound => {
+                // PUUID has no MMR resource — treat as confirmed unranked.
+                return Some((0, 0));
+            }
+            RemoteResult::Transient => {
+                tracing::debug!("[get_player_mmr] transient failure for {}", puuid);
+                return None;
+            }
         };
 
         // 1) Latest ranked match update — most accurate "current rank"
         if let Some(update) = data.latest_competitive_update.as_ref() {
             let tier = update.tier_after_update.unwrap_or(0);
             if tier > 0 {
-                return (
+                return Some((
                     tier,
                     update.ranked_rating_after_update.unwrap_or(0),
-                );
+                ));
             }
         }
 
@@ -1646,7 +1660,7 @@ impl ValorantAPI {
             if let Some(seasons) = competitive.seasonal_info_by_season_id.as_ref() {
                 let mut best: Option<(u32, u32, u32)> = None; // (games, tier, rr)
                 for season in seasons.values() {
-                    let tier = season.competitive_tier.unwrap_or(0);
+                    let tier = season.effective_tier();
                     if tier == 0 {
                         continue;
                     }
@@ -1663,18 +1677,19 @@ impl ValorantAPI {
                     }
                 }
                 if let Some((_, tier, rr)) = best {
-                    return (tier, rr);
+                    return Some((tier, rr));
                 }
             }
 
             // 3) Legacy top-level fields (rarely populated now)
             let tier = competitive.competitive_tier.unwrap_or(0);
             if tier > 0 {
-                return (tier, competitive.ranked_rating.unwrap_or(0));
+                return Some((tier, competitive.ranked_rating.unwrap_or(0)));
             }
         }
 
-        (0, 0)
+        // Successful parse, no competitive tier anywhere → unranked
+        Some((0, 0))
     }
 
     /// Get player peak rank across all competitive seasons
@@ -1694,7 +1709,7 @@ impl ValorantAPI {
 
         for (season_id, season_info) in seasons {
             // Check WinsByTier - keys are tier numbers as strings
-            if let Some(wins_by_tier) = season_info.wins_by_tier {
+            if let Some(ref wins_by_tier) = season_info.wins_by_tier {
                 for (tier_str, _wins) in wins_by_tier {
                     if let Ok(mut tier) = tier_str.parse::<u32>() {
                         // Apply Ascendant offset for old seasons
@@ -1712,8 +1727,9 @@ impl ValorantAPI {
                 }
             }
 
-            // Also check CompetitiveTier directly
-            if let Some(tier) = season_info.competitive_tier {
+            // Also check CompetitiveTier / Rank directly
+            let tier = season_info.effective_tier();
+            if tier > 0 {
                 let mut adjusted_tier = tier;
                 if BEFORE_ASCENDANT_SEASONS.contains(&season_id.as_str()) && tier > 20 {
                     adjusted_tier += 3;
@@ -2257,7 +2273,112 @@ impl ValorantAPI {
         }
     }
 
-    /// Generate conversation ID for DM with a friend
+    /// Pending friend requests (incoming + outgoing).
+    pub async fn get_friend_requests(&self) -> Option<FriendRequestsResponse> {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v4/friendrequests", port);
+
+        match self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    resp.json().await.ok()
+                } else {
+                    tracing::debug!(
+                        "[get_friend_requests] HTTP {}",
+                        resp.status()
+                    );
+                    None
+                }
+            }
+            Err(e) => {
+                tracing::debug!("[get_friend_requests] request error: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Send a friend request by Riot ID (name#tag).
+    pub async fn send_friend_request(&self, game_name: &str, game_tag: &str) -> bool {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v4/friendrequests", port);
+        let body = SendFriendRequestBody {
+            game_name: game_name.to_string(),
+            game_tag: game_tag.to_string(),
+        };
+
+        match self
+            .client
+            .post(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let ok = resp.status().is_success();
+                if !ok {
+                    tracing::warn!(
+                        "[send_friend_request] HTTP {} for {}#{}",
+                        resp.status(),
+                        game_name,
+                        game_tag
+                    );
+                }
+                ok
+            }
+            Err(e) => {
+                tracing::error!("[send_friend_request] request error: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Cancel an outgoing friend request by PUUID.
+    pub async fn cancel_friend_request(&self, puuid: &str) -> bool {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v4/friendrequests", port);
+        let body = RemoveFriendRequestBody {
+            puuid: puuid.to_string(),
+        };
+
+        match self
+            .client
+            .delete(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let ok = resp.status().is_success();
+                if !ok {
+                    tracing::warn!(
+                        "[cancel_friend_request] HTTP {} for {}",
+                        resp.status(),
+                        puuid
+                    );
+                }
+                ok
+            }
+            Err(e) => {
+                tracing::error!("[cancel_friend_request] request error: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Generate conversation ID for a friend
     #[allow(dead_code)]
     pub fn generate_dm_cid(&self, friend_puuid: &str) -> String {
         let my_puuid = self.puuid.read().clone();

@@ -43,6 +43,42 @@ export interface GameState {
   enemy_score: number | null;
 }
 
+export interface LastMatchPlayer {
+  puuid: string;
+  name: string;
+  agent: string;
+  team_id: string;
+  party: string;
+  is_me: boolean;
+  rank_tier: number;
+  level: number;
+  player_card_id?: string | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  score: number;
+  acs: number;
+}
+
+export interface LastMatch {
+  match_id: string;
+  map_name: string;
+  queue_id: string;
+  game_start_millis: number;
+  game_length_millis: number | null;
+  ally_score: number;
+  enemy_score: number;
+  won: boolean | null;
+  completion_state: string;
+  is_ranked: boolean;
+  is_ffa: boolean;
+  rounds_played: number;
+  placement: number | null;
+  me: LastMatchPlayer;
+  allies: LastMatchPlayer[];
+  enemies: LastMatchPlayer[];
+}
+
 export interface ChatMessage {
   body: string;
   cid: string;
@@ -89,6 +125,19 @@ export interface Friend {
   pid: string;
   puuid: string;
   region: string;
+}
+
+/** Riot local `/chat/v4/friendrequests` item (we only surface outgoing). */
+export interface FriendRequest {
+  game_name: string;
+  game_tag: string;
+  name: string;
+  note: string;
+  pid: string;
+  puuid: string;
+  region: string;
+  /** `"pending_out"` we sent · `"pending_in"` they sent */
+  subscription: string;
 }
 
 // ===== Player Settings (Ares.PlayerSettings) =====

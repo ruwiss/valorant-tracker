@@ -290,13 +290,25 @@ pub fn apply_contains_rules(message: &str) -> String {
 }
 
 /// Whether any enabled rule would change `raw` (for keyboard expander intercept).
+/// Iterates the live table in place so the keyboard hook does not clone rules.
 pub fn needs_rule_expansion(raw: &str) -> bool {
     let t = raw.trim();
     if t.is_empty() {
         return false;
     }
-    let rules = get_rules();
     let lower = t.to_lowercase();
+    let st = STATE.lock();
+    let rules: &[ChatRule] = if st.rules.is_empty() {
+        // Init not called — rare. Fall back without holding the lock long.
+        drop(st);
+        return needs_rule_expansion_on(&default_rules(), &lower);
+    } else {
+        &st.rules
+    };
+    needs_rule_expansion_on(rules, &lower)
+}
+
+fn needs_rule_expansion_on(rules: &[ChatRule], lower: &str) -> bool {
     for r in rules.iter().filter(|r| r.enabled) {
         let pat = r.pattern.trim();
         if pat.is_empty() {
@@ -304,12 +316,12 @@ pub fn needs_rule_expansion(raw: &str) -> bool {
         }
         match r.mode {
             MatchMode::Equals => {
-                if lower == pat.to_lowercase() {
+                if lower.eq_ignore_ascii_case(pat) || lower == pat.to_lowercase() {
                     return true;
                 }
             }
             MatchMode::Contains => {
-                if contains_ci(t, pat) {
+                if contains_ci_lower(lower, pat) {
                     return true;
                 }
             }
@@ -318,11 +330,12 @@ pub fn needs_rule_expansion(raw: &str) -> bool {
     false
 }
 
-fn contains_ci(haystack: &str, needle: &str) -> bool {
+fn contains_ci_lower(hay_lower: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
-    haystack.to_lowercase().contains(&needle.to_lowercase())
+    let n = needle.to_lowercase();
+    hay_lower.contains(&n)
 }
 
 /// Case-insensitive substring replace (all non-overlapping matches, left-to-right).

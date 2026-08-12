@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invokeCommand } from "../utils/ipc";
-import { ChatMessage, Conversation, PaginatedMessages, Friend } from "../lib/types";
+import { ChatMessage, Conversation, PaginatedMessages, Friend, FriendRequest } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 
 export type Tab = "DM" | "FRIENDS";
 
@@ -10,6 +11,8 @@ interface ChatStore {
   conversations: Conversation[];
   messages: ChatMessage[];
   friends: Friend[];
+  outgoingRequests: FriendRequest[];
+  cancellingPuuid: string | null;
   loading: boolean;
   isOpen: boolean;
 
@@ -24,6 +27,9 @@ interface ChatStore {
   fetchConversations: () => Promise<void>;
   fetchMessages: (reload?: boolean) => Promise<void>;
   fetchFriends: () => Promise<void>;
+  fetchOutgoingRequests: () => Promise<void>;
+  sendFriendRequest: (gameName: string, gameTag: string, puuid?: string) => Promise<boolean>;
+  cancelOutgoingRequest: (puuid: string) => Promise<boolean>;
 
   loadMoreMessages: () => Promise<void>;
   sendMessage: (message: string, type: string) => Promise<boolean>;
@@ -32,6 +38,34 @@ interface ChatStore {
 
 const PAGE_SIZE = 50;
 
+/** Bumped on every outgoing-request fetch/cancel so stale in-flight polls are dropped. */
+let outgoingFetchGen = 0;
+/** PUUID → expiry. Riot's GET can still list a request for a few seconds after DELETE. */
+const cancelledOutgoing = new Map<string, number>();
+const CANCEL_TOMBSTONE_MS = 30_000;
+
+function pruneCancelledTombstones() {
+  const now = Date.now();
+  for (const [id, exp] of cancelledOutgoing) {
+    if (exp <= now) cancelledOutgoing.delete(id);
+  }
+}
+
+function applyOutgoingRequests(
+  set: (partial: { outgoingRequests: FriendRequest[] }) => void,
+  requests: FriendRequest[],
+) {
+  pruneCancelledTombstones();
+  for (const [id] of cancelledOutgoing) {
+    if (!requests.some((r) => r.puuid === id)) {
+      cancelledOutgoing.delete(id);
+    }
+  }
+  set({
+    outgoingRequests: requests.filter((r) => !cancelledOutgoing.has(r.puuid)),
+  });
+}
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   activeCid: null,
   // No default open DM → land on friends; switch to DM when a conversation is opened.
@@ -39,6 +73,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   conversations: [],
   messages: [],
   friends: [],
+  outgoingRequests: [],
+  cancellingPuuid: null,
   loading: false,
   isOpen: false,
   page: 0,
@@ -108,6 +144,101 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
     } catch (e) {
         console.error("Failed to fetch friends", e);
+    }
+  },
+
+  fetchOutgoingRequests: async () => {
+    const gen = ++outgoingFetchGen;
+    try {
+      const requests = await invokeCommand<FriendRequest[]>(
+        "get_outgoing_friend_requests",
+        undefined,
+        { suppressErrorToast: true },
+      );
+      if (gen !== outgoingFetchGen) return;
+      if (requests) applyOutgoingRequests(set, requests);
+    } catch (e) {
+      console.error("Failed to fetch outgoing friend requests", e);
+    }
+  },
+
+  sendFriendRequest: async (gameName, gameTag, puuid) => {
+    const t = useI18n.getState().t;
+    const name = gameName.trim();
+    const tag = gameTag.trim();
+    if (!name || !tag) return false;
+
+    try {
+      const success = await invokeCommand<boolean>(
+        "send_friend_request",
+        { gameName: name, gameTag: tag },
+        {
+          errorMessage: t("lastMatch.friendFailed"),
+          successMessage: t("lastMatch.friendSent"),
+        },
+      );
+      if (success) {
+        if (puuid) {
+          set((state) => {
+            if (state.outgoingRequests.some((r) => r.puuid === puuid)) return state;
+            return {
+              outgoingRequests: [
+                ...state.outgoingRequests,
+                {
+                  game_name: name,
+                  game_tag: tag,
+                  name,
+                  note: "",
+                  pid: "",
+                  puuid,
+                  region: "",
+                  subscription: "pending_out",
+                },
+              ],
+            };
+          });
+        }
+        void get().fetchOutgoingRequests();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Failed to send friend request", e);
+      return false;
+    }
+  },
+
+  cancelOutgoingRequest: async (puuid) => {
+    const { cancellingPuuid } = get();
+    if (!puuid || cancellingPuuid === puuid) return false;
+
+    const t = useI18n.getState().t;
+    outgoingFetchGen += 1;
+    set({ cancellingPuuid: puuid });
+    try {
+      const success = await invokeCommand<boolean>(
+        "cancel_friend_request",
+        { puuid },
+        {
+          errorMessage: t("chat.cancel_request_failed"),
+          successMessage: t("chat.cancel_request_success"),
+        },
+      );
+      if (success) {
+        cancelledOutgoing.set(puuid, Date.now() + CANCEL_TOMBSTONE_MS);
+        outgoingFetchGen += 1;
+        set((state) => ({
+          outgoingRequests: state.outgoingRequests.filter((r) => r.puuid !== puuid),
+          cancellingPuuid: null,
+        }));
+        return true;
+      }
+      set({ cancellingPuuid: null });
+      return false;
+    } catch (e) {
+      console.error("Failed to cancel friend request", e);
+      set({ cancellingPuuid: null });
+      return false;
     }
   },
 

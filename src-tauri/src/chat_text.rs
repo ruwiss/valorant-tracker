@@ -13,7 +13,8 @@ use crate::constants::AGENTS;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+
+pub use crate::translate::{google_translate, google_translate_detailed};
 
 /// Master switch for outgoing chat shortcuts, driven by the Settings toggle.
 /// Shared by the in-game keyboard expander and the overlay's own send path so
@@ -34,17 +35,8 @@ pub fn shortcuts_enabled() -> bool {
     SHORTCUTS_ENABLED.load(Ordering::Relaxed)
 }
 
-/// Shared blocking HTTP client for translate (hook thread + API path).
-static HTTP: Lazy<reqwest::blocking::Client> = Lazy::new(|| {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ValorantTracker/1.0")
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
-});
-
 /// Live roster for agent → player mention resolution.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 struct RosterSnapshot {
     /// (agent lowercase, display name without #tag)
     allies: Vec<(String, String)>,
@@ -96,12 +88,16 @@ pub fn update_roster_from_game(gs: &GameState) {
         allies: map_side(&gs.allies),
         enemies: map_side(&gs.enemies),
     };
+    let mut roster = ROSTER.lock();
+    if *roster == snap {
+        return;
+    }
     tracing::debug!(
         "[ChatText] Roster updated: {} allies, {} enemies",
         snap.allies.len(),
         snap.enemies.len()
     );
-    *ROSTER.lock() = snap;
+    *roster = snap;
 }
 
 pub fn clear_roster() {
@@ -196,10 +192,18 @@ fn apply_agent_mentions(input: &str) -> String {
     out
 }
 
-fn has_resolvable_agent_mention(s: &str) -> bool {
-    let before = s;
-    let after = apply_agent_mentions(s);
-    before != after
+/// Cheap hook-safe check: `<sage` / `>jett` style tags. Does not resolve the
+/// roster — false positives just intercept a send and paste the same text.
+fn looks_like_agent_mention(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if (bytes[i] == b'<' || bytes[i] == b'>') && bytes[i + 1].is_ascii_alphabetic() {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// `!t <lang> <message>` — lang is any Google-supported code (`en`, `tr`, `de`,
@@ -234,81 +238,6 @@ fn is_plausible_lang_code(lang: &str) -> bool {
         return false;
     }
     b.iter().all(|c| c.is_ascii_alphabetic() || *c == b'-') && b[0].is_ascii_alphabetic()
-}
-
-/// Result of a Google Translate call (text + auto-detected source language).
-#[derive(Debug, Clone)]
-pub struct TranslateOutput {
-    pub text: String,
-    /// ISO language code from Google (e.g. "ru", "ja"), empty if unknown.
-    pub source_lang: String,
-}
-
-/// Translate `text` into `target_lang` (source auto-detected).
-/// Returns None on network/parse failure or empty translation.
-pub fn google_translate_detailed(text: &str, target_lang: &str) -> Option<TranslateOutput> {
-    let text = text.trim();
-    if text.is_empty() {
-        return None;
-    }
-
-    let url = format!(
-        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
-        urlencoding::encode(target_lang),
-        urlencoding::encode(text)
-    );
-
-    let resp = match HTTP.get(&url).send() {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("[ChatText] Translate request failed: {}", e);
-            return None;
-        }
-    };
-    if !resp.status().is_success() {
-        tracing::warn!(
-            "[ChatText] Translate HTTP {} for tl={}",
-            resp.status(),
-            target_lang
-        );
-        return None;
-    }
-
-    let body: serde_json::Value = match resp.json() {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!("[ChatText] Translate JSON parse failed: {}", e);
-            return None;
-        }
-    };
-    let segments = body.get(0)?.as_array()?;
-    let mut out = String::new();
-    for seg in segments {
-        if let Some(piece) = seg.get(0).and_then(|v| v.as_str()) {
-            out.push_str(piece);
-        }
-    }
-    let out = out.trim().to_string();
-    if out.is_empty() {
-        return None;
-    }
-
-    // data[2] is the detected source language code when present.
-    let source_lang = body
-        .get(2)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    Some(TranslateOutput {
-        text: out,
-        source_lang,
-    })
-}
-
-/// Translate `text` into `target_lang` (source auto-detected). Returns None on failure.
-pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
-    google_translate_detailed(text, target_lang).map(|r| r.text)
 }
 
 /// Apply all outgoing shortcuts. Safe to call from any thread (uses blocking HTTP
@@ -373,5 +302,5 @@ pub fn needs_chat_expansion(raw: &str) -> bool {
     if crate::chat_rules::needs_rule_expansion(t) {
         return true;
     }
-    has_resolvable_agent_mention(t)
+    looks_like_agent_mention(t)
 }

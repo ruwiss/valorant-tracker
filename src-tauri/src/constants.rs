@@ -214,6 +214,8 @@ pub static MAP_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     m.insert("/Game/Maps/Pitt/Pitt", "Pearl");
     m.insert("/Game/Maps/Port/Port", "Icebox");
     m.insert("/Game/Maps/Poveglia/Range", "The Range");
+    m.insert("/Game/Maps/Poveglia/Poveglia", "The Range");
+    m.insert("/Game/Maps/Range/Range", "The Range");
     m.insert("/Game/Maps/Triad/Triad", "Haven");
     m.insert("/Game/Maps/Infinity/Infinity", "Abyss");
     m.insert("/Game/Maps/Rook/Rook", "Corrode");
