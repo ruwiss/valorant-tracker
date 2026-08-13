@@ -39,7 +39,42 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -and -not $env:TAURI_SIGNING_KE
     $env:TAURI_SIGNING_KEY_PASSWORD = $DefaultPassword
 }
 
-# 3. Build App
+# 3. Wipe src-tauri/target before release so debug/incremental/old
+#    bundles cannot accumulate (was 50GB+ after a project move).
+$TargetDir = Join-Path $ProjectRoot "src-tauri\target"
+if (Test-Path -LiteralPath $TargetDir) {
+    Write-Host "Removing src-tauri/target before build..." -ForegroundColor Yellow
+    cmd /c "rmdir /s /q `"$TargetDir`"" | Out-Null
+    if (Test-Path -LiteralPath $TargetDir) {
+        Remove-Item -LiteralPath $TargetDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $TargetDir) {
+        Write-Error "Could not remove src-tauri/target. Close the app if it is running and retry."
+        exit 1
+    }
+    Write-Host "src-tauri/target removed." -ForegroundColor Green
+}
+
+# bindgen (boring-sys) needs libclang.dll on a cold cache
+if (-not $env:LIBCLANG_PATH) {
+    $clangCandidates = @(
+        "C:\Program Files\LLVM\bin",
+        "C:\Program Files (x86)\LLVM\bin",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\x64\bin",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin"
+    )
+    foreach ($candidate in $clangCandidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate "libclang.dll")) {
+            $env:LIBCLANG_PATH = $candidate
+            Write-Host "LIBCLANG_PATH set to: $candidate" -ForegroundColor Gray
+            break
+        }
+    }
+}
+
+# 4. Build App
 Write-Host "Building Tauri App..." -ForegroundColor Cyan
 pnpm tauri build
 
@@ -48,7 +83,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 4. Prepare Release Files
+# 5. Prepare Release Files
 Write-Host "Preparing Release Files..." -ForegroundColor Cyan
 if (-not (Test-Path $RELEASE_DIR)) { mkdir $RELEASE_DIR | Out-Null }
 
@@ -71,7 +106,7 @@ $sigContent = Get-Content $sigFile.FullName -Raw
 Copy-Item $setupFile.FullName -Destination "$RELEASE_DIR/$safeSetupName"
 Write-Host "Copied $setupName to $RELEASE_DIR/$safeSetupName"
 
-# 5. Generate latest.json
+# 6. Generate latest.json
 Write-Host "Generating latest.json..." -ForegroundColor Cyan
 
 # Update URL for GitHub Releases
