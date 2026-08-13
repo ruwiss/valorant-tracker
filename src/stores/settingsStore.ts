@@ -4,6 +4,7 @@ import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { availableMonitors } from "@tauri-apps/api/window";
 import { invokeCommand } from "../utils/ipc";
+import { usePanelStore } from "./panelStore";
 
 /**
  * Zustand persist writes on EVERY set(), including before rehydrate finishes.
@@ -427,12 +428,18 @@ export const useSettingsStore = create<SettingsStore>()(
       },
 
       hideWindow: async () => {
+        if (isToggling) return;
+        isToggling = true;
         try {
           const win = getCurrentWindow();
           await concealWindow(win, get());
           set({ isWindowVisible: false });
+          // Keep a real player/settings/shop pane; only drop a hollow expanded frame.
+          await usePanelStore.getState().syncWindowToState();
         } catch (error) {
           console.error("Failed to hide window:", error);
+        } finally {
+          isToggling = false;
         }
       },
 
@@ -448,18 +455,19 @@ export const useSettingsStore = create<SettingsStore>()(
           if (shown) {
             await concealWindow(win, get());
             set({ isWindowVisible: false });
+            await usePanelStore.getState().syncWindowToState();
           } else {
+            // Heal width/state before sliding in — empty expanded chrome is a hide/show bug.
+            await usePanelStore.getState().syncWindowToState();
             const minimized = await win.isMinimized();
             await revealWindow(win, windowStyle, minimized);
             set({ isWindowVisible: true });
           }
         } catch (error) {
           console.error("Failed to toggle window:", error);
-        }
-
-        setTimeout(() => {
+        } finally {
           isToggling = false;
-        }, 350);
+        }
       },
 
       setWindowStyle: async (style: WindowStyle) => {

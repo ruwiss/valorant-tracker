@@ -8,7 +8,7 @@ import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
 
 export function SidePanel() {
-  const { isOpen, panelType, settingsSubView, close } = usePanelStore();
+  const { isOpen, panelType, settingsSubView, selectedPlayer, close } = usePanelStore();
   const { t } = useI18n();
   const gameState = useGameStore((s) => s.gameState);
 
@@ -20,6 +20,18 @@ export function SidePanel() {
       }
     }
   }, [gameState.state, isOpen, panelType, close]);
+
+  // Never leave the window expanded with a hollow right pane
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!panelType) {
+      close();
+      return;
+    }
+    if ((panelType === "player" || panelType === "stats") && !selectedPlayer) {
+      close();
+    }
+  }, [isOpen, panelType, selectedPlayer, close]);
 
   const setSettingsSubView = usePanelStore((s) => s.setSettingsSubView);
 
@@ -42,7 +54,14 @@ export function SidePanel() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, close, panelType, settingsSubView, setSettingsSubView]);
 
-  if (!isOpen) return null;
+  const canRender =
+    isOpen &&
+    panelType != null &&
+    (panelType === "settings" ||
+      panelType === "shop" ||
+      ((panelType === "player" || panelType === "stats") && selectedPlayer != null));
+
+  if (!canRender) return null;
 
   const getTitle = () => {
     switch (panelType) {

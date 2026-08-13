@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
@@ -33,6 +34,7 @@ export function useGameLoop() {
       loadAssets();
       loadConstants();
       restoreWindowPosition();
+      void usePanelStore.getState().syncWindowToState();
       registerHotkey();
       syncAutoLockDelay();
       syncDiscordRpc();
@@ -56,6 +58,7 @@ export function useGameLoop() {
 
     const setupOverlayListener = () =>
       listen("show-overlay", async () => {
+        await usePanelStore.getState().syncWindowToState();
         const win = getCurrentWindow();
         if (!(await win.isVisible())) await win.show();
         if (await win.isMinimized()) await win.unminimize();

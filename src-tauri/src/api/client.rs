@@ -1439,9 +1439,10 @@ impl ValorantAPI {
     /// The GLZ match endpoints do not expose the score; the Riot client
     /// publishes it in private presence as partyOwnerMatchScoreAllyTeam/EnemyTeam.
     ///
-    /// After a match ends the client flips `sessionLoopState` to `MENUS` and
-    /// resets the scores to 0-0 *before* the core-game endpoint always drops
-    /// the residual match — callers must treat `MENUS` as "not in a match".
+    /// After a match ends the client *may* flip `sessionLoopState` to `MENUS`
+    /// and reset scores to 0-0, but it often stays `INGAME` through the
+    /// post-game scoreboard. Callers must not treat leftover INGAME presence
+    /// as proof the match is still live.
     pub async fn get_my_presence(&self) -> Option<MyPresence> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();

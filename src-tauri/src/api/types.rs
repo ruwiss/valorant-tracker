@@ -108,6 +108,31 @@ pub struct CoregameMatch {
     #[serde(rename = "MapID")]
     pub map_id: String,
     pub players: Vec<CoregamePlayerInfo>,
+    /// `"IN_PROGRESS"` while the round is live. Riot flips this (and/or fills
+    /// `PostGameDetails`) when the match is over, often while the player
+    /// endpoint still returns the residual match id.
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub state: Option<String>,
+    /// Non-null once the match has a result. Presence can still say INGAME
+    /// on the post-game scoreboard.
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub post_game_details: Option<serde_json::Value>,
+}
+
+impl CoregameMatch {
+    /// True when Riot has marked this core-game session as finished.
+    pub fn has_ended(&self) -> bool {
+        if self
+            .post_game_details
+            .as_ref()
+            .is_some_and(|v| !v.is_null())
+        {
+            return true;
+        }
+        self.state
+            .as_deref()
+            .is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("IN_PROGRESS"))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -922,4 +947,43 @@ pub struct WalletData {
     pub vp: i64,
     pub radianite: i64,
     pub kingdom: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_coregame(json: &str) -> CoregameMatch {
+        serde_json::from_str(json).expect("coregame json")
+    }
+
+    #[test]
+    fn live_match_has_not_ended() {
+        let m = parse_coregame(
+            r#"{"MapID":"/Game/Maps/Ascent/Ascent","Players":[],"State":"IN_PROGRESS","PostGameDetails":null}"#,
+        );
+        assert!(!m.has_ended());
+    }
+
+    #[test]
+    fn post_game_details_means_ended() {
+        let m = parse_coregame(
+            r#"{"MapID":"/Game/Maps/Ascent/Ascent","Players":[],"State":"IN_PROGRESS","PostGameDetails":{"MatchID":"abc"}}"#,
+        );
+        assert!(m.has_ended());
+    }
+
+    #[test]
+    fn non_in_progress_state_means_ended() {
+        let m = parse_coregame(
+            r#"{"MapID":"/Game/Maps/Ascent/Ascent","Players":[],"State":"POST_GAME"}"#,
+        );
+        assert!(m.has_ended());
+    }
+
+    #[test]
+    fn missing_state_is_not_ended() {
+        let m = parse_coregame(r#"{"MapID":"/Game/Maps/Ascent/Ascent","Players":[]}"#);
+        assert!(!m.has_ended());
+    }
 }

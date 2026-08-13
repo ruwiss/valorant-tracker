@@ -127,9 +127,10 @@ pub fn start_supervisor(app: tauri::AppHandle) {
         let mut consecutive_connect_failures: u32 = 0;
         const WAITING_AFTER_FAILURES: u32 = 3;
 
-        // Adaptive poll interval: live match needs snappy ticks (autolock + score);
-        // menus / pause / waiting can sleep longer to cut CPU/API noise.
-        const POLL_LIVE_MS: u64 = 500; // pregame + ingame
+        // Adaptive poll interval. Live match is 1s — enough for autolock/score
+        // and match-end without hammering GLZ/presence every half-second.
+        // Menus / pause / waiting can sleep longer.
+        const POLL_LIVE_MS: u64 = 1000; // pregame + ingame
         const POLL_IDLE_MS: u64 = 2000; // menus / idle
         const POLL_PAUSED_MS: u64 = 2000; // user paused watching
         const POLL_WAITING_MS: u64 = 1500; // connecting / waiting for game
@@ -621,8 +622,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     let probe_uncertain = matches!(coregame_probe, MatchProbe::Uncertain)
         || matches!(pregame_probe, MatchProbe::Uncertain);
 
-    // Own presence: while the client still says PREGAME/INGAME we must never
-    // flip to idle, even if GLZ match endpoints flap.
+    // Own presence: useful as a *positive* live signal during pregame→ingame
+    // loading, and as a *positive* MENUS end signal. It is NOT a veto after
+    // a real INGAME match — Riot often leaves sessionLoopState=INGAME on the
+    // post-game scoreboard long after the match is over.
     let my_presence = api.get_my_presence().await;
     let presence_in_match = my_presence.as_ref().is_some_and(|p| {
         p.session_loop_state
@@ -636,16 +639,16 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
             "match-id probe transient failure while live",
         ));
     }
-    if was_live_early && presence_in_match {
-        // Presence still says we are in the match loop. Only proceed when we
-        // can actually rebuild the roster; if both match bodies fail later we
-        // still hold via the body-fetch paths below.
+    // Pregame → map load: match ids vanish for a few seconds while presence
+    // already says INGAME. Hold the agent-select snapshot through that gap.
+    // After we have already been INGAME, empty match ids mean the match ended.
+    if last_state_early == "pregame" && presence_in_match {
         if matches!(coregame_probe, MatchProbe::NotInMatch)
             && matches!(pregame_probe, MatchProbe::NotInMatch)
         {
             return Ok(hold_live_snapshot(
                 state,
-                "presence still PREGAME/INGAME but match ids empty",
+                "pregame load gap: presence still PREGAME/INGAME but match ids empty",
             ));
         }
     }
@@ -854,7 +857,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // stale/wrong presence can appear mid-match and would otherwise skip the
     // entire ingame branch permanently. Require consecutive confirmations.
     let mut presence_confirms_menus = false;
-    const MENUS_DEBOUNCE_THRESHOLD: u32 = 4; // ~2s at 500ms live poll
+    const MENUS_DEBOUNCE_THRESHOLD: u32 = 2; // ~2s at 1s live poll
 
     // Check coregame (reuse probe result — do not re-fetch player endpoint)
     if let Some(match_id) = coregame_match_id.clone() {
@@ -877,7 +880,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     match_id
                 );
             }
-        } else {
+        } else if presence_in_match {
+            // Only reset on an explicit live loop. A failed presence fetch
+            // (None) must not wipe a MENUS streak during post-game.
             *state.consecutive_menus_count.write() = 0;
         }
 
@@ -893,7 +898,22 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     // Residual id; fall through to idle logic.
                 }
                 RemoteResult::Ok(match_data) => {
-                    if is_practice_range_map(&match_data.map_id) {
+                    if match_data.has_ended() {
+                        // Residual core-game id after the round is over. Presence
+                        // often still says INGAME on the scoreboard — do not
+                        // rebuild the roster.
+                        tracing::info!(
+                            "[get_game_state] Coregame {} ended (state={:?}, post_game={}) — leaving live panel",
+                            match_id,
+                            match_data.state,
+                            match_data
+                                .post_game_details
+                                .as_ref()
+                                .is_some_and(|v| !v.is_null())
+                        );
+                        presence_confirms_menus = true;
+                        *state.consecutive_menus_count.write() = MENUS_DEBOUNCE_THRESHOLD;
+                    } else if is_practice_range_map(&match_data.map_id) {
                         tracing::info!(
                             "[get_game_state] Practice range ({}) — not a live match",
                             match_data.map_id
@@ -1069,7 +1089,6 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     }
 
     // Also confirm MENUS when match ids already cleared (no residual coregame id).
-    // Without this, a real match end would wait the full idle debounce (~15s).
     if !presence_confirms_menus && was_live_early {
         if my_presence.as_ref().is_some_and(|p| p.is_menus())
             && matches!(coregame_probe, MatchProbe::NotInMatch)
@@ -1093,38 +1112,60 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
         }
     }
 
-    // Presence still claims we are in a match — never drop to idle.
-    if was_live_early && presence_in_match && !presence_confirms_menus {
+    // After a live INGAME match, clean 404s on both match-id endpoints mean
+    // the round is over — even if presence is still INGAME (post-game board).
+    let probes_clear = matches!(coregame_probe, MatchProbe::NotInMatch)
+        && matches!(pregame_probe, MatchProbe::NotInMatch);
+    if !presence_confirms_menus && last_state == "ingame" && probes_clear {
+        presence_confirms_menus = true;
+        tracing::info!(
+            "[get_game_state] Ingame match ids gone (presence={:?}) — match ended",
+            my_presence
+                .as_ref()
+                .and_then(|p| p.session_loop_state.as_deref())
+        );
+    }
+
+    // Pregame → loading → ingame: match ids vanish for a few seconds while
+    // presence already says INGAME. Hold the agent-select snapshot.
+    // Do NOT do this after a real INGAME match.
+    if last_state == "pregame" && presence_in_match && !presence_confirms_menus {
         return Ok(hold_live_snapshot(
             state,
-            "presence still in match loop at idle gate",
+            "pregame load gap: presence still in match loop at idle gate",
         ));
     }
 
     // DEBOUNCE: pregame → loading → ingame can leave a multi-second gap with no
     // match id. Hold the last snapshot longer so the UI does not flash waiting.
-    // MENUS still short-circuits after its own debounce (above).
-    // ~15s at 500ms live poll — real match end is confirmed faster via MENUS.
-    const IDLE_DEBOUNCE_THRESHOLD: u32 = 30;
+    // After INGAME the match-over path above already short-circuits.
+    // ~15s at 1s live poll for pregame load; ~2s for a leftover ingame.
+    const IDLE_DEBOUNCE_PREGAME: u32 = 15;
+    const IDLE_DEBOUNCE_INGAME: u32 = 2;
 
     if last_state == "pregame" || last_state == "ingame" {
         if presence_confirms_menus {
             tracing::info!(
-                "[get_game_state] Presence MENUS confirmed, transitioning {} -> idle",
+                "[get_game_state] Match end confirmed, transitioning {} -> idle",
                 last_state
             );
             *state.consecutive_idle_count.write() = 0;
             *state.consecutive_menus_count.write() = 0;
         } else {
+            let threshold = if last_state == "ingame" {
+                IDLE_DEBOUNCE_INGAME
+            } else {
+                IDLE_DEBOUNCE_PREGAME
+            };
             let mut idle_count = state.consecutive_idle_count.write();
             *idle_count += 1;
 
-            if *idle_count < IDLE_DEBOUNCE_THRESHOLD {
+            if *idle_count < threshold {
                 tracing::debug!(
                     "[get_game_state] Idle debounce: {} (was {}), waiting for {} more confirmations",
                     *idle_count,
                     last_state,
-                    IDLE_DEBOUNCE_THRESHOLD - *idle_count
+                    threshold - *idle_count
                 );
                 // Prefer the last full snapshot so Discord keeps the real map/score
                 // instead of a blank "ingame" / fake 0-0 payload.

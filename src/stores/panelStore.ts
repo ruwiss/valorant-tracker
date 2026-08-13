@@ -59,16 +59,65 @@ interface PanelStore {
   openStats: (player: PlayerData) => Promise<void>;
   openShop: () => Promise<void>;
   close: () => Promise<void>;
+  /** Match window width to panel content: keep a real pane, collapse an empty one. */
+  syncWindowToState: () => Promise<void>;
   setSettingsSubView: (view: SettingsSubView) => void;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
   setHoveredAgent: (agent: HoveredAgent | null) => void;
   setHoveredCrosshair: (crosshair: HoveredCrosshair | null) => void;
 }
 
+const EXPANDED_WIDTH = BASE_WIDTH + PANEL_WIDTH;
+
+/** Invalidates in-flight open/close so a hide during resize cannot leave a ghost panel. */
+let panelOpId = 0;
+
+const CLOSED_PANEL = {
+  isOpen: false,
+  panelType: null as PanelType,
+  settingsSubView: "main" as SettingsSubView,
+  selectedPlayer: null,
+  hoveredWeapon: null,
+  hoveredAgent: null,
+  hoveredCrosshair: null,
+};
+
+function beginPanelOp() {
+  panelOpId += 1;
+  return panelOpId;
+}
+
+function isCurrentPanelOp(op: number) {
+  return op === panelOpId;
+}
+
+function hasRenderablePanel(state: {
+  isOpen: boolean;
+  panelType: PanelType;
+  selectedPlayer: PlayerData | null;
+}): boolean {
+  if (!state.isOpen || !state.panelType) return false;
+  if (state.panelType === "player" || state.panelType === "stats") {
+    return state.selectedPlayer != null;
+  }
+  return true;
+}
+
+async function currentLogicalWidth(): Promise<number | null> {
+  try {
+    const win = getCurrentWindow();
+    const factor = await win.scaleFactor().catch(() => 1);
+    const size = await win.innerSize();
+    return size.width / factor;
+  } catch {
+    return null;
+  }
+}
+
 async function resizeWindow(expanded: boolean) {
   try {
     const win = getCurrentWindow();
-    const width = expanded ? BASE_WIDTH + PANEL_WIDTH : BASE_WIDTH;
+    const width = expanded ? EXPANDED_WIDTH : BASE_WIDTH;
     await win.setSize(new LogicalSize(width, WINDOW_HEIGHT));
   } catch (error) {
     console.error("Failed to resize window:", error);
@@ -96,6 +145,16 @@ async function waitForResize(targetLogicalWidth: number) {
   }
 }
 
+async function ensureWindowWidth(expanded: boolean) {
+  const target = expanded ? EXPANDED_WIDTH : BASE_WIDTH;
+  const current = await currentLogicalWidth();
+  if (current !== null && Math.abs(current - target) < 4) return;
+  await resizeWindow(expanded);
+  if (expanded) {
+    await waitForResize(target);
+  }
+}
+
 export const usePanelStore = create<PanelStore>((set, get) => ({
   isOpen: false,
   panelType: null,
@@ -106,12 +165,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   hoveredCrosshair: null,
 
   openSettings: async () => {
+    const op = beginPanelOp();
     const wasOpen = get().isOpen;
     if (!wasOpen) {
-      const targetWidth = BASE_WIDTH + PANEL_WIDTH;
       await resizeWindow(true);
-      await waitForResize(targetWidth);
+      await waitForResize(EXPANDED_WIDTH);
     }
+    if (!isCurrentPanelOp(op)) return;
     set({
       isOpen: true,
       panelType: "settings",
@@ -133,11 +193,12 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       return;
     }
 
+    const op = beginPanelOp();
     if (!isOpen) {
-      const targetWidth = BASE_WIDTH + PANEL_WIDTH;
       await resizeWindow(true);
-      await waitForResize(targetWidth);
+      await waitForResize(EXPANDED_WIDTH);
     }
+    if (!isCurrentPanelOp(op)) return;
     set({ isOpen: true, panelType: "shop", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
   },
 
@@ -150,12 +211,12 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       return;
     }
 
-    const wasOpen = isOpen;
-    if (!wasOpen) {
-      const targetWidth = BASE_WIDTH + PANEL_WIDTH;
+    const op = beginPanelOp();
+    if (!isOpen) {
       await resizeWindow(true);
-      await waitForResize(targetWidth);
+      await waitForResize(EXPANDED_WIDTH);
     }
+    if (!isCurrentPanelOp(op)) return;
     set({ isOpen: true, panelType: "player", selectedPlayer: player, hoveredWeapon: null, hoveredAgent: null });
   },
 
@@ -168,28 +229,35 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       return;
     }
 
-    const wasOpen = isOpen;
-    if (!wasOpen) {
-      const targetWidth = BASE_WIDTH + PANEL_WIDTH;
+    const op = beginPanelOp();
+    if (!isOpen) {
       await resizeWindow(true);
-      await waitForResize(targetWidth);
+      await waitForResize(EXPANDED_WIDTH);
     }
+    if (!isCurrentPanelOp(op)) return;
     set({ isOpen: true, panelType: "stats", selectedPlayer: player, hoveredWeapon: null, hoveredAgent: null });
   },
 
   close: async () => {
-    set({
-      isOpen: false,
-      panelType: null,
-      settingsSubView: "main",
-      selectedPlayer: null,
-      hoveredWeapon: null,
-      hoveredAgent: null,
-      hoveredCrosshair: null,
-    });
+    const op = beginPanelOp();
+    set({ ...CLOSED_PANEL });
     // Wait for exit animation or state update to clear
     await new Promise(resolve => setTimeout(resolve, 300));
+    if (!isCurrentPanelOp(op)) return;
     await resizeWindow(false);
+  },
+
+  syncWindowToState: async () => {
+    const state = get();
+    if (!hasRenderablePanel(state)) {
+      if (state.isOpen) {
+        beginPanelOp();
+        set({ ...CLOSED_PANEL });
+      }
+      await ensureWindowWidth(false);
+      return;
+    }
+    await ensureWindowWidth(true);
   },
 
   setHoveredWeapon: (weapon) => {
