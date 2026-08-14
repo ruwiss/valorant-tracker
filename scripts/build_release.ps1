@@ -55,6 +55,20 @@ if (Test-Path -LiteralPath $TargetDir) {
     Write-Host "src-tauri/target removed." -ForegroundColor Green
 }
 
+$ReleaseOutputDir = Join-Path $ProjectRoot $RELEASE_DIR
+if (Test-Path -LiteralPath $ReleaseOutputDir) {
+    Write-Host "Removing $RELEASE_DIR before build..." -ForegroundColor Yellow
+    Remove-Item -LiteralPath $ReleaseOutputDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $ReleaseOutputDir) {
+        cmd /c "rmdir /s /q `"$ReleaseOutputDir`"" | Out-Null
+    }
+    if (Test-Path -LiteralPath $ReleaseOutputDir) {
+        Write-Error "Could not remove $RELEASE_DIR. Close anything using those files and retry."
+        exit 1
+    }
+    Write-Host "$RELEASE_DIR removed." -ForegroundColor Green
+}
+
 # bindgen (boring-sys) needs libclang.dll on a cold cache
 if (-not $env:LIBCLANG_PATH) {
     $clangCandidates = @(
