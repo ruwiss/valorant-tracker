@@ -14,7 +14,7 @@ let regularsScanInFlight = false;
 
 /** Must stay in sync with `get_frequent_teammates` in commands.rs. */
 const REGULARS_LOOKBACK = 12;
-const REGULARS_COOLDOWN_SECS = 60;
+const REGULARS_COOLDOWN_SECS = 20;
 
 // Resolve a Google-detected source language code (e.g. "ru", "ja") to a short
 // human-readable name in the active UI locale (e.g. "Russian" / "Rusça").

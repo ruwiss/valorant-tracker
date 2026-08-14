@@ -2650,7 +2650,8 @@ pub async fn get_peak_rank(
 ///
 /// Budget (unofficial `pd` API, shared with party-detect / last-match):
 /// 1 history + up to 12 details at concurrency 2. 15s / 20 matches / 3-wide
-/// still 429'd the client, so we wait a full minute after the burst ends.
+/// 429'd the client — 20s is the floor that still clears the window with
+/// the lighter 12 / 2-wide burst.
 #[tauri::command]
 pub async fn get_frequent_teammates(
     state: State<'_, AppState>,
@@ -2668,7 +2669,7 @@ pub async fn get_frequent_teammates(
     const MAX_RESULTS: usize = 8;
     const MAX_AGENTS: usize = 3;
     const DETAIL_CONCURRENCY: usize = 2;
-    const COOLDOWN_SECS: u64 = 60;
+    const COOLDOWN_SECS: u64 = 20;
 
     fn ok_cached(mut cached: FrequentTeammatesResponse) -> FrequentTeammatesResponse {
         cached.from_cache = true;
