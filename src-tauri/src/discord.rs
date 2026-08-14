@@ -287,7 +287,12 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
 /// renders broken.
 fn map_image_key(map_name: &str) -> String {
     let key = map_name.to_lowercase().replace(' ', "");
-    if key.is_empty() || key == "bilinmeyen" {
+    if key.is_empty()
+        || key == "bilinmeyen"
+        || key == "poligon"
+        || key == "therange"
+        || key == "range"
+    {
         DEFAULT_LARGE_IMAGE.to_string()
     } else {
         key

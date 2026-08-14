@@ -47,6 +47,9 @@ pub struct ValorantAPI {
     lockfile_hash: RwLock<String>,               // Track lockfile content hash to detect changes
     last_lockfile_check: RwLock<std::time::Instant>, // Rate limit lockfile checks
     last_recovery_check: RwLock<std::time::Instant>, // Rate limit recovery checks
+    /// Shared match-details cache (party detect + on-demand frequent-teammate scan).
+    match_details_cache: RwLock<HashMap<String, MatchDetailsResponse>>,
+    match_details_order: RwLock<std::collections::VecDeque<String>>,
 }
 
 /// Outcome of a remote GET. Callers that care about match lifecycle must
@@ -106,6 +109,8 @@ impl ValorantAPI {
             lockfile_hash: RwLock::new(String::new()),
             last_lockfile_check: RwLock::new(std::time::Instant::now()),
             last_recovery_check: RwLock::new(std::time::Instant::now()),
+            match_details_cache: RwLock::new(HashMap::new()),
+            match_details_order: RwLock::new(std::collections::VecDeque::new()),
         }
     }
 
@@ -1783,10 +1788,32 @@ impl ValorantAPI {
         }
     }
 
-    /// Get match details (contains partyId for all players)
+    /// Get match details (contains partyId for all players). Cached in-process
+    /// so party detection and frequent-teammate scans share the same bodies.
     pub async fn get_match_details(&self, match_id: &str) -> Option<MatchDetailsResponse> {
+        const CACHE_CAP: usize = 80;
+        if match_id.is_empty() {
+            return None;
+        }
+        if let Some(cached) = self.match_details_cache.read().get(match_id).cloned() {
+            return Some(cached);
+        }
         let url = self.pd_url(&format!("/match-details/v1/matches/{}", match_id));
-        self.get_remote(&url).await
+        let data: MatchDetailsResponse = self.get_remote(&url).await?;
+        {
+            let mut cache = self.match_details_cache.write();
+            let mut order = self.match_details_order.write();
+            if !cache.contains_key(match_id) {
+                if cache.len() >= CACHE_CAP {
+                    if let Some(old) = order.pop_front() {
+                        cache.remove(&old);
+                    }
+                }
+                cache.insert(match_id.to_string(), data.clone());
+                order.push_back(match_id.to_string());
+            }
+        }
+        Some(data)
     }
 
     /// Detect parties using match history - checks recent matches for party groupings

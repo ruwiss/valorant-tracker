@@ -123,6 +123,7 @@ pub fn run() -> RunResult {
             commands::get_cached_image,
             commands::get_tracker_stats,
             commands::get_peak_rank,
+            commands::get_frequent_teammates,
             commands::get_storefront,
             commands::get_wallet,
             commands::get_player_settings,

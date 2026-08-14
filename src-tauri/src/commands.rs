@@ -489,16 +489,18 @@ pub async fn get_game_state(state: State<'_, AppState>) -> Result<GameState, Str
     get_game_state_internal(&state).await
 }
 
-/// Practice range is a coregame session with no real match. Never treat it as LIVE.
+/// Practice range is a coregame session with no 5v5 lobby.
 fn is_practice_range_map(map_id: &str) -> bool {
     let id = map_id.to_ascii_lowercase();
     id.contains("range") || id.contains("poveglia")
 }
 
+const RANGE_MAP_NAME: &str = "Poligon";
+
 fn is_range_like_state(gs: &GameState) -> bool {
     let map = gs.map_name.as_deref().unwrap_or("");
     let map_l = map.to_ascii_lowercase();
-    if map_l.contains("range") || map_l.contains("poveglia") {
+    if map_l.contains("range") || map_l.contains("poveglia") || map_l.contains("poligon") {
         return true;
     }
     // Range often fails MAP_NAMES lookup → "Unknown" + only ourselves.
@@ -508,18 +510,14 @@ fn is_range_like_state(gs: &GameState) -> bool {
 }
 
 fn drop_range_or_dead_cache(state: &AppState) {
-    let range_like = state
-        .last_full_game_state
-        .read()
-        .as_ref()
-        .is_some_and(is_range_like_state);
-    let game_gone = !crate::process::is_game_running();
-    if range_like || game_gone {
-        *state.last_full_game_state.write() = None;
-        let last = state.last_known_state.read().clone();
-        if last == "pregame" || last == "ingame" {
-            *state.last_known_state.write() = "idle".into();
-        }
+    // Range is a valid 1-player panel now. Only wipe when Valorant itself is gone.
+    if crate::process::is_game_running() {
+        return;
+    }
+    *state.last_full_game_state.write() = None;
+    let last = state.last_known_state.read().clone();
+    if last == "pregame" || last == "ingame" {
+        *state.last_known_state.write() = "idle".into();
     }
 }
 
@@ -611,10 +609,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     // Distinguish clean "not in match" from API failures so a mid-match blip
     // never drops the UI onto "Maç Bekleniyor".
     let coregame_probe = api.probe_coregame_match_id().await;
-    let pregame_probe = match &coregame_probe {
-        MatchProbe::InMatch(_) => MatchProbe::NotInMatch, // skip extra call
-        _ => api.probe_pregame_match_id().await,
-    };
+    // Always probe pregame. A leftover Range coregame id (queueing from the
+    // practice range) used to make us skip this call and stay on "waiting"
+    // through agent select.
+    let pregame_probe = api.probe_pregame_match_id().await;
 
     // Either probe uncertain? Hold live panel if we were already in a match.
     let last_state_early = state.last_known_state.read().clone();
@@ -919,15 +917,20 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         presence_confirms_menus = true;
                         *state.consecutive_menus_count.write() = MENUS_DEBOUNCE_THRESHOLD;
                     } else if is_practice_range_map(&match_data.map_id) {
+                        let gs =
+                            build_range_game_state(&state, api, &match_id, match_data).await;
                         tracing::info!(
-                            "[get_game_state] Practice range ({}) — not a live match",
-                            match_data.map_id
+                            "[get_game_state] Practice range roster (map={:?}, players={})",
+                            gs.map_name,
+                            gs.allies.len()
                         );
-                        *state.last_full_game_state.write() = None;
-                        *state.last_known_state.write() = "idle".to_string();
                         *state.consecutive_idle_count.write() = 0;
                         *state.consecutive_menus_count.write() = 0;
-                        // Fall through to idle (do not hold a LIVE roster).
+                        *state.last_known_state.write() = "ingame".to_string();
+                        *state.current_match_seen_ingame.write() = false;
+                        *state.last_full_game_state.write() = Some(gs.clone());
+                        crate::chat_text::update_roster_from_game(&gs);
+                        return Ok(gs);
                     } else {
                     let map_name = MAP_NAMES
                         .get(match_data.map_id.as_str())
@@ -1061,17 +1064,20 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         enemy_score,
                     };
                     if is_range_like_state(&gs) {
-                        tracing::info!(
-                            "[get_game_state] Range-like coregame (map={:?}) — not LIVE",
-                            gs.map_name
-                        );
-                        *state.last_full_game_state.write() = None;
-                        *state.last_known_state.write() = "idle".to_string();
-                    } else {
-                        *state.last_full_game_state.write() = Some(gs.clone());
-                        crate::chat_text::update_roster_from_game(&gs);
-                        return Ok(gs);
+                        *state.current_match_seen_ingame.write() = false;
+                        if gs.map_name.as_deref().unwrap_or("").eq_ignore_ascii_case("Unknown")
+                        {
+                            let mut range_gs = gs;
+                            range_gs.map_name = Some(RANGE_MAP_NAME.into());
+                            range_gs.mode_name = Some(RANGE_MAP_NAME.into());
+                            *state.last_full_game_state.write() = Some(range_gs.clone());
+                            crate::chat_text::update_roster_from_game(&range_gs);
+                            return Ok(range_gs);
+                        }
                     }
+                    *state.last_full_game_state.write() = Some(gs.clone());
+                    crate::chat_text::update_roster_from_game(&gs);
+                    return Ok(gs);
                     }
                 }
             }
@@ -1326,6 +1332,86 @@ async fn enrich_missing_ranks_for_roster(
                 }
             }
         }
+    }
+}
+
+async fn build_range_game_state(
+    state: &AppState,
+    api: &crate::api::ValorantAPI,
+    match_id: &str,
+    match_data: crate::api::types::CoregameMatch,
+) -> GameState {
+    let my_puuid = api.puuid.read().clone();
+    let puuids: Vec<String> = match_data.players.iter().map(|p| p.subject.clone()).collect();
+    let names = api.get_player_names(&puuids).await;
+
+    let mut allies = Vec::new();
+    for p in match_data.players {
+        let agent_name = get_agent_name(&p.character_id);
+        let (level, player_card_id) = match p.player_identity {
+            Some(id) => (
+                id.account_level,
+                id.player_card_id.filter(|s| !s.is_empty()),
+            ),
+            None => (0, None),
+        };
+        let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
+        let player_name = names.get(&p.subject).cloned().unwrap_or_default();
+        let display_name = if player_name.is_empty() {
+            capitalize_first(&agent_name)
+        } else {
+            player_name
+        };
+
+        allies.push(PlayerData {
+            puuid: p.subject.clone(),
+            name: display_name,
+            agent: agent_name,
+            locked: true,
+            party: "Solo".into(),
+            is_me: p.subject == my_puuid || puuids.len() == 1,
+            rank_tier: rank,
+            rank_rr: 0,
+            level,
+            previous_encounter: None,
+            previous_encounter_agent: None,
+            previous_encounter_was_enemy: None,
+            player_card_id,
+        });
+    }
+
+    if allies.is_empty() && !my_puuid.is_empty() {
+        let names = api.get_player_names(&[my_puuid.clone()]).await;
+        let display_name = names.get(&my_puuid).cloned().filter(|s| !s.is_empty());
+        allies.push(PlayerData {
+            puuid: my_puuid.clone(),
+            name: display_name.unwrap_or_default(),
+            agent: String::new(),
+            locked: true,
+            party: "Solo".into(),
+            is_me: true,
+            rank_tier: 0,
+            rank_rr: 0,
+            level: 0,
+            previous_encounter: None,
+            previous_encounter_agent: None,
+            previous_encounter_was_enemy: None,
+            player_card_id: None,
+        });
+    }
+
+    enrich_missing_ranks(state, api, match_id, &mut allies).await;
+
+    GameState {
+        state: "ingame".into(),
+        match_id: Some(match_id.to_string()),
+        map_name: Some(RANGE_MAP_NAME.into()),
+        mode_name: Some(RANGE_MAP_NAME.into()),
+        side: None,
+        allies,
+        enemies: vec![],
+        ally_score: None,
+        enemy_score: None,
     }
 }
 
@@ -2556,6 +2642,203 @@ pub async fn get_peak_rank(
             Ok(None)
         }
     }
+}
+
+/// Who this player regularly queued with in their last ~20 matches.
+/// Cache-hit is free. A live scan is cooldown-gated so clicking several
+/// people in a row cannot stampede match-details.
+#[tauri::command]
+pub async fn get_frequent_teammates(
+    state: State<'_, AppState>,
+    puuid: String,
+) -> Result<crate::api::types::FrequentTeammatesResponse, String> {
+    use crate::api::types::{FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse};
+    use crate::party::{
+        tally_frequent_party_mates, tally_top_agents, FrequentMatchRoster, FrequentRosterPlayer,
+    };
+    use futures_util::future::join_all;
+    use std::sync::atomic::Ordering;
+
+    const LOOKBACK: u32 = 20;
+    const MIN_GAMES: u32 = 2;
+    const MAX_RESULTS: usize = 8;
+    const MAX_AGENTS: usize = 3;
+    const DETAIL_CONCURRENCY: usize = 3;
+    const COOLDOWN_SECS: u64 = 15;
+
+    fn ok_cached(mut cached: FrequentTeammatesResponse) -> FrequentTeammatesResponse {
+        cached.from_cache = true;
+        cached.status = "ok".into();
+        cached
+    }
+
+    if puuid.is_empty() {
+        return Ok(FrequentTeammatesResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(cached) = state.frequent_teammates_cache.read().get(&puuid).cloned() {
+        return Ok(ok_cached(cached));
+    }
+
+    if !*state.api.connected.read() {
+        return Ok(FrequentTeammatesResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(last) = *state.last_frequent_lookup.read() {
+        let elapsed = last.elapsed().as_secs();
+        if elapsed < COOLDOWN_SECS {
+            return Ok(FrequentTeammatesResponse {
+                status: "rate_limited".into(),
+                retry_after_secs: (COOLDOWN_SECS - elapsed) as u32,
+                ..Default::default()
+            });
+        }
+    }
+
+    if state
+        .frequent_lookup_busy
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(FrequentTeammatesResponse {
+            status: "rate_limited".into(),
+            retry_after_secs: COOLDOWN_SECS as u32,
+            ..Default::default()
+        });
+    }
+
+    // Re-check cache after winning the lock (another click may have finished).
+    if let Some(cached) = state.frequent_teammates_cache.read().get(&puuid).cloned() {
+        state.frequent_lookup_busy.store(false, Ordering::SeqCst);
+        return Ok(ok_cached(cached));
+    }
+
+    *state.last_frequent_lookup.write() = Some(std::time::Instant::now());
+
+    let api = state.api.clone();
+    let result = async {
+        let match_ids = api.get_match_history_opt(&puuid, LOOKBACK).await?;
+        if match_ids.is_empty() {
+            return Some((0u32, Vec::new(), Vec::new()));
+        }
+
+        let mut rosters: Vec<FrequentMatchRoster> = Vec::new();
+        let mut remaining = match_ids.clone();
+        while !remaining.is_empty() {
+            let n = DETAIL_CONCURRENCY.min(remaining.len());
+            let chunk: Vec<String> = remaining.drain(..n).collect();
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|id| {
+                    let mid = id.clone();
+                    let api = api.clone();
+                    async move { api.get_match_details(&mid).await }
+                })
+                .collect();
+            for details in join_all(futs).await {
+                let Some(details) = details else { continue };
+                let Some(players) = details.players else { continue };
+                let roster: FrequentMatchRoster = players
+                    .into_iter()
+                    .filter(|p| p.is_observer != Some(true))
+                    .map(|p| {
+                        let name = match (
+                            p.game_name.as_deref().unwrap_or("").trim(),
+                            p.tag_line.as_deref().unwrap_or("").trim(),
+                        ) {
+                            ("", _) => String::new(),
+                            (n, "") => n.to_string(),
+                            (n, t) => format!("{n}#{t}"),
+                        };
+                        FrequentRosterPlayer {
+                            agent: get_agent_name(p.character_id.as_deref().unwrap_or("")),
+                            puuid: p.subject,
+                            party_id: p.party_id,
+                            name,
+                        }
+                    })
+                    .collect();
+                if !roster.is_empty() {
+                    rosters.push(roster);
+                }
+            }
+        }
+
+        let scanned = rosters.len() as u32;
+        let tallied = tally_frequent_party_mates(&puuid, &rosters, MIN_GAMES, MAX_RESULTS);
+        let subject_agents = tally_top_agents(&puuid, &rosters, MAX_AGENTS);
+
+        let missing: Vec<String> = tallied
+            .iter()
+            .filter(|(_, name, _)| name.is_empty())
+            .map(|(id, _, _)| id.clone())
+            .collect();
+        let resolved = if missing.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            api.get_player_names(&missing).await
+        };
+
+        let teammates: Vec<FrequentTeammate> = tallied
+            .into_iter()
+            .map(|(id, name, games)| FrequentTeammate {
+                top_agents: tally_top_agents(&id, &rosters, MAX_AGENTS)
+                    .into_iter()
+                    .map(|(agent, n)| FrequentAgentPick { agent, games: n })
+                    .collect(),
+                name: if name.is_empty() {
+                    resolved.get(&id).cloned().unwrap_or_default()
+                } else {
+                    name
+                },
+                puuid: id,
+                games_together: games,
+            })
+            .collect();
+
+        let top_agents: Vec<FrequentAgentPick> = subject_agents
+            .into_iter()
+            .map(|(agent, n)| FrequentAgentPick { agent, games: n })
+            .collect();
+
+        Some((scanned, teammates, top_agents))
+    }
+    .await;
+
+    state.frequent_lookup_busy.store(false, Ordering::SeqCst);
+
+    let Some((scanned, teammates, top_agents)) = result else {
+        tracing::warn!("[frequent] history fetch failed for {}", puuid);
+        return Ok(FrequentTeammatesResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    };
+
+    let payload = FrequentTeammatesResponse {
+        status: "ok".into(),
+        retry_after_secs: 0,
+        matches_scanned: scanned,
+        from_cache: false,
+        teammates,
+        top_agents,
+    };
+    state
+        .frequent_teammates_cache
+        .write()
+        .insert(puuid, payload.clone());
+    tracing::info!(
+        "[frequent] scanned={} found={}",
+        payload.matches_scanned,
+        payload.teammates.len()
+    );
+    Ok(payload)
 }
 
 /// Get the logged-in user's storefront (daily shop + optional night market).

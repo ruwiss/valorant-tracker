@@ -31,6 +31,27 @@ export interface PlayerData {
   player_card_id?: string | null;
 }
 
+export interface FrequentAgentPick {
+  agent: string;
+  games: number;
+}
+
+export interface FrequentTeammate {
+  puuid: string;
+  name: string;
+  games_together: number;
+  top_agents?: FrequentAgentPick[];
+}
+
+export interface FrequentTeammatesResponse {
+  status: "ok" | "rate_limited" | "error" | string;
+  retry_after_secs?: number;
+  matches_scanned?: number;
+  from_cache?: boolean;
+  teammates?: FrequentTeammate[];
+  top_agents?: FrequentAgentPick[];
+}
+
 export interface GameState {
   state: "idle" | "pregame" | "ingame" | "disconnected";
   match_id: string | null;

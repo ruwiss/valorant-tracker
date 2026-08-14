@@ -4,6 +4,7 @@ import type { PlayerData, CrosshairLayer } from "../lib/types";
 
 type PanelType = "settings" | "player" | "stats" | "shop" | null;
 export type SettingsSubView = "main" | "chat_shortcuts" | "presets";
+export type PlayerSubView = "skins" | "regulars";
 
 const BASE_WIDTH = 380;
 const PANEL_WIDTH = 260;
@@ -49,6 +50,8 @@ interface PanelStore {
   panelType: PanelType;
   /** Nested view when panelType is "settings". */
   settingsSubView: SettingsSubView;
+  /** Nested view when panelType is "player". */
+  playerSubView: PlayerSubView;
   selectedPlayer: PlayerData | null;
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
@@ -62,6 +65,7 @@ interface PanelStore {
   /** Match window width to panel content: keep a real pane, collapse an empty one. */
   syncWindowToState: () => Promise<void>;
   setSettingsSubView: (view: SettingsSubView) => void;
+  setPlayerSubView: (view: PlayerSubView) => void;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
   setHoveredAgent: (agent: HoveredAgent | null) => void;
   setHoveredCrosshair: (crosshair: HoveredCrosshair | null) => void;
@@ -76,6 +80,7 @@ const CLOSED_PANEL = {
   isOpen: false,
   panelType: null as PanelType,
   settingsSubView: "main" as SettingsSubView,
+  playerSubView: "skins" as PlayerSubView,
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
@@ -159,6 +164,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   isOpen: false,
   panelType: null,
   settingsSubView: "main",
+  playerSubView: "skins",
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
@@ -183,6 +189,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   setSettingsSubView: (view) => set({ settingsSubView: view }),
+  setPlayerSubView: (view) => set({ playerSubView: view }),
 
   openShop: async () => {
     const { isOpen, panelType } = get();
@@ -217,7 +224,14 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       await waitForResize(EXPANDED_WIDTH);
     }
     if (!isCurrentPanelOp(op)) return;
-    set({ isOpen: true, panelType: "player", selectedPlayer: player, hoveredWeapon: null, hoveredAgent: null });
+    set({
+      isOpen: true,
+      panelType: "player",
+      playerSubView: "skins",
+      selectedPlayer: player,
+      hoveredWeapon: null,
+      hoveredAgent: null,
+    });
   },
 
   openStats: async (player) => {

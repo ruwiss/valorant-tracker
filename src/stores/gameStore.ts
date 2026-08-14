@@ -141,9 +141,12 @@ export const useGameStore = create<GameStore>()(
 				const prev = get().gameState;
 				const prevState = prev.state;
 				const wasLive = prevState === "pregame" || prevState === "ingame";
+				const prevMap = (prev.map_name || "").toLowerCase();
 				const prevLooksLikeRange =
-					(prev.map_name || "").toLowerCase().includes("range") ||
-					((prev.map_name || "").toLowerCase() === "unknown" &&
+					prevMap.includes("range") ||
+					prevMap.includes("poligon") ||
+					prevMap.includes("poveglia") ||
+					(prevMap === "unknown" &&
 						prev.enemies.length === 0 &&
 						prev.allies.length <= 1);
 

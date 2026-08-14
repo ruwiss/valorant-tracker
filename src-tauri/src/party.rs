@@ -168,6 +168,80 @@ pub fn seed_from_last_match(
     seeded
 }
 
+pub struct FrequentRosterPlayer {
+    pub puuid: String,
+    pub party_id: String,
+    pub name: String,
+    pub agent: String,
+}
+
+pub type FrequentMatchRoster = Vec<FrequentRosterPlayer>;
+
+/// Count how often other players shared `target`'s party in the given matches.
+/// Names prefer the most recent non-empty display name.
+pub fn tally_frequent_party_mates(
+    target: &str,
+    matches: &[FrequentMatchRoster],
+    min_games: u32,
+    max_results: usize,
+) -> Vec<(String, String, u32)> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut names: HashMap<String, String> = HashMap::new();
+
+    for roster in matches {
+        let my_party = roster
+            .iter()
+            .find(|p| p.puuid == target)
+            .map(|p| p.party_id.as_str())
+            .filter(|p| !p.is_empty());
+        let Some(my_party) = my_party else {
+            continue;
+        };
+        for p in roster {
+            if p.puuid == target || p.party_id != my_party {
+                continue;
+            }
+            *counts.entry(p.puuid.clone()).or_insert(0) += 1;
+            if !p.name.is_empty() {
+                names.entry(p.puuid.clone()).or_insert_with(|| p.name.clone());
+            }
+        }
+    }
+
+    let mut out: Vec<(String, String, u32)> = counts
+        .into_iter()
+        .filter(|(_, n)| *n >= min_games)
+        .map(|(puuid, n)| {
+            let name = names.get(&puuid).cloned().unwrap_or_default();
+            (puuid, name, n)
+        })
+        .collect();
+    out.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));
+    out.truncate(max_results);
+    out
+}
+
+/// Most-played agents for `puuid` across the given matches. Empty agent ids skipped.
+pub fn tally_top_agents(
+    puuid: &str,
+    matches: &[FrequentMatchRoster],
+    max_agents: usize,
+) -> Vec<(String, u32)> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for roster in matches {
+        if let Some(p) = roster.iter().find(|p| p.puuid == puuid) {
+            if p.agent.is_empty() {
+                continue;
+            }
+            *counts.entry(p.agent.clone()).or_insert(0) += 1;
+        }
+    }
+    let mut out: Vec<(String, u32)> = counts.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.truncate(max_agents);
+    out
+}
+
 #[derive(Default)]
 struct UnionFind {
     parent: HashMap<String, String>,
@@ -355,5 +429,65 @@ mod tests {
         let teams = team(&[("me", "Blue"), ("a", "Blue"), ("b", "Red")]);
         let seeded = seed_from_last_match(&last, &current, &teams, &HashMap::new());
         assert!(seeded.is_empty());
+    }
+
+    fn rp(puuid: &str, party: &str, name: &str, agent: &str) -> FrequentRosterPlayer {
+        FrequentRosterPlayer {
+            puuid: puuid.into(),
+            party_id: party.into(),
+            name: name.into(),
+            agent: agent.into(),
+        }
+    }
+
+    #[test]
+    fn tally_counts_same_party_only() {
+        let m1 = vec![
+            rp("me", "p1", "Me#1", "jett"),
+            rp("a", "p1", "A#1", "reyna"),
+            rp("b", "p2", "B#1", "sage"),
+        ];
+        let m2 = vec![
+            rp("me", "p3", "Me#1", "raze"),
+            rp("a", "p3", "A#1", "reyna"),
+            rp("c", "p3", "C#1", "omen"),
+        ];
+        let m3 = vec![
+            rp("me", "p4", "Me#1", "jett"),
+            rp("a", "p4", "A#1", "jett"),
+        ];
+        let out = tally_frequent_party_mates("me", &[m1, m2, m3], 2, 8);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "a");
+        assert_eq!(out[0].2, 3);
+    }
+
+    #[test]
+    fn tally_ignores_solo_and_missing_target() {
+        let m1 = vec![
+            rp("me", "solo", "Me#1", "jett"),
+            rp("a", "other", "A#1", "reyna"),
+        ];
+        let m2 = vec![rp("a", "p", "A#1", "reyna")];
+        let out = tally_frequent_party_mates("me", &[m1, m2], 2, 8);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn tally_top_agents_caps_at_three() {
+        let matches = vec![
+            vec![rp("me", "p", "Me#1", "jett")],
+            vec![rp("me", "p", "Me#1", "jett")],
+            vec![rp("me", "p", "Me#1", "jett")],
+            vec![rp("me", "p", "Me#1", "reyna")],
+            vec![rp("me", "p", "Me#1", "reyna")],
+            vec![rp("me", "p", "Me#1", "sage")],
+            vec![rp("me", "p", "Me#1", "omen")],
+        ];
+        let out = tally_top_agents("me", &matches, 3);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0], ("jett".into(), 3));
+        assert_eq!(out[1], ("reyna".into(), 2));
+        assert_eq!(out[2], ("omen".into(), 1)); // omen before sage alphabetically on tie
     }
 }

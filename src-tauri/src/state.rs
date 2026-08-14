@@ -1,7 +1,8 @@
-use crate::api::types::PlayerSkinData;
+use crate::api::types::{FrequentTeammatesResponse, PlayerSkinData};
 use crate::api::ValorantAPI;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -75,6 +76,11 @@ pub struct AppState {
 
     // Last completed match recap (idle screen). Refreshed on connect / match end.
     pub last_match: RwLock<Option<crate::api::types::LastMatch>>,
+
+    // On-demand "who do they queue with" scan (player panel).
+    pub frequent_teammates_cache: RwLock<HashMap<String, FrequentTeammatesResponse>>,
+    pub last_frequent_lookup: RwLock<Option<std::time::Instant>>,
+    pub frequent_lookup_busy: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -122,6 +128,9 @@ impl AppState {
             armed_preset: RwLock::new(None),
             discord: Arc::new(crate::discord::DiscordPresence::new()),
             last_match: RwLock::new(None),
+            frequent_teammates_cache: RwLock::new(HashMap::new()),
+            last_frequent_lookup: RwLock::new(None),
+            frequent_lookup_busy: AtomicBool::new(false),
         }
     }
 }

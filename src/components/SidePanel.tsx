@@ -8,7 +8,7 @@ import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
 
 export function SidePanel() {
-  const { isOpen, panelType, settingsSubView, selectedPlayer, close } = usePanelStore();
+  const { isOpen, panelType, settingsSubView, playerSubView, selectedPlayer, close } = usePanelStore();
   const { t } = useI18n();
   const gameState = useGameStore((s) => s.gameState);
 
@@ -34,8 +34,9 @@ export function SidePanel() {
   }, [isOpen, panelType, selectedPlayer, close]);
 
   const setSettingsSubView = usePanelStore((s) => s.setSettingsSubView);
+  const setPlayerSubView = usePanelStore((s) => s.setPlayerSubView);
 
-  // ESC: back from shortcut editor, otherwise close panel
+  // ESC: back from nested views, otherwise close panel
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -45,6 +46,8 @@ export function SidePanel() {
           (settingsSubView === "chat_shortcuts" || settingsSubView === "presets")
         ) {
           setSettingsSubView("main");
+        } else if (panelType === "player" && playerSubView === "regulars") {
+          setPlayerSubView("skins");
         } else {
           close();
         }
@@ -52,7 +55,7 @@ export function SidePanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, close, panelType, settingsSubView, setSettingsSubView]);
+  }, [isOpen, close, panelType, settingsSubView, playerSubView, setSettingsSubView, setPlayerSubView]);
 
   const canRender =
     isOpen &&
@@ -78,7 +81,7 @@ export function SidePanel() {
       case "shop":
         return t("shop.title");
       default:
-        return t("player.weaponSkins");
+        return playerSubView === "regulars" ? t("player.regulars") : t("player.weaponSkins");
     }
   };
 

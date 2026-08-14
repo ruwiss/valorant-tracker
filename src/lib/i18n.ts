@@ -107,6 +107,9 @@ const translations: Record<Locale, Record<string, string>> = {
     // Ingame
     "ingame.allies": "ALLIES",
     "ingame.enemies": "ENEMIES",
+    "ingame.range": "RANGE",
+    "ingame.rangeMap": "The Range",
+    "ingame.rangeYou": "YOU",
 
     // Player Card
     "player.level": "Lvl",
@@ -121,6 +124,17 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.midRoundLocked": "Can't use mid-round",
     "player.copy": "Copy",
     "player.close": "Close",
+    "player.regulars": "Frequent teammates",
+    "player.regularsHint": "Who they queued with recently",
+    "player.regularsBack": "Weapon skins",
+    "player.regularsEmpty": "No regular stack in the last {n} matches",
+    "player.regularsCooldown": "Wait {s}s",
+    "player.regularsError": "Couldn't read match history",
+    "player.regularsGames": "{n} games",
+    "player.regularsCopyAll": "Copy all",
+    "player.regularsScanned": "Last {n} matches",
+    "player.regularsHidden": "Hidden name",
+    "player.regularsAgents": "Most played",
 
     // Weapon Categories
     "weapons.primary": "PRIMARY",
@@ -503,6 +517,9 @@ const translations: Record<Locale, Record<string, string>> = {
     // Ingame
     "ingame.allies": "TAKIMIM",
     "ingame.enemies": "DÜŞMANLAR",
+    "ingame.range": "POLIGON",
+    "ingame.rangeMap": "Poligon",
+    "ingame.rangeYou": "SEN",
 
     // Player Card
     "player.level": "Svye",
@@ -517,6 +534,17 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.midRoundLocked": "Tur ortasında kullanılamaz",
     "player.copy": "Kopyala",
     "player.close": "Kapat",
+    "player.regulars": "Sık oynananlar",
+    "player.regularsHint": "Son maçlarda birlikte queue'ladıkları",
+    "player.regularsBack": "Silah skinleri",
+    "player.regularsEmpty": "Son {n} maçta düzenli stack yok",
+    "player.regularsCooldown": "{s} sn bekle",
+    "player.regularsError": "Maç geçmişi okunamadı",
+    "player.regularsGames": "{n} maç",
+    "player.regularsCopyAll": "Hepsini kopyala",
+    "player.regularsScanned": "Son {n} maç",
+    "player.regularsHidden": "Gizli isim",
+    "player.regularsAgents": "En çok oynadığı",
 
     // Weapon Categories
     "weapons.primary": "ANA SİLAHLAR",

@@ -4,8 +4,12 @@ import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useI18n, SKIN_API_LOCALES, getLocalizedRank } from "../lib/i18n";
+import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } from "../lib/types";
 import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
+
+const regularsCache = new Map<string, FrequentTeammatesResponse>();
+let regularsCooldownUntil = 0;
 
 // Resolve a Google-detected source language code (e.g. "ru", "ja") to a short
 // human-readable name in the active UI locale (e.g. "Russian" / "Rusça").
@@ -146,7 +150,8 @@ const weaponIconCache = new Map<string, WeaponInfo>();
 const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 
 export function PlayerPanel() {
-	const { selectedPlayer, setHoveredWeapon } = usePanelStore();
+	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView } =
+		usePanelStore();
 	const { getAgentIcon } = useAssetsStore();
 	const matchId = useGameStore((state) => state.gameState.match_id); // Get match_id
 	const { t, locale } = useI18n();
@@ -168,6 +173,13 @@ export function PlayerPanel() {
 	const [isTranslating, setIsTranslating] = useState(false);
 	const [peakRank, setPeakRank] = useState<PeakRankData | null>(null);
 	const fetchedRef = useRef<string | null>(null);
+	const [regulars, setRegulars] = useState<FrequentTeammate[]>([]);
+	const [regularsScanned, setRegularsScanned] = useState(0);
+	const [regularsLoading, setRegularsLoading] = useState(false);
+	const [regularsError, setRegularsError] = useState<string | null>(null);
+	const [regularsCopied, setRegularsCopied] = useState<string | null>(null);
+	const [cooldownLeft, setCooldownLeft] = useState(0);
+	const [regularsAgents, setRegularsAgents] = useState<FrequentAgentPick[]>([]);
 
 	// Reset state when player changes
 	useEffect(() => {
@@ -182,6 +194,11 @@ export function PlayerPanel() {
 		setDetectedLang(null);
 		setIsTranslating(false);
 		setPeakRank(null);
+		setRegulars([]);
+		setRegularsScanned(0);
+		setRegularsError(null);
+		setRegularsCopied(null);
+		setRegularsAgents([]);
 
 		if (selectedPlayer?.puuid) {
 			invokeCommand<PeakRankData | null>("get_peak_rank", {
@@ -535,6 +552,320 @@ export function PlayerPanel() {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 1500);
 		}
+	};
+
+	const syncCooldown = () => {
+		const left = Math.max(0, Math.ceil((regularsCooldownUntil - Date.now()) / 1000));
+		setCooldownLeft(left);
+		return left;
+	};
+
+	useEffect(() => {
+		syncCooldown();
+		if (regularsCooldownUntil <= Date.now()) return;
+		const timer = setInterval(syncCooldown, 250);
+		return () => clearInterval(timer);
+	}, [playerSubView, selectedPlayer?.puuid, regularsLoading]);
+
+	const applyRegularsResult = (data: FrequentTeammatesResponse) => {
+		if (data.status === "rate_limited") {
+			const secs = Math.max(1, data.retry_after_secs || 15);
+			regularsCooldownUntil = Date.now() + secs * 1000;
+			syncCooldown();
+			setRegularsError(null);
+			setRegulars([]);
+			setRegularsAgents([]);
+			return;
+		}
+		if (data.status === "error") {
+			setRegularsError(t("player.regularsError"));
+			setRegulars([]);
+			setRegularsAgents([]);
+			return;
+		}
+		if (!data.from_cache) {
+			const secs = Math.max(data.retry_after_secs || 0, 15);
+			regularsCooldownUntil = Date.now() + secs * 1000;
+			syncCooldown();
+		}
+		setRegularsError(null);
+		setRegulars(data.teammates || []);
+		setRegularsAgents((data.top_agents || []).slice(0, 3));
+		setRegularsScanned(data.matches_scanned || 0);
+		if (selectedPlayer?.puuid) {
+			regularsCache.set(selectedPlayer.puuid, data);
+		}
+	};
+
+	const fetchRegulars = async (puuid: string) => {
+		const cached = regularsCache.get(puuid);
+		if (cached?.status === "ok") {
+			setRegulars(cached.teammates || []);
+			setRegularsAgents((cached.top_agents || []).slice(0, 3));
+			setRegularsScanned(cached.matches_scanned || 0);
+			setRegularsError(null);
+			return;
+		}
+
+		setRegularsLoading(true);
+		setRegularsError(null);
+		try {
+			const data = await invokeCommand<FrequentTeammatesResponse>(
+				"get_frequent_teammates",
+				{ puuid },
+				{ suppressErrorToast: true },
+			);
+			if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
+			if (!data) {
+				setRegularsError(t("player.regularsError"));
+				return;
+			}
+			applyRegularsResult(data);
+		} catch {
+			if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
+			setRegularsError(t("player.regularsError"));
+		} finally {
+			if (usePanelStore.getState().selectedPlayer?.puuid === puuid) {
+				setRegularsLoading(false);
+			}
+		}
+	};
+
+	useEffect(() => {
+		if (playerSubView !== "regulars" || !selectedPlayer?.puuid) return;
+		fetchRegulars(selectedPlayer.puuid);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [playerSubView, selectedPlayer?.puuid]);
+
+	const openRegulars = () => {
+		if (!selectedPlayer) return;
+		if (cooldownLeft > 0 && !regularsCache.has(selectedPlayer.puuid)) return;
+		setHoveredWeapon(null);
+		setPlayerSubView("regulars");
+	};
+
+	const copyRegular = (name: string) => {
+		if (!name) return;
+		navigator.clipboard.writeText(name);
+		setRegularsCopied(name);
+		setTimeout(() => setRegularsCopied((cur) => (cur === name ? null : cur)), 1500);
+	};
+
+	const copyAllRegulars = () => {
+		const names = regulars.map((r) => r.name).filter(Boolean);
+		if (names.length === 0) return;
+		navigator.clipboard.writeText(names.join("\n"));
+		setRegularsCopied("__all__");
+		setTimeout(() => setRegularsCopied((cur) => (cur === "__all__" ? null : cur)), 1500);
+	};
+
+	const renderRegularsView = () => {
+		const namedCount = regulars.filter((r) => r.name).length;
+		return (
+			<div className="p-2 space-y-2">
+				<button
+					type="button"
+					onClick={() => setPlayerSubView("skins")}
+					className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-dim hover:bg-card/60 hover:text-primary transition-colors"
+				>
+					<svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+					<span className="text-[10px] font-semibold uppercase tracking-wider">
+						{t("player.regularsBack")}
+					</span>
+				</button>
+
+				{regularsLoading && (
+					<div className="flex items-center justify-center py-8">
+						<div className="w-5 h-5 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
+					</div>
+				)}
+
+				{!regularsLoading && cooldownLeft > 0 && regulars.length === 0 && !regularsError && (
+					<div className="px-1.5 py-6 text-center text-[10px] text-warning">
+						{t("player.regularsCooldown", { s: cooldownLeft })}
+					</div>
+				)}
+
+				{!regularsLoading && regularsError && (
+					<div className="px-1.5 py-6 text-center text-[10px] text-error">{regularsError}</div>
+				)}
+
+				{!regularsLoading && !regularsError && (regulars.length > 0 || regularsScanned > 0) && (
+					<>
+						<div className="flex items-center justify-between px-1">
+							<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
+								{t("player.regularsScanned", { n: regularsScanned || 20 })}
+							</span>
+							{namedCount > 1 && (
+								<button
+									type="button"
+									onClick={copyAllRegulars}
+									className="text-[8px] font-semibold uppercase tracking-wide text-dim hover:text-accent-cyan transition-colors"
+								>
+									{regularsCopied === "__all__" ? t("player.copied") : t("player.regularsCopyAll")}
+								</button>
+							)}
+						</div>
+
+						{regularsAgents.length > 0 && (
+							<div className="rounded-md bg-card/40 px-1.5 py-1.5">
+								<div className="mb-1 px-0.5 text-[8px] font-bold uppercase tracking-wider text-dim">
+									{t("player.regularsAgents")}
+								</div>
+								<div className="flex items-center gap-1.5">
+									{regularsAgents.slice(0, 3).map((pick) => {
+										const icon = getAgentIcon(pick.agent);
+										const color = AGENT_COLORS[pick.agent.toLowerCase()] || "#768079";
+										const label =
+											pick.agent.charAt(0).toUpperCase() + pick.agent.slice(1);
+										return (
+											<div
+												key={pick.agent}
+												className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-black/25 px-1 py-1"
+												title={`${label} · ${t("player.regularsGames", { n: pick.games })}`}
+											>
+												{icon ? (
+													<CachedImage
+														src={icon}
+														alt={label}
+														silent
+														className="h-6 w-6 shrink-0 rounded-full object-cover"
+														style={{ border: `1.5px solid ${color}80` }}
+													/>
+												) : (
+													<div className="h-6 w-6 shrink-0 rounded-full bg-card" />
+												)}
+												<div className="min-w-0">
+													<div className="truncate text-[9px] font-semibold text-primary">
+														{label}
+													</div>
+													<div className="text-[8px] text-dim">
+														{t("player.regularsGames", { n: pick.games })}
+													</div>
+												</div>
+											</div>
+										);
+									})}
+								</div>
+							</div>
+						)}
+
+						{regulars.length === 0 ? (
+							<div className="px-1.5 py-6 text-center text-[10px] text-dim">
+								{t("player.regularsEmpty", { n: regularsScanned || 20 })}
+							</div>
+						) : (
+							<div className="space-y-0.5">
+								{regulars.map((mate) => {
+									const label = mate.name || t("player.regularsHidden");
+									const canCopy = !!mate.name;
+									const isCopied = regularsCopied === mate.name;
+									return (
+										<button
+											key={mate.puuid}
+											type="button"
+											disabled={!canCopy}
+											onClick={() => copyRegular(mate.name)}
+											className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors ${
+												canCopy
+													? "hover:bg-card/60 cursor-pointer"
+													: "opacity-50 cursor-default"
+											}`}
+											title={canCopy ? t("player.copy") : t("player.hiddenProfile")}
+										>
+											{(mate.top_agents || []).slice(0, 3).map((pick) => {
+												const icon = getAgentIcon(pick.agent);
+												const agentLabel =
+													pick.agent.charAt(0).toUpperCase() + pick.agent.slice(1);
+												return icon ? (
+													<CachedImage
+														key={pick.agent}
+														src={icon}
+														alt={agentLabel}
+														silent
+														className="h-5 w-5 shrink-0 rounded-full object-cover"
+														title={`${agentLabel} · ${t("player.regularsGames", { n: pick.games })}`}
+													/>
+												) : null;
+											})}
+											<div className="min-w-0 flex-1">
+												<div className="truncate text-[11px] font-semibold text-primary">
+													{label}
+												</div>
+												<div className="text-[8px] uppercase tracking-wide text-dim">
+													{isCopied
+														? t("player.copied")
+														: t("player.regularsGames", { n: mate.games_together })}
+												</div>
+											</div>
+											{canCopy && (
+												<svg
+													className="h-3 w-3 shrink-0 text-dim"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+												>
+													<rect x="9" y="9" width="13" height="13" rx="2" />
+													<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+												</svg>
+											)}
+										</button>
+									);
+								})}
+							</div>
+						)}
+					</>
+				)}
+			</div>
+		);
+	};
+
+	const renderRegularsEntry = () => {
+		const cached = selectedPlayer ? regularsCache.has(selectedPlayer.puuid) : false;
+		const blocked = cooldownLeft > 0 && !cached;
+		return (
+			<button
+				type="button"
+				onClick={openRegulars}
+				disabled={blocked}
+				title={blocked ? t("player.regularsCooldown", { s: cooldownLeft }) : t("player.regularsHint")}
+				className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors ${
+					blocked
+						? "opacity-50 cursor-not-allowed"
+						: "hover:bg-card/60 cursor-pointer"
+				}`}
+			>
+				<svg
+					className="h-3.5 w-3.5 shrink-0 text-accent-cyan/80"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+				>
+					<path
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"
+					/>
+					<circle cx="9" cy="7" r="4" />
+					<path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+				</svg>
+				<div className="min-w-0 flex-1">
+					<div className="text-[10px] font-semibold text-primary">{t("player.regulars")}</div>
+					<div className="text-[8px] text-dim truncate">
+						{blocked
+							? t("player.regularsCooldown", { s: cooldownLeft })
+							: t("player.regularsHint")}
+					</div>
+				</div>
+				<svg className="h-3 w-3 shrink-0 text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+					<path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+				</svg>
+			</button>
+		);
 	};
 
 	if (!selectedPlayer) return null;
@@ -1020,78 +1351,86 @@ export function PlayerPanel() {
 				</div>
 			</div>
 
-			{/* Skins Content */}
+			{/* Skins / regulars content */}
 			<div
 				className="flex-1 overflow-y-auto"
 				onMouseLeave={() => setHoveredWeapon(null)}
 			>
-				{loading && (
-					<div className="flex items-center justify-center py-8">
-						<div className="w-5 h-5 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
-					</div>
-				)}
+				{playerSubView === "regulars" ? (
+					renderRegularsView()
+				) : (
+					<>
+						<div className="px-2 pt-2">{renderRegularsEntry()}</div>
 
-				{error && (
-					<div className="text-center py-6 text-error text-[10px]">{error}</div>
-				)}
-
-				{!loading && !error && (skins.length > 0 || expressions.length > 0) && (
-					<div className="p-2 space-y-3">
-						{/* PRIMARY - Grid of large cards */}
-						{skins.length > 0 && (
-						<section>
-							<div className="flex items-center gap-1.5 mb-1.5 px-1">
-								<div className="w-1 h-3 bg-accent-cyan rounded-full" />
-								<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
-									{t("weapons.primary")}
-								</span>
+						{loading && (
+							<div className="flex items-center justify-center py-8">
+								<div className="w-5 h-5 border-2 border-accent-cyan border-t-transparent rounded-full animate-spin" />
 							</div>
-							<div className="grid grid-cols-2 gap-1.5">
-								{WEAPON_CATEGORIES.primary.map((id) =>
-									renderWeaponCard(id, true),
+						)}
+
+						{error && (
+							<div className="text-center py-6 text-error text-[10px]">{error}</div>
+						)}
+
+						{!loading && !error && (skins.length > 0 || expressions.length > 0) && (
+							<div className="p-2 space-y-3">
+								{/* PRIMARY - Grid of large cards */}
+								{skins.length > 0 && (
+								<section>
+									<div className="flex items-center gap-1.5 mb-1.5 px-1">
+										<div className="w-1 h-3 bg-accent-cyan rounded-full" />
+										<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
+											{t("weapons.primary")}
+										</span>
+									</div>
+									<div className="grid grid-cols-2 gap-1.5">
+										{WEAPON_CATEGORIES.primary.map((id) =>
+											renderWeaponCard(id, true),
+										)}
+									</div>
+								</section>
 								)}
+
+								{/* SECONDARY - Compact list */}
+								{skins.length > 0 && (
+								<section>
+									<div className="flex items-center gap-1.5 mb-1 px-1">
+										<div className="w-1 h-3 bg-accent-gold/70 rounded-full" />
+										<span className="text-[9px] font-bold uppercase tracking-wider text-accent-gold/70">
+											{t("weapons.secondary")}
+										</span>
+									</div>
+									<div className="space-y-0.5">
+										{WEAPON_CATEGORIES.secondary.map((id) => renderWeaponCard(id))}
+									</div>
+								</section>
+								)}
+
+								{/* OTHER - Compact list */}
+								{skins.length > 0 && (
+								<section>
+									<div className="flex items-center gap-1.5 mb-1 px-1">
+										<div className="w-1 h-3 bg-dim/50 rounded-full" />
+										<span className="text-[9px] font-bold uppercase tracking-wider text-dim/70">
+											{t("weapons.other")}
+										</span>
+									</div>
+									<div className="space-y-0.5">
+										{WEAPON_CATEGORIES.other.map((id) => renderWeaponCard(id))}
+									</div>
+								</section>
+								)}
+
+								{renderExpressionWheel()}
 							</div>
-						</section>
 						)}
 
-						{/* SECONDARY - Compact list */}
-						{skins.length > 0 && (
-						<section>
-							<div className="flex items-center gap-1.5 mb-1 px-1">
-								<div className="w-1 h-3 bg-accent-gold/70 rounded-full" />
-								<span className="text-[9px] font-bold uppercase tracking-wider text-accent-gold/70">
-									{t("weapons.secondary")}
-								</span>
+						{!loading && !error && skins.length === 0 && expressions.length === 0 && (
+							<div className="text-center py-6 text-dim text-[10px]">
+								{t("player.noSkinData")}
 							</div>
-							<div className="space-y-0.5">
-								{WEAPON_CATEGORIES.secondary.map((id) => renderWeaponCard(id))}
-							</div>
-						</section>
 						)}
-
-						{/* OTHER - Compact list */}
-						{skins.length > 0 && (
-						<section>
-							<div className="flex items-center gap-1.5 mb-1 px-1">
-								<div className="w-1 h-3 bg-dim/50 rounded-full" />
-								<span className="text-[9px] font-bold uppercase tracking-wider text-dim/70">
-									{t("weapons.other")}
-								</span>
-							</div>
-							<div className="space-y-0.5">
-								{WEAPON_CATEGORIES.other.map((id) => renderWeaponCard(id))}
-							</div>
-						</section>
-						)}
-
-						{renderExpressionWheel()}
-					</div>
-				)}
-
-				{!loading && !error && skins.length === 0 && expressions.length === 0 && (
-					<div className="text-center py-6 text-dim text-[10px]">
-						{t("player.noSkinData")}
-					</div>
+					</>
 				)}
 			</div>
 		</div>

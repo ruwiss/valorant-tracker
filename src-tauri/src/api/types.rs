@@ -474,6 +474,41 @@ pub struct LastMatch {
     pub enemies: Vec<LastMatchPlayer>,
 }
 
+/// Agent pick count from the scanned window (at most 3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrequentAgentPick {
+    pub agent: String,
+    pub games: u32,
+}
+
+/// One player who shared this subject's party in recent matches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrequentTeammate {
+    pub puuid: String,
+    pub name: String,
+    pub games_together: u32,
+    #[serde(default)]
+    pub top_agents: Vec<FrequentAgentPick>,
+}
+
+/// On-demand frequent-stack scan from the player panel.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FrequentTeammatesResponse {
+    /// `"ok"` | `"rate_limited"` | `"error"`
+    pub status: String,
+    #[serde(default)]
+    pub retry_after_secs: u32,
+    #[serde(default)]
+    pub matches_scanned: u32,
+    #[serde(default)]
+    pub from_cache: bool,
+    #[serde(default)]
+    pub teammates: Vec<FrequentTeammate>,
+    /// Selected player's most-played agents in the scanned window (max 3).
+    #[serde(default)]
+    pub top_agents: Vec<FrequentAgentPick>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LastMatchPlayer {
     pub puuid: String,
