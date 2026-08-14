@@ -2644,9 +2644,13 @@ pub async fn get_peak_rank(
     }
 }
 
-/// Who this player regularly queued with in their last ~20 matches.
+/// Who this player regularly queued with in their last ~12 matches.
 /// Cache-hit is free. A live scan is cooldown-gated so clicking several
 /// people in a row cannot stampede match-details.
+///
+/// Budget (unofficial `pd` API, shared with party-detect / last-match):
+/// 1 history + up to 12 details at concurrency 2. 15s / 20 matches / 3-wide
+/// still 429'd the client, so we wait a full minute after the burst ends.
 #[tauri::command]
 pub async fn get_frequent_teammates(
     state: State<'_, AppState>,
@@ -2659,12 +2663,12 @@ pub async fn get_frequent_teammates(
     use futures_util::future::join_all;
     use std::sync::atomic::Ordering;
 
-    const LOOKBACK: u32 = 20;
+    const LOOKBACK: u32 = 12;
     const MIN_GAMES: u32 = 2;
     const MAX_RESULTS: usize = 8;
     const MAX_AGENTS: usize = 3;
-    const DETAIL_CONCURRENCY: usize = 3;
-    const COOLDOWN_SECS: u64 = 15;
+    const DETAIL_CONCURRENCY: usize = 2;
+    const COOLDOWN_SECS: u64 = 60;
 
     fn ok_cached(mut cached: FrequentTeammatesResponse) -> FrequentTeammatesResponse {
         cached.from_cache = true;
@@ -2718,8 +2722,6 @@ pub async fn get_frequent_teammates(
         state.frequent_lookup_busy.store(false, Ordering::SeqCst);
         return Ok(ok_cached(cached));
     }
-
-    *state.last_frequent_lookup.write() = Some(std::time::Instant::now());
 
     let api = state.api.clone();
     let result = async {
@@ -2812,18 +2814,22 @@ pub async fn get_frequent_teammates(
     .await;
 
     state.frequent_lookup_busy.store(false, Ordering::SeqCst);
+    // Count the cooldown from the end of the burst so the next click
+    // cannot overlap the previous 12-detail wave.
+    *state.last_frequent_lookup.write() = Some(std::time::Instant::now());
 
     let Some((scanned, teammates, top_agents)) = result else {
         tracing::warn!("[frequent] history fetch failed for {}", puuid);
         return Ok(FrequentTeammatesResponse {
             status: "error".into(),
+            retry_after_secs: COOLDOWN_SECS as u32,
             ..Default::default()
         });
     };
 
     let payload = FrequentTeammatesResponse {
         status: "ok".into(),
-        retry_after_secs: 0,
+        retry_after_secs: COOLDOWN_SECS as u32,
         matches_scanned: scanned,
         from_cache: false,
         teammates,

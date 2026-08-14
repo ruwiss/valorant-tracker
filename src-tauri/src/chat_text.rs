@@ -304,3 +304,22 @@ pub fn needs_chat_expansion(raw: &str) -> bool {
     }
     looks_like_agent_mention(t)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heart_in_turkish_sentence() {
+        let out = transform_outgoing_chat("günaydın <3 hoşça kal");
+        assert_eq!(out, "günaydın \u{2665} hoşça kal");
+    }
+
+    #[test]
+    fn heart_preserves_dotted_and_dotless_i() {
+        assert_eq!(
+            transform_outgoing_chat("İyi akşamlar <3 nasılsın"),
+            "İyi akşamlar \u{2665} nasılsın"
+        );
+    }
+}

@@ -392,3 +392,32 @@ fn replace_ci(haystack: &str, needle: &str, replacement: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contains_heart_keeps_turkish_letters() {
+        let out = apply_contains_rules("günaydın <3 hoşça kal");
+        assert_eq!(out, "günaydın \u{2665} hoşça kal");
+    }
+
+    #[test]
+    fn contains_heart_keeps_dotted_capital_i() {
+        let out = apply_contains_rules("İyi akşamlar <3 kanka");
+        assert_eq!(out, "İyi akşamlar \u{2665} kanka");
+    }
+
+    #[test]
+    fn contains_heart_keeps_dotless_i() {
+        let out = apply_contains_rules("Nasılsın <3");
+        assert_eq!(out, "Nasılsın \u{2665}");
+    }
+
+    #[test]
+    fn broken_heart_wins_over_heart() {
+        let out = apply_contains_rules("a </3 b <3 c");
+        assert_eq!(out, "a \u{2661} b \u{2665} c");
+    }
+}

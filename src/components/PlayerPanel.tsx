@@ -10,6 +10,11 @@ import { CachedImage } from "./CachedImage";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
 let regularsCooldownUntil = 0;
+let regularsScanInFlight = false;
+
+/** Must stay in sync with `get_frequent_teammates` in commands.rs. */
+const REGULARS_LOOKBACK = 12;
+const REGULARS_COOLDOWN_SECS = 60;
 
 // Resolve a Google-detected source language code (e.g. "ru", "ja") to a short
 // human-readable name in the active UI locale (e.g. "Russian" / "Rusça").
@@ -179,6 +184,7 @@ export function PlayerPanel() {
 	const [regularsError, setRegularsError] = useState<string | null>(null);
 	const [regularsCopied, setRegularsCopied] = useState<string | null>(null);
 	const [cooldownLeft, setCooldownLeft] = useState(0);
+	const [cooldownGen, setCooldownGen] = useState(0);
 	const [regularsAgents, setRegularsAgents] = useState<FrequentAgentPick[]>([]);
 
 	// Reset state when player changes
@@ -560,53 +566,65 @@ export function PlayerPanel() {
 		return left;
 	};
 
+	const startCooldown = (secs: number) => {
+		const wait = Math.max(1, secs);
+		regularsCooldownUntil = Date.now() + wait * 1000;
+		setCooldownGen((g) => g + 1);
+		syncCooldown();
+	};
+
 	useEffect(() => {
 		syncCooldown();
 		if (regularsCooldownUntil <= Date.now()) return;
 		const timer = setInterval(syncCooldown, 250);
 		return () => clearInterval(timer);
-	}, [playerSubView, selectedPlayer?.puuid, regularsLoading]);
+	}, [playerSubView, selectedPlayer?.puuid, regularsLoading, cooldownGen]);
 
-	const applyRegularsResult = (data: FrequentTeammatesResponse) => {
+	const applyCachedRegulars = (data: FrequentTeammatesResponse) => {
+		setRegularsError(null);
+		setRegulars(data.teammates || []);
+		setRegularsAgents((data.top_agents || []).slice(0, 3));
+		setRegularsScanned(data.matches_scanned || 0);
+	};
+
+	const stillThisPlayer = (puuid: string) =>
+		usePanelStore.getState().selectedPlayer?.puuid === puuid;
+
+	const applyRegularsResult = (data: FrequentTeammatesResponse, puuid: string) => {
 		if (data.status === "rate_limited") {
-			const secs = Math.max(1, data.retry_after_secs || 15);
-			regularsCooldownUntil = Date.now() + secs * 1000;
-			syncCooldown();
-			setRegularsError(null);
-			setRegulars([]);
-			setRegularsAgents([]);
+			startCooldown(data.retry_after_secs || REGULARS_COOLDOWN_SECS);
+			if (stillThisPlayer(puuid) && usePanelStore.getState().playerSubView === "regulars") {
+				setPlayerSubView("skins");
+			}
 			return;
 		}
 		if (data.status === "error") {
+			if (!data.from_cache) {
+				startCooldown(data.retry_after_secs || REGULARS_COOLDOWN_SECS);
+			}
+			if (!stillThisPlayer(puuid)) return;
 			setRegularsError(t("player.regularsError"));
 			setRegulars([]);
 			setRegularsAgents([]);
 			return;
 		}
 		if (!data.from_cache) {
-			const secs = Math.max(data.retry_after_secs || 0, 15);
-			regularsCooldownUntil = Date.now() + secs * 1000;
-			syncCooldown();
+			startCooldown(data.retry_after_secs || REGULARS_COOLDOWN_SECS);
 		}
-		setRegularsError(null);
-		setRegulars(data.teammates || []);
-		setRegularsAgents((data.top_agents || []).slice(0, 3));
-		setRegularsScanned(data.matches_scanned || 0);
-		if (selectedPlayer?.puuid) {
-			regularsCache.set(selectedPlayer.puuid, data);
-		}
+		regularsCache.set(puuid, data);
+		if (!stillThisPlayer(puuid)) return;
+		applyCachedRegulars(data);
 	};
 
 	const fetchRegulars = async (puuid: string) => {
 		const cached = regularsCache.get(puuid);
 		if (cached?.status === "ok") {
-			setRegulars(cached.teammates || []);
-			setRegularsAgents((cached.top_agents || []).slice(0, 3));
-			setRegularsScanned(cached.matches_scanned || 0);
-			setRegularsError(null);
+			applyCachedRegulars(cached);
 			return;
 		}
+		if (regularsScanInFlight) return;
 
+		regularsScanInFlight = true;
 		setRegularsLoading(true);
 		setRegularsError(null);
 		try {
@@ -615,31 +633,52 @@ export function PlayerPanel() {
 				{ puuid },
 				{ suppressErrorToast: true },
 			);
-			if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
 			if (!data) {
-				setRegularsError(t("player.regularsError"));
+				startCooldown(REGULARS_COOLDOWN_SECS);
+				if (stillThisPlayer(puuid)) {
+					setRegularsError(t("player.regularsError"));
+				}
 				return;
 			}
-			applyRegularsResult(data);
+			applyRegularsResult(data, puuid);
 		} catch {
-			if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
-			setRegularsError(t("player.regularsError"));
-		} finally {
-			if (usePanelStore.getState().selectedPlayer?.puuid === puuid) {
-				setRegularsLoading(false);
+			startCooldown(REGULARS_COOLDOWN_SECS);
+			if (stillThisPlayer(puuid)) {
+				setRegularsError(t("player.regularsError"));
 			}
+		} finally {
+			regularsScanInFlight = false;
+			setRegularsLoading(false);
 		}
 	};
 
 	useEffect(() => {
 		if (playerSubView !== "regulars" || !selectedPlayer?.puuid) return;
-		fetchRegulars(selectedPlayer.puuid);
+		const puuid = selectedPlayer.puuid;
+		const cached = regularsCache.get(puuid);
+		if (cached?.status === "ok") {
+			applyCachedRegulars(cached);
+			return;
+		}
+		// Live scan is gated on the entry button — never park the opened
+		// view on a "wait Xs" empty state.
+		if (regularsCooldownUntil > Date.now() || regularsLoading || regularsScanInFlight) {
+			setPlayerSubView("skins");
+			syncCooldown();
+			return;
+		}
+		void fetchRegulars(puuid);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [playerSubView, selectedPlayer?.puuid]);
 
 	const openRegulars = () => {
 		if (!selectedPlayer) return;
-		if (cooldownLeft > 0 && !regularsCache.has(selectedPlayer.puuid)) return;
+		if (regularsCache.has(selectedPlayer.puuid)) {
+			setHoveredWeapon(null);
+			setPlayerSubView("regulars");
+			return;
+		}
+		if (cooldownLeft > 0 || regularsLoading) return;
 		setHoveredWeapon(null);
 		setPlayerSubView("regulars");
 	};
@@ -682,12 +721,6 @@ export function PlayerPanel() {
 					</div>
 				)}
 
-				{!regularsLoading && cooldownLeft > 0 && regulars.length === 0 && !regularsError && (
-					<div className="px-1.5 py-6 text-center text-[10px] text-warning">
-						{t("player.regularsCooldown", { s: cooldownLeft })}
-					</div>
-				)}
-
 				{!regularsLoading && regularsError && (
 					<div className="px-1.5 py-6 text-center text-[10px] text-error">{regularsError}</div>
 				)}
@@ -696,7 +729,7 @@ export function PlayerPanel() {
 					<>
 						<div className="flex items-center justify-between px-1">
 							<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
-								{t("player.regularsScanned", { n: regularsScanned || 20 })}
+								{t("player.regularsScanned", { n: regularsScanned || REGULARS_LOOKBACK })}
 							</span>
 							{namedCount > 1 && (
 								<button
@@ -754,7 +787,7 @@ export function PlayerPanel() {
 
 						{regulars.length === 0 ? (
 							<div className="px-1.5 py-6 text-center text-[10px] text-dim">
-								{t("player.regularsEmpty", { n: regularsScanned || 20 })}
+								{t("player.regularsEmpty", { n: regularsScanned || REGULARS_LOOKBACK })}
 							</div>
 						) : (
 							<div className="space-y-0.5">
@@ -825,13 +858,19 @@ export function PlayerPanel() {
 
 	const renderRegularsEntry = () => {
 		const cached = selectedPlayer ? regularsCache.has(selectedPlayer.puuid) : false;
-		const blocked = cooldownLeft > 0 && !cached;
+		const coolingDown = cooldownLeft > 0 && !cached;
+		const busy = regularsLoading && !cached;
+		const blocked = coolingDown || busy;
 		return (
 			<button
 				type="button"
 				onClick={openRegulars}
 				disabled={blocked}
-				title={blocked ? t("player.regularsCooldown", { s: cooldownLeft }) : t("player.regularsHint")}
+				title={
+					coolingDown
+						? t("player.regularsCooldown", { s: cooldownLeft })
+						: t("player.regularsHint")
+				}
 				className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors ${
 					blocked
 						? "opacity-50 cursor-not-allowed"
@@ -856,14 +895,22 @@ export function PlayerPanel() {
 				<div className="min-w-0 flex-1">
 					<div className="text-[10px] font-semibold text-primary">{t("player.regulars")}</div>
 					<div className="text-[8px] text-dim truncate">
-						{blocked
+						{coolingDown
 							? t("player.regularsCooldown", { s: cooldownLeft })
 							: t("player.regularsHint")}
 					</div>
 				</div>
-				<svg className="h-3 w-3 shrink-0 text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-					<path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-				</svg>
+				{busy ? (
+					<div className="h-3 w-3 shrink-0 rounded-full border-2 border-accent-cyan border-t-transparent animate-spin" />
+				) : coolingDown ? (
+					<span className="shrink-0 text-[10px] font-bold tabular-nums text-warning">
+						{cooldownLeft}s
+					</span>
+				) : (
+					<svg className="h-3 w-3 shrink-0 text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+				)}
 			</button>
 		);
 	};

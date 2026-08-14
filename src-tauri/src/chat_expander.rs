@@ -7,7 +7,9 @@
 //!   - buffers what is typed
 //!   - on Enter (send), expands `sa` / `as` / `<3` / `!t <lang> …` before send
 //!
-//! Expansion: swallow Enter (down **and** matching up) → clear line → paste
+//! Expansion: swallow Enter (down **and** matching up) → Ctrl+A / Ctrl+C the
+//! real chat line (the hook buffer is ASCII-only — `ToUnicode` times out the
+//! hook, so TR letters never land in it) → transform → clear line → paste
 //! expanded text via clipboard (Unicode SendInput was dropping mid-string in
 //! Valorant) → Enter. Translate (`!t`) runs on a background thread so the
 //! hook never blocks.
@@ -55,9 +57,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::time::{Duration, Instant};
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 
@@ -68,9 +70,10 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_A, VK_BACK, VK_CONTROL, VK_DELETE,
-    VK_ESCAPE, VK_RETURN, VK_SHIFT, VK_V,
+    GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyExW, SendInput, ToUnicodeEx, INPUT, INPUT_0,
+    INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_A, VK_BACK, VK_C, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_RETURN,
+    VK_SHIFT, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowTextW,
@@ -110,6 +113,11 @@ const TAP_HOLD_MS: u64 = 14;
 const TAP_GAP_MS: u64 = 12;
 const AFTER_CLEAR_MS: u64 = 45;
 const AFTER_PASTE_MS: u64 = 90;
+const AFTER_COPY_GAP_MS: u64 = 30;
+const CLIP_READ_RETRIES: u32 = 6;
+/// Marker planted before Ctrl+C so a failed copy is not mistaken for the
+/// user's previous clipboard (which would skip `<3` and send the wrong line).
+const CLIP_SENTINEL: &str = "\u{2060}vt.clip\u{2060}";
 const BEFORE_SEND_ENTER_MS: u64 = 70;
 const AFTER_SEND_ENTER_MS: u64 = 80;
 const BACKSPACE_GAP_MS: u64 = 8;
@@ -132,6 +140,7 @@ static LAST_RECYCLE_MS: AtomicU64 = AtomicU64::new(0);
 /// Foreground pid + kind as of the last poll. The hook only reads these
 /// atomics, so it never touches a process handle.
 static FG_PID: AtomicU32 = AtomicU32::new(0);
+static FG_TID: AtomicU32 = AtomicU32::new(0);
 static FG_KIND: AtomicU32 = AtomicU32::new(FG_OTHER);
 /// When Focus::Other first became stable, for `FOCUS_OTHER_GRACE_MS`.
 static OTHER_SINCE_MS: AtomicU64 = AtomicU64::new(0);
@@ -143,12 +152,24 @@ fn now_ms() -> u64 {
     CLOCK.elapsed().as_millis() as u64
 }
 
+/// One physical key that produced (or may have produced) a character.
+/// `in_buffer` is false for keys `key_to_char` cannot map (TR ğüşıöç, …)
+/// so backspace stays in sync with the ASCII detect buffer.
+#[derive(Clone, Copy)]
+struct TypedKey {
+    vk: u32,
+    shift: bool,
+    in_buffer: bool,
+}
+
 struct ExpanderState {
     /// True while the in-game chat bar is open (Enter to open, Escape to close).
     /// Stays true after a successful send — Valorant leaves the bar open.
     chat_open: bool,
-    /// Characters typed into the chat bar (best-effort).
+    /// Characters typed into the chat bar (best-effort ASCII for shortcut detect).
     buffer: String,
+    /// Raw keys for layout-aware `ToUnicodeEx` replay off the hook thread.
+    keys: Vec<TypedKey>,
     /// While we inject keys, ignore them so we don't re-buffer ourselves.
     injecting: bool,
     /// Last time we saw chat-bar activity, for `CHAT_IDLE_TIMEOUT_MS`.
@@ -166,6 +187,7 @@ struct ExpanderState {
 static STATE: Mutex<ExpanderState> = Mutex::new(ExpanderState {
     chat_open: false,
     buffer: String::new(),
+    keys: Vec::new(),
     injecting: false,
     last_activity_ms: 0,
     abort_injection: false,
@@ -199,6 +221,7 @@ fn mark_key_up(st: &mut ExpanderState, vk: u32) {
 fn close_chat(st: &mut ExpanderState) {
     st.chat_open = false;
     st.buffer.clear();
+    st.keys.clear();
 }
 
 fn needs_expansion(raw: &str) -> bool {
@@ -325,11 +348,12 @@ fn start_foreground_poller() {
                     continue;
                 }
                 let mut pid: u32 = 0;
-                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                let tid = GetWindowThreadProcessId(hwnd, Some(&mut pid));
                 if pid != 0 && pid != FG_PID.load(Ordering::Relaxed) {
                     let kind = classify_pid(pid, hwnd);
                     // Publish the classification before the pid it belongs to.
                     FG_KIND.store(kind, Ordering::Relaxed);
+                    FG_TID.store(tid, Ordering::Relaxed);
                     FG_PID.store(pid, Ordering::Release);
                 }
             }
@@ -351,7 +375,9 @@ fn ctrl_down() -> bool {
 /// Map a virtual-key to a typed character without `ToUnicode` / `GetKeyboardState`.
 /// Those APIs are layout-aware but routinely stall a `WH_KEYBOARD_LL` callback
 /// past `LowLevelHooksTimeout` (especially with TR-Q / IME), after which Windows
-/// silently unhooks us. ASCII + OEM is enough for `sa` / `as` / `<3` / `!t`.
+/// silently unhooks us. ASCII + OEM is enough to *detect* `sa` / `as` / `<3` /
+/// `!t`. The real line (Turkish letters included) is read from the chat box
+/// via clipboard right before expansion — never reconstruct Unicode from here.
 fn key_to_char(vk: u32) -> Option<char> {
     let shift = shift_down();
     match vk {
@@ -505,6 +531,151 @@ fn set_clipboard_text(text: &str) -> bool {
     }
 }
 
+/// Read `CF_UNICODETEXT` from the clipboard. Returns `None` if another process
+/// holds it, or if the clip is not Unicode text.
+fn get_clipboard_text() -> Option<String> {
+    unsafe {
+        let mut opened = false;
+        for attempt in 0..6 {
+            if OpenClipboard(HWND::default()).is_ok() {
+                opened = true;
+                break;
+            }
+            if attempt < 5 {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        if !opened {
+            return None;
+        }
+        let handle = match GetClipboardData(CF_UNICODETEXT) {
+            Ok(h) => h,
+            Err(_) => {
+                let _ = CloseClipboard();
+                return None;
+            }
+        };
+        if handle.0.is_null() {
+            let _ = CloseClipboard();
+            return None;
+        }
+        let hmem = HGLOBAL(handle.0);
+        let ptr = GlobalLock(hmem);
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return None;
+        }
+        let p = ptr as *const u16;
+        let mut len = 0usize;
+        // Hard cap so a huge clip cannot stall the inject thread.
+        while len < 4096 && *p.add(len) != 0 {
+            len += 1;
+        }
+        let text = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+        let _ = GlobalUnlock(hmem);
+        let _ = CloseClipboard();
+        Some(text)
+    }
+}
+
+/// Select-all + copy the in-game chat input, then read it back.
+///
+/// The hook buffer only sees US-ASCII (`key_to_char` cannot call `ToUnicode`).
+/// Valorant already has the correctly typed line — including ğüşıöç — so we
+/// steal that instead of reconstructing from virtual keys.
+fn copy_chat_line() -> Option<String> {
+    // Plant a marker so we can tell "copy never happened" from "old clip".
+    let _ = set_clipboard_text(CLIP_SENTINEL);
+
+    send_vk(VK_CONTROL, true);
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
+    tap_key(VK_A);
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
+    tap_key(VK_C);
+    std::thread::sleep(Duration::from_millis(CTRL_CHORD_GAP_MS));
+    send_vk(VK_CONTROL, false);
+
+    for _ in 0..CLIP_READ_RETRIES {
+        std::thread::sleep(Duration::from_millis(AFTER_COPY_GAP_MS));
+        if let Some(s) = get_clipboard_text() {
+            if s != CLIP_SENTINEL && !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Keys that can produce a character (letters, digits, space, OEM).
+fn is_typeable_vk(vk: u32) -> bool {
+    matches!(
+        vk,
+        0x20 | 0x30..=0x39 | 0x41..=0x5A | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2
+    )
+}
+
+/// Replay recorded virtual keys with the foreground layout. Safe off the hook
+/// thread — `ToUnicodeEx` is what we cannot call inside `WH_KEYBOARD_LL`.
+fn decode_typed_keys(keys: &[TypedKey]) -> String {
+    if keys.is_empty() {
+        return String::new();
+    }
+    unsafe {
+        let tid = FG_TID.load(Ordering::Relaxed);
+        let hkl = GetKeyboardLayout(tid);
+        let mut out = String::with_capacity(keys.len());
+        let mut state = [0u8; 256];
+        let mut buf = [0u16; 16];
+        for k in keys {
+            state.fill(0);
+            if k.shift {
+                state[VK_SHIFT.0 as usize] = 0x80;
+            }
+            let scan = MapVirtualKeyExW(k.vk, MAPVK_VK_TO_VSC, hkl);
+            let n = ToUnicodeEx(k.vk, scan, &state, &mut buf, 0, hkl);
+            if n > 0 {
+                let n = (n as usize).min(buf.len());
+                out.extend(
+                    char::decode_utf16(buf[..n].iter().copied()).map(|r| r.unwrap_or('\u{FFFD}')),
+                );
+            }
+        }
+        out
+    }
+}
+
+/// Prefer the real in-game line (clipboard or layout-decoded keys) over the
+/// ASCII hook buffer. A candidate must still look like a shortcut so a stale
+/// clipboard cannot swallow `<3`. Longer wins — Turkish letters make the
+/// real line longer than the mangled buffer.
+fn pick_expand_source(buffer: &str, copied: Option<&str>, decoded: Option<&str>) -> String {
+    fn clean(s: &str) -> Option<String> {
+        let c = s.trim_end_matches(['\r', '\n']);
+        if c.is_empty() || c.chars().count() > 500 {
+            None
+        } else {
+            Some(c.to_string())
+        }
+    }
+
+    let mut cands: Vec<String> = Vec::with_capacity(3);
+    if let Some(c) = copied.and_then(clean) {
+        cands.push(c);
+    }
+    if let Some(c) = decoded.and_then(clean) {
+        cands.push(c);
+    }
+    cands.push(buffer.to_string());
+
+    cands.sort_by(|a, b| {
+        let ae = crate::chat_text::needs_chat_expansion(a);
+        let be = crate::chat_text::needs_chat_expansion(b);
+        be.cmp(&ae)
+            .then_with(|| b.chars().count().cmp(&a.chars().count()))
+    });
+    cands.into_iter().next().unwrap_or_default()
+}
+
 /// Clear whatever is currently in the chat input line.
 fn clear_chat_line(original: &str) {
     // Select-all + delete
@@ -563,6 +734,18 @@ impl Drop for InjectingGuard {
     }
 }
 
+/// Put the user's previous clipboard back after we steal it for copy/paste.
+struct ClipboardRestore(Option<String>);
+impl Drop for ClipboardRestore {
+    fn drop(&mut self) {
+        if let Some(prev) = self.0.take() {
+            if prev != CLIP_SENTINEL {
+                let _ = set_clipboard_text(&prev);
+            }
+        }
+    }
+}
+
 /// Expand (may network for `!t`) then inject into the game chat box.
 /// Always runs off the hook thread — never block the keyboard hook.
 fn inject_expanded_from_raw(raw: String) {
@@ -570,17 +753,17 @@ fn inject_expanded_from_raw(raw: String) {
         // Claim the injection slot *before* transforming: `!t` can block on the
         // network for seconds and anything typed meanwhile must not land in the
         // buffer we are about to replace.
-        {
+        let keys = {
             let mut st = STATE.lock();
             st.injecting = true;
             st.abort_injection = false;
+            let keys = std::mem::take(&mut st.keys);
             st.buffer.clear();
             // Cover the user's Enter keyup + our whole inject sequence.
             st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
-        }
+            keys
+        };
         let _guard = InjectingGuard;
-
-        let text = crate::chat_text::transform_outgoing_chat(&raw);
 
         // Escape during a slow transform means the user left the chat bar —
         // typing now would feed the expansion to the game as keybinds.
@@ -594,9 +777,6 @@ fn inject_expanded_from_raw(raw: String) {
                 tracing::info!("[ChatExpander] Expansion aborted (Escape)");
                 return;
             }
-            // Extend suppress for slow `!t` transforms so the window still
-            // covers clear/paste/send after the network wait.
-            st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
         }
 
         // Let the swallowed Enter (and any orphaned keyup suppress) settle.
@@ -612,8 +792,45 @@ fn inject_expanded_from_raw(raw: String) {
             return;
         }
 
+        // Read the real typed line from the chat box. The hook buffer is
+        // ASCII-only (no ToUnicode), so "günaydın <3" arrives as "gnaydn <3"
+        // and would wipe the Turkish letters on paste.
+        let _clip_restore = ClipboardRestore(get_clipboard_text());
+        let copied = copy_chat_line();
+        let decoded = decode_typed_keys(&keys);
+        let decoded = if decoded.is_empty() {
+            None
+        } else {
+            Some(decoded)
+        };
+        let source = pick_expand_source(&raw, copied.as_deref(), decoded.as_deref());
+        if source != raw {
+            tracing::debug!(
+                "[ChatExpander] Using in-game line ({} chars) over hook buffer ({} chars)",
+                source.chars().count(),
+                raw.chars().count()
+            );
+        }
+
+        let text = crate::chat_text::transform_outgoing_chat(&source);
+
+        // `!t` may have blocked on the network — re-check Escape and extend
+        // the Enter suppress so it still covers clear/paste/send.
+        {
+            let mut st = STATE.lock();
+            if st.abort_injection {
+                st.injecting = false;
+                st.abort_injection = false;
+                st.buffer.clear();
+                st.suppress_enter_until_ms = 0;
+                tracing::info!("[ChatExpander] Expansion aborted (Escape)");
+                return;
+            }
+            st.suppress_enter_until_ms = now_ms().saturating_add(ENTER_SUPPRESS_MS);
+        }
+
         // Wipe short form (`sa`, `<3`, …) so we never get `saSelamun…`.
-        clear_chat_line(&raw);
+        clear_chat_line(&source);
 
         // Prefer clipboard paste — full string at once, no mid-cut "Selamun A".
         // Retry once: clipboard managers often hold the clip on first OpenClipboard.
@@ -666,11 +883,14 @@ fn inject_expanded_from_raw(raw: String) {
         // Brief tail suppress so our synthetic Enter's pair can't double-send
         // if the user still holds the physical key.
         st.suppress_enter_until_ms = now_ms().saturating_add(200);
+        drop(st);
+
         tracing::info!(
-            "[ChatExpander] Injected {:?} → {:?} (paste={})",
-            raw.trim(),
+            "[ChatExpander] Injected {:?} → {:?} (paste={}, src_chars={})",
+            source.trim(),
             text,
-            pasted
+            pasted,
+            source.chars().count()
         );
     });
 }
@@ -814,13 +1034,14 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
             // Opening the chat bar (first Enter).
             st.chat_open = true;
             st.buffer.clear();
+            st.keys.clear();
             tracing::debug!("[ChatExpander] Chat opened");
             return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
         }
 
         // Chat already open → this Enter is a send (or empty close).
         let raw = st.buffer.clone();
-        let empty = raw.trim().is_empty();
+        let empty = raw.trim().is_empty() && st.keys.is_empty();
         drop(st);
 
         if empty {
@@ -846,6 +1067,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         // Normal message: let Enter through, keep chat open for the next line.
         let mut st = STATE.lock();
         st.buffer.clear();
+        st.keys.clear();
         st.chat_open = true;
         tracing::debug!("[ChatExpander] Normal send, chat stays open");
         return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
@@ -857,14 +1079,21 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         if st.chat_open {
             st.last_activity_ms = now_ms();
             if vk == VK_BACK.0 as u32 {
-                st.buffer.pop();
-            } else if !ctrl_down() {
-                if let Some(ch) = key_to_char(vk) {
-                    // Cap buffer so a stuck-open state can't grow forever.
-                    if st.buffer.len() < 500 {
-                        st.buffer.push(ch);
+                if let Some(k) = st.keys.pop() {
+                    if k.in_buffer {
+                        st.buffer.pop();
                     }
                 }
+            } else if !ctrl_down() && is_typeable_vk(vk) && st.keys.len() < 500 {
+                let ch = key_to_char(vk);
+                if let Some(ch) = ch {
+                    st.buffer.push(ch);
+                }
+                st.keys.push(TypedKey {
+                    vk,
+                    shift: shift_down(),
+                    in_buffer: ch.is_some(),
+                });
             }
         }
     }
@@ -1102,5 +1331,41 @@ pub fn on_enabled_changed(on: bool) {
     st.keys_down = [0; 4];
     if !on && st.injecting {
         st.abort_injection = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_expand_source;
+
+    #[test]
+    fn prefers_turkish_clipboard_over_ascii_buffer() {
+        let src = pick_expand_source("gnaydn <3", Some("günaydın <3"), None);
+        assert_eq!(src, "günaydın <3");
+    }
+
+    #[test]
+    fn prefers_decoded_keys_when_copy_fails() {
+        let src = pick_expand_source("ho; geldin <3", None, Some("hoş geldin <3"));
+        assert_eq!(src, "hoş geldin <3");
+    }
+
+    #[test]
+    fn ignores_stale_clipboard_without_shortcut() {
+        let src = pick_expand_source("merhaba <3", Some("unrelated copied text"), None);
+        assert_eq!(src, "merhaba <3");
+    }
+
+    #[test]
+    fn ignores_empty_or_huge_copy() {
+        assert_eq!(pick_expand_source("sa <3", Some(""), None), "sa <3");
+        let huge = "a <3 ".repeat(200);
+        assert_eq!(pick_expand_source("a <3", Some(&huge), None), "a <3");
+    }
+
+    #[test]
+    fn decoded_beats_mangled_buffer_when_both_expand() {
+        let src = pick_expand_source("Nasilsin <3 kanka", None, Some("Nasılsın <3 kanka"));
+        assert_eq!(src, "Nasılsın <3 kanka");
     }
 }
