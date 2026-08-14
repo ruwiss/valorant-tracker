@@ -23,6 +23,12 @@ pub struct AppState {
     pub in_game_session: RwLock<bool>,
     // Cache for players whose match history has been fetched this game session
     pub fetched_history_players: RwLock<HashSet<String>>,
+    // Throttle history-based party detection so a transient failure is retried
+    // without hammering match-history every 1s poll.
+    pub last_party_history_fetch: RwLock<Option<std::time::Instant>>,
+    // How many presence/own-party passes we have run this match. A late
+    // presence can upgrade a Solo, but we must not hit GLZ every 1s poll.
+    pub party_presence_passes: RwLock<u32>,
     // Cache for player loadouts - puuid -> skins
     pub cached_loadouts: RwLock<HashMap<String, PlayerSkinData>>,
     pub loadouts_match_id: RwLock<Option<String>>,
@@ -92,6 +98,8 @@ impl AppState {
             cached_parties_match_id: RwLock::new(None),
             in_game_session: RwLock::new(false),
             fetched_history_players: RwLock::new(HashSet::new()),
+            last_party_history_fetch: RwLock::new(None),
+            party_presence_passes: RwLock::new(0),
             cached_loadouts: RwLock::new(HashMap::new()),
             loadouts_match_id: RwLock::new(None),
             cached_ranks: RwLock::new(HashMap::new()),

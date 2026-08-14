@@ -14,6 +14,7 @@ mod single_instance;
 mod state;
 mod usage;
 mod last_match;
+mod party;
 
 use single_instance::{SingleInstanceGuard, SingleInstanceResult};
 use state::AppState;

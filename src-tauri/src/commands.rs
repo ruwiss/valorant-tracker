@@ -761,11 +761,16 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     };
                     let puuids: Vec<String> =
                         team.players.iter().map(|p| p.subject.clone()).collect();
+                    let team_of: HashMap<String, String> = puuids
+                        .iter()
+                        .map(|p| (p.clone(), team.team_id.clone()))
+                        .collect();
 
                     let names = api.get_player_names(&puuids).await;
 
                     // Get parties with caching - only fetch once per match
-                    let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
+                    let parties =
+                        get_cached_parties(&state, &match_id, &puuids, &team_of, api).await;
 
                     // Note: Auto-lock is handled by the background supervisor to avoid blocking this function
 
@@ -935,11 +940,17 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         .iter()
                         .map(|p| p.subject.clone())
                         .collect();
+                    let team_of: HashMap<String, String> = match_data
+                        .players
+                        .iter()
+                        .map(|p| (p.subject.clone(), p.team_id.clone()))
+                        .collect();
 
                     let names = api.get_player_names(&puuids).await;
 
                     // Get parties with caching
-                    let parties = get_cached_parties(&state, &match_id, &puuids, api).await;
+                    let parties =
+                        get_cached_parties(&state, &match_id, &puuids, &team_of, api).await;
 
                     let my_team = match_data
                         .players
@@ -1350,8 +1361,11 @@ async fn get_cached_parties(
     state: &AppState,
     match_id: &str,
     puuids: &[String],
+    team_of: &HashMap<String, String>,
     api: &crate::api::ValorantAPI,
 ) -> HashMap<String, String> {
+    use crate::party::{is_group_tag, seed_from_last_match};
+
     // Mark that we're in a game session
     *state.in_game_session.write() = true;
 
@@ -1369,58 +1383,84 @@ async fn get_cached_parties(
             }
             state.cached_parties.write().clear();
             state.fetched_history_players.write().clear();
+            *state.last_party_history_fetch.write() = None;
+            *state.party_presence_passes.write() = 0;
             *state.cached_parties_match_id.write() = Some(match_id.to_string());
         }
     }
 
-    // Get existing cached parties
+    // Instant seed from the last completed match (same people who stacked
+    // there and are still on the same side this game).
+    if let Some(last) = state.last_match.read().clone() {
+        let cached = state.cached_parties.read().clone();
+        let seeded = seed_from_last_match(&last, puuids, team_of, &cached);
+        if !seeded.is_empty() {
+            let mut cache = state.cached_parties.write();
+            for (puuid, tag) in seeded {
+                if !cache.get(&puuid).is_some_and(|t| is_group_tag(t)) {
+                    cache.insert(puuid, tag);
+                }
+            }
+        }
+    }
+
     let cached = state.cached_parties.read().clone();
 
-    // Check if all players are already cached
-    let all_cached = puuids.iter().all(|p| cached.contains_key(p));
-    if all_cached {
+    // Everyone already in a confirmed group — nothing left to detect.
+    if puuids
+        .iter()
+        .all(|p| cached.get(p).is_some_and(|t| is_group_tag(t)))
+    {
         return cached;
     }
 
-    // Determine which players need history fetch (not fetched before this game session)
-    let players_needing_fetch: Vec<String> = {
+    // History only for players we have not successfully fetched yet and who
+    // are still ungrouped.
+    let mut players_needing_fetch: Vec<String> = {
         let fetched = state.fetched_history_players.read();
         puuids
             .iter()
             .filter(|p| !fetched.contains(*p))
+            .filter(|p| !cached.get(*p).is_some_and(|t| is_group_tag(t)))
             .cloned()
             .collect()
     };
 
-    // If no new players to fetch, return existing cache + mark missing as Solo
-    if players_needing_fetch.is_empty() {
-        let mut result = cached;
-        for puuid in puuids {
-            if !result.contains_key(puuid) {
-                result.insert(puuid.clone(), "Solo".into());
-            }
+    if !players_needing_fetch.is_empty() {
+        let too_soon = state
+            .last_party_history_fetch
+            .read()
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5));
+        if too_soon {
+            players_needing_fetch.clear();
+        } else {
+            *state.last_party_history_fetch.write() = Some(std::time::Instant::now());
         }
-        return result;
     }
 
-    // Fetch parties - pass ALL puuids but only fetch history for new players
-    // This ensures consistent party numbering across the entire lobby
-    let new_parties = api
-        .detect_parties_with_cache(puuids, &players_needing_fetch, &cached)
+    // A late presence can upgrade a Solo, but GLZ party/presence must not
+    // run on every 1s poll. After a few passes, only continue for history.
+    const PRESENCE_PASSES: u32 = 3;
+    let presence_passes = *state.party_presence_passes.read();
+    if presence_passes >= PRESENCE_PASSES && players_needing_fetch.is_empty() {
+        return cached;
+    }
+
+    let detected = api
+        .detect_parties_with_cache(puuids, &players_needing_fetch, &cached, team_of)
         .await;
 
-    // Mark these players as fetched
     {
         let mut fetched = state.fetched_history_players.write();
-        for p in &players_needing_fetch {
-            fetched.insert(p.clone());
+        for p in detected.history_fetched {
+            fetched.insert(p);
         }
     }
 
-    // Update party cache with merged result
-    *state.cached_parties.write() = new_parties.clone();
+    *state.cached_parties.write() = detected.parties.clone();
+    *state.party_presence_passes.write() += 1;
 
-    new_parties
+    detected.parties
 }
 
 #[tauri::command]

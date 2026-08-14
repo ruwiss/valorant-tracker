@@ -217,11 +217,15 @@ pub struct Presence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PresencePrivate {
+    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_id: Option<String>,
     // Live match info exposed by the Riot client in our own presence. Used to
     // surface the round score (the GLZ match endpoints do not include it).
+    #[serde(default, deserialize_with = "lenient_opt")]
     pub session_loop_state: Option<String>, // "MENUS" | "PREGAME" | "INGAME"
+    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_score_ally_team: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_score_enemy_team: Option<i32>,
 }
 

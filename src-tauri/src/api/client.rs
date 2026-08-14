@@ -5,7 +5,9 @@ use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use parking_lot::RwLock;
 use rquest_util::Emulation;
-use std::collections::HashMap;
+use crate::party::{self, is_group_tag};
+use futures_util::future::join_all;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -1756,17 +1758,29 @@ impl ValorantAPI {
 
     /// Get match history for a player (last N matches)
     pub async fn get_match_history(&self, puuid: &str, count: u32) -> Vec<String> {
+        self.get_match_history_opt(puuid, count)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Like [`get_match_history`], but `None` means the request failed (retry).
+    /// `Some(vec)` is a successful parse — empty when the player has no games.
+    pub async fn get_match_history_opt(&self, puuid: &str, count: u32) -> Option<Vec<String>> {
         let url = self.pd_url(&format!(
             "/match-history/v1/history/{}?startIndex=0&endIndex={}",
             puuid, count
         ));
 
-        if let Some(data) = self.get_remote::<MatchHistoryResponse>(&url).await {
-            if let Some(history) = data.history {
-                return history.into_iter().map(|h| h.match_id).collect();
-            }
+        match self.get_remote_ex::<MatchHistoryResponse>(&url).await {
+            RemoteResult::Ok(data) => Some(
+                data.history
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|h| h.match_id)
+                    .collect(),
+            ),
+            _ => None,
         }
-        vec![]
     }
 
     /// Get match details (contains partyId for all players)
@@ -1924,49 +1938,46 @@ impl ValorantAPI {
         self.get_remote(&url).await
     }
 
-    /// Detect parties with player-level caching
-    /// Only fetches match history for players in `players_to_fetch` (once per game session)
-    /// `existing_cache` preserves party assignments from previous calls for consistency
+    /// Detect parties with player-level caching.
+    ///
+    /// Confirmed `Grup-*` tags in `existing_cache` are kept. Solo placeholders
+    /// are re-checked so a late presence or a full history sweep can upgrade them.
+    ///
+    /// History is fetched for **every** player in `players_to_fetch` (not just
+    /// the first) — otherwise a solo first player hides stacks among the rest.
     pub async fn detect_parties_with_cache(
         &self,
         all_puuids: &[String],
         players_to_fetch: &[String],
         existing_cache: &HashMap<String, String>,
-    ) -> HashMap<String, String> {
+        team_of: &HashMap<String, String>,
+    ) -> PartyDetectResult {
+        const HISTORY_LOOKBACK: u32 = 5;
+        const HISTORY_CONCURRENCY: usize = 4;
+        const MAX_DETAIL_MATCHES: usize = 8;
+
         let mut party_map: HashMap<String, String> = HashMap::new();
         let mut party_id_to_num: HashMap<String, u32> = HashMap::new();
+        let mut history_fetched: HashSet<String> = HashSet::new();
 
-        // Start numbering from existing cache to maintain consistency
-        let mut next_party_num: u32 = 1;
-        for tag in existing_cache.values() {
-            if tag.starts_with("Grup-") {
-                if let Ok(num) = tag.trim_start_matches("Grup-").parse::<u32>() {
-                    if num >= next_party_num {
-                        next_party_num = num + 1;
-                    }
-                }
+        let mut next_party_num = party::next_group_num(existing_cache);
+
+        // Step 1: Keep only confirmed groups. Solo is a placeholder, not a fact.
+        for (puuid, party) in existing_cache {
+            if is_group_tag(party) {
+                party_map.insert(puuid.clone(), party.clone());
             }
         }
 
-        // Step 1: Preserve existing cache entries
-        for (puuid, party) in existing_cache {
-            party_map.insert(puuid.clone(), party.clone());
-        }
-
-        // Step 2: Get my party and presences for new players
+        // Step 2: Own party + friend presences (live, accurate when available)
         let (my_party_id, my_party_members) = self.get_my_party().await;
         let presences = self.get_presences().await;
 
-        let mut found_via_presence: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-
         for puuid in all_puuids {
-            // Skip if already in cache
-            if party_map.contains_key(puuid) {
+            if party_map.get(puuid).is_some_and(|t| is_group_tag(t)) {
                 continue;
             }
 
-            // Check my party
             if let Some(ref my_pid) = my_party_id {
                 if my_party_members.contains(puuid) {
                     if !party_id_to_num.contains_key(my_pid) {
@@ -1974,12 +1985,10 @@ impl ValorantAPI {
                         next_party_num += 1;
                     }
                     party_map.insert(puuid.clone(), format!("Grup-{}", party_id_to_num[my_pid]));
-                    found_via_presence.insert(puuid.clone());
                     continue;
                 }
             }
 
-            // Check presences (friends)
             if let Some(friend_party_id) = presences.get(puuid) {
                 if !party_id_to_num.contains_key(friend_party_id) {
                     party_id_to_num.insert(friend_party_id.clone(), next_party_num);
@@ -1989,85 +1998,141 @@ impl ValorantAPI {
                     puuid.clone(),
                     format!("Grup-{}", party_id_to_num[friend_party_id]),
                 );
-                found_via_presence.insert(puuid.clone());
             }
         }
 
-        // Step 3: For players not found via presence AND in players_to_fetch, use match history
+        // Step 3: Recent-match sweep for everyone still unknown
         let need_history: Vec<String> = players_to_fetch
             .iter()
-            .filter(|p| !found_via_presence.contains(*p) && !party_map.contains_key(*p))
+            .filter(|p| !party_map.get(*p).is_some_and(|t| is_group_tag(t)))
             .cloned()
             .collect();
 
         if !need_history.is_empty() {
-            // Pick first player that needs history to fetch last 3 matches
-            if let Some(first_puuid) = need_history.first() {
-                let match_ids = self.get_match_history(first_puuid, 3).await;
+            let lobby: HashSet<&str> = all_puuids.iter().map(|s| s.as_str()).collect();
+            let mut histories: HashMap<String, Vec<String>> = HashMap::new();
 
-                // Collect party info from matches
-                let mut match_parties: HashMap<String, String> = HashMap::new();
+            let mut remaining = need_history.clone();
+            while !remaining.is_empty() {
+                let n = HISTORY_CONCURRENCY.min(remaining.len());
+                let chunk: Vec<String> = remaining.drain(..n).collect();
+                let futs: Vec<_> = chunk
+                    .iter()
+                    .map(|puuid| {
+                        let p = puuid.clone();
+                        async move {
+                            let hist = self.get_match_history_opt(&p, HISTORY_LOOKBACK).await;
+                            (p, hist)
+                        }
+                    })
+                    .collect();
+                for (puuid, hist) in join_all(futs).await {
+                    if let Some(ids) = hist {
+                        history_fetched.insert(puuid.clone());
+                        histories.insert(puuid, ids);
+                    }
+                }
+            }
 
-                for match_id in &match_ids {
-                    if let Some(details) = self.get_match_details(match_id).await {
-                        if let Some(players) = details.players {
-                            for p in players {
-                                if !match_parties.contains_key(&p.subject) {
-                                    match_parties.insert(p.subject.clone(), p.party_id.clone());
-                                }
-                            }
+            // Prefer matches that appear in several lobby histories, then
+            // more recent games, capped so we don't fetch 30 match-details.
+            let mut candidates: Vec<String> = Vec::new();
+            let mut seen_matches: HashSet<String> = HashSet::new();
+            for depth in 0..HISTORY_LOOKBACK as usize {
+                for ids in histories.values() {
+                    if let Some(id) = ids.get(depth) {
+                        if seen_matches.insert(id.clone()) {
+                            candidates.push(id.clone());
                         }
                     }
                 }
+                if candidates.len() >= MAX_DETAIL_MATCHES {
+                    break;
+                }
+            }
+            candidates.truncate(MAX_DETAIL_MATCHES);
 
-                // Apply party info to ALL players needing it (not just need_history)
-                // This catches teammates who might be in the same match
-                for puuid in all_puuids {
-                    if party_map.contains_key(puuid) {
-                        continue;
-                    }
-
-                    if let Some(party_id) = match_parties.get(puuid) {
-                        if !party_id.is_empty() {
-                            if !party_id_to_num.contains_key(party_id) {
-                                party_id_to_num.insert(party_id.clone(), next_party_num);
-                                next_party_num += 1;
+            let mut appearances: Vec<party::PartyAppearance> = Vec::new();
+            for match_id in &candidates {
+                if let Some(details) = self.get_match_details(match_id).await {
+                    if let Some(players) = details.players {
+                        for p in players {
+                            if lobby.contains(p.subject.as_str()) && !p.party_id.is_empty() {
+                                appearances.push((
+                                    p.subject,
+                                    match_id.clone(),
+                                    p.party_id,
+                                ));
                             }
-                            party_map.insert(
-                                puuid.clone(),
-                                format!("Grup-{}", party_id_to_num[party_id]),
-                            );
                         }
                     }
                 }
             }
+
+            let clusters = party::cluster_historical_parties(&appearances, team_of);
+            let mut cluster_to_tag: HashMap<u32, String> = HashMap::new();
+            for (puuid, cluster_id) in &clusters {
+                if let Some(existing) = party_map.get(puuid).filter(|t| is_group_tag(t)) {
+                    cluster_to_tag
+                        .entry(*cluster_id)
+                        .or_insert_with(|| existing.clone());
+                }
+            }
+            for (puuid, cluster_id) in clusters {
+                if party_map.get(&puuid).is_some_and(|t| is_group_tag(t)) {
+                    continue;
+                }
+                let tag = cluster_to_tag.entry(cluster_id).or_insert_with(|| {
+                    let t = format!("Grup-{}", next_party_num);
+                    next_party_num += 1;
+                    t
+                });
+                party_map.insert(puuid, tag.clone());
+            }
+
+            tracing::info!(
+                "[parties] history sweep: fetched={}/{} matches={} clustered={}",
+                history_fetched.len(),
+                need_history.len(),
+                candidates.len(),
+                party_map.values().filter(|t| is_group_tag(t)).count()
+            );
         }
 
-        // Step 4: Mark remaining as Solo
+        // Step 4: Remaining players are Solo for this pass
         for puuid in all_puuids {
             if !party_map.contains_key(puuid) {
                 party_map.insert(puuid.clone(), "Solo".into());
             }
         }
 
-        // Step 5: Filter single-person groups (but preserve existing cache assignments)
+        // Step 5: Collapse 1-person Grup-* tags (keep previously confirmed ones)
         let mut party_sizes: HashMap<String, u32> = HashMap::new();
         for tag in party_map.values() {
             *party_sizes.entry(tag.clone()).or_insert(0) += 1;
         }
 
         for (puuid, tag) in party_map.iter_mut() {
-            // Don't modify entries that were in existing cache
-            if existing_cache.contains_key(puuid) {
+            if existing_cache.get(puuid).is_some_and(|t| is_group_tag(t)) {
                 continue;
             }
-            if tag.starts_with("Grup-") && party_sizes.get(tag).copied().unwrap_or(0) == 1 {
+            if is_group_tag(tag) && party_sizes.get(tag).copied().unwrap_or(0) == 1 {
                 *tag = "Solo".into();
             }
         }
 
-        party_map
+        PartyDetectResult {
+            parties: party_map,
+            history_fetched,
+        }
     }
+}
+
+/// Result of a live party-detection pass.
+pub struct PartyDetectResult {
+    pub parties: HashMap<String, String>,
+    /// Players whose match-history request succeeded (empty list counts).
+    pub history_fetched: HashSet<String>,
 }
 
 impl ValorantAPI {
