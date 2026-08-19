@@ -208,7 +208,15 @@ pub static MAP_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     m.insert("/Game/Maps/Foxtrot/Foxtrot", "Breeze");
     m.insert("/Game/Maps/HURM/HURM_Alley/HURM_Alley", "District");
     m.insert("/Game/Maps/HURM/HURM_Bowl/HURM_Bowl", "Kasbah");
+    m.insert("/Game/Maps/HURM/HURM_Helix/HURM_Helix", "Drift");
+    m.insert("/Game/Maps/HURM/HURM_HighTide/HURM_HighTide", "Glitch");
     m.insert("/Game/Maps/HURM/HURM_Yard/HURM_Yard", "Piazza");
+    m.insert("/Game/Maps/Duel/Duel_1/Skirmish_A", "Skirmish A");
+    m.insert("/Game/Maps/Duel/Duel_2/Skirmish_B", "Skirmish B");
+    m.insert("/Game/Maps/Duel/Duel_3/Skirmish_C", "Skirmish C");
+    m.insert("/Game/Maps/Duel/Duel_Platform/Skirmish_D", "Skirmish D");
+    m.insert("/Game/Maps/Duel/Duel_Heady/Skirmish_E", "Skirmish E");
+    m.insert("/Game/Maps/NPEV2/NPEV2", "Basic Training");
     m.insert("/Game/Maps/Jam/Jam", "Lotus");
     m.insert("/Game/Maps/Juliett/Juliett", "Sunset");
     m.insert("/Game/Maps/Pitt/Pitt", "Pearl");

@@ -643,7 +643,7 @@ impl ValorantAPI {
         }
 
         tracing::warn!("[Initialize] Using hardcoded fallback client version");
-        "release-13.02-shipping-10-5229475".to_string()
+        "release-13.04-shipping-18-5304478".to_string()
     }
 
     /// Parse `CI server version: release-XX.YY-shipping-N-NNNNNNN` from the
@@ -661,7 +661,7 @@ impl ValorantAPI {
         // Prefer the last "CI server version:" line — log is append-only across sessions.
         let mut found: Option<String> = None;
         for line in content.lines() {
-            // Example: "CI server version: release-13.02-shipping-10-5229475"
+            // Example: "CI server version: release-13.04-shipping-18-5304478"
             if let Some(idx) = line.find("CI server version:") {
                 let rest = line[idx + "CI server version:".len()..].trim();
                 let ver = rest

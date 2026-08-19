@@ -294,15 +294,16 @@ export function PlayerPanel() {
 				buddyMetaCache.set(apiLocale, new Map());
 			const buddyCache = buddyMetaCache.get(apiLocale)!;
 			const buddyIds = data.skins
-				.map((s) => s.buddy_id)
+				.map((s) => s.buddy_id?.toLowerCase())
 				.filter((id): id is string => !!id && !buddyCache.has(id));
 			if (buddyIds.length > 0)
 				await fetchBuddyMeta(buddyIds, apiLocale, buddyCache);
 			const bMeta = new Map<string, BuddyInfo>();
 			data.skins.forEach((s) => {
 				if (s.buddy_id) {
-					const b = buddyCache.get(s.buddy_id);
-					if (b) bMeta.set(s.buddy_id, b);
+					const buddyId = s.buddy_id.toLowerCase();
+					const b = buddyCache.get(buddyId);
+					if (b) bMeta.set(buddyId, b);
 				}
 			});
 			setBuddyMeta(bMeta);
@@ -340,28 +341,46 @@ export function PlayerPanel() {
 			);
 			if (!res.ok) return;
 			const json = await res.json();
-			// Normalize skinIds to lowercase for consistent comparison
-			const lowerSkinIds = skinIds.map((id) => id.toLowerCase());
+			const wanted = new Set(skinIds.map((id) => id.toLowerCase()));
 			for (const skin of json.data || []) {
-				const skinUuidLower = skin.uuid.toLowerCase();
-				if (lowerSkinIds.includes(skinUuidLower)) {
-					cache.set(skinUuidLower, {
+				const relatedIds = [
+					skin.uuid,
+					...(skin.chromas || []).map((chroma: { uuid?: string }) => chroma.uuid),
+					...(skin.levels || []).map((level: { uuid?: string }) => level.uuid),
+				]
+					.map((id) => String(id || "").toLowerCase())
+					.filter(Boolean);
+				if (!relatedIds.some((id) => wanted.has(id))) continue;
+
+				const fallbackIcon =
+					skin.displayIcon ||
+					skin.chromas?.[0]?.displayIcon ||
+					skin.chromas?.[0]?.fullRender ||
+					skin.levels?.[0]?.displayIcon ||
+					"";
+
+				if (skin.uuid) {
+					cache.set(skin.uuid.toLowerCase(), {
 						name: skin.displayName || "Unknown",
-						icon: skin.displayIcon || skin.chromas?.[0]?.displayIcon || "",
+						icon: fallbackIcon,
 					});
 				}
 				for (const chroma of skin.chromas || []) {
-					const chromaUuidLower = chroma.uuid.toLowerCase();
-					if (lowerSkinIds.includes(chromaUuidLower)) {
-						cache.set(chromaUuidLower, {
-							name: chroma.displayName || skin.displayName || "Unknown",
-							icon:
-								chroma.displayIcon ||
-								chroma.fullRender ||
-								skin.displayIcon ||
-								"",
-						});
-					}
+					if (!chroma.uuid) continue;
+					cache.set(chroma.uuid.toLowerCase(), {
+						name: chroma.displayName || skin.displayName || "Unknown",
+						icon:
+							chroma.displayIcon ||
+							chroma.fullRender ||
+							fallbackIcon,
+					});
+				}
+				for (const level of skin.levels || []) {
+					if (!level.uuid) continue;
+					cache.set(level.uuid.toLowerCase(), {
+						name: skin.displayName || "Unknown",
+						icon: level.displayIcon || fallbackIcon,
+					});
 				}
 			}
 		} catch (err) {
@@ -380,16 +399,19 @@ export function PlayerPanel() {
 			);
 			if (!res.ok) return;
 			const json = await res.json();
+			const wanted = new Set(buddyIds.map((id) => id.toLowerCase()));
 			for (const buddy of json.data || []) {
-				if (buddyIds.includes(buddy.uuid)) {
-					cache.set(buddy.uuid, {
+				const buddyUuid = String(buddy.uuid || "").toLowerCase();
+				if (wanted.has(buddyUuid)) {
+					cache.set(buddyUuid, {
 						name: buddy.displayName || "Unknown",
 						icon: buddy.displayIcon || "",
 					});
 				}
 				for (const level of buddy.levels || []) {
-					if (buddyIds.includes(level.uuid)) {
-						cache.set(level.uuid, {
+					const levelUuid = String(level.uuid || "").toLowerCase();
+					if (wanted.has(levelUuid)) {
+						cache.set(levelUuid, {
 							name: buddy.displayName || "Unknown",
 							icon: level.displayIcon || buddy.displayIcon || "",
 						});

@@ -50,9 +50,15 @@ const tierColorCache = new Map<string, string>(); // tier uuid -> highlight colo
 
 const FALLBACK_TIER = "#5a6b7a"; // muted steel for standard / unknown rarity
 
-async function ensureSkinLevelCache(apiLocale: string): Promise<Map<string, SkinLevelInfo>> {
+async function ensureSkinLevelCache(
+  apiLocale: string,
+  requiredIds: string[] = [],
+): Promise<Map<string, SkinLevelInfo>> {
   let cache = skinLevelCache.get(apiLocale);
-  if (cache && cache.size > 0) return cache;
+  const missingRequired =
+    requiredIds.length > 0 &&
+    requiredIds.some((id) => !cache?.has(id.toLowerCase()));
+  if (cache && cache.size > 0 && !missingRequired) return cache;
   cache = new Map();
   try {
     const res = await fetch(`https://valorant-api.com/v1/weapons/skins?language=${apiLocale}`);
@@ -195,8 +201,6 @@ export function ShopPanel() {
       const [data, walletData] = await Promise.all([
         invokeCommand<StorefrontData | null>("get_storefront"),
         invokeCommand<WalletData | null>("get_wallet").catch(() => null),
-        ensureSkinLevelCache(apiLocale),
-        ensureWeaponNameCache(),
         ensureTierColorCache(),
       ]);
 
@@ -206,7 +210,18 @@ export function ShopPanel() {
         return;
       }
 
-      const cache = skinLevelCache.get(apiLocale) || new Map();
+      const offerIds = [
+        ...data.daily_offers.map((o) => o.skin_level_id),
+        ...(data.night_market || []).map((o) => o.skin_level_id),
+      ];
+      if (offerIds.some((id) => !weaponNameCache.has(id.toLowerCase()))) {
+        weaponNameCache.clear();
+      }
+
+      const [cache] = await Promise.all([
+        ensureSkinLevelCache(apiLocale, offerIds),
+        ensureWeaponNameCache(),
+      ]);
       setInfo(new Map(cache));
       setStore(data);
       setWallet(walletData);
