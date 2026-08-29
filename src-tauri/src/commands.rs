@@ -183,6 +183,9 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
                     poll_interval_ms = POLL_WAITING_MS;
                     consecutive_connect_failures = WAITING_AFTER_FAILURES;
+                    #[cfg(windows)]
+                    crate::chat_expander::on_match_phase("idle");
+                    last_phase = "idle".into();
                     tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
                     backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
                     continue;
@@ -283,6 +286,12 @@ pub fn start_supervisor(app: tauri::AppHandle) {
 
                 // Live match just ended → refresh last-match recap (details lag).
                 let phase = current_state.state.as_str();
+                if last_phase != phase {
+                    // Valorant tears down the chat widget between matches;
+                    // stale expander state made sa/!t die after a few games.
+                    #[cfg(windows)]
+                    crate::chat_expander::on_match_phase(phase);
+                }
                 if (last_phase == "pregame" || last_phase == "ingame") && phase == "idle" {
                     crate::last_match::spawn_refresh(
                         app.clone(),

@@ -32,7 +32,12 @@
 //! - A short idle timeout used to treat "chat left open between rounds" as
 //!   closed. The next `sa` was not buffered and went out raw. Held gameplay
 //!   keys (WASD auto-repeat) are the signal that chat actually closed.
-//!
+//! - After a match Valorant tears down the chat widget. If `chat_open` stayed
+//!   true the next Enter looked like a send; if it was already false,
+//!   `Focus::Unknown` (exclusive-fullscreen null HWND, or the poller stuck on
+//!   `FG_NEUTRAL` because it only reclassified on pid change) refused to
+//!   re-arm the bar — shortcuts died until app restart.
+
 //! # Staying alive
 //!
 //! Windows enforces `LowLevelHooksTimeout` (~300 ms by default) on
@@ -229,7 +234,7 @@ fn needs_expansion(raw: &str) -> bool {
 }
 
 /// What currently owns keyboard focus, from the hook's point of view.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Focus {
     Valorant,
     Other,
@@ -255,17 +260,42 @@ fn foreground_pid() -> u32 {
 /// Hook-safe focus check: compares the live foreground pid against the one the
 /// poller already classified. Must stay allocation- and syscall-light so the
 /// callback never trips `LowLevelHooksTimeout`.
-fn focus_state() -> Focus {
-    let pid = foreground_pid();
-    if pid == 0 || pid != FG_PID.load(Ordering::Acquire) {
+fn classify_focus(live_pid: u32, fg_pid: u32, fg_kind: u32) -> Focus {
+    if live_pid == 0 {
+        // Exclusive fullscreen: GetForegroundWindow is often null while
+        // Valorant still has input. Trust last VALORANT; otherwise Unknown
+        // so we do not close the bar the way Other would.
+        return match fg_kind {
+            FG_VALORANT => Focus::Valorant,
+            _ => Focus::Unknown,
+        };
+    }
+    if live_pid != fg_pid {
         return Focus::Unknown;
     }
-    match FG_KIND.load(Ordering::Relaxed) {
+    match fg_kind {
         FG_VALORANT => Focus::Valorant,
         FG_NEUTRAL => Focus::Unknown,
         _ => Focus::Other,
     }
 }
+
+fn focus_state() -> Focus {
+    classify_focus(
+        foreground_pid(),
+        FG_PID.load(Ordering::Acquire),
+        FG_KIND.load(Ordering::Relaxed),
+    )
+}
+
+/// Re-resolve focus when the pid/tid changed, or while we are not sure it is
+/// Valorant. Vanguard starts blocking `OpenProcess` mid-session; a one-shot
+/// NEUTRAL classification used to stick for the rest of the process lifetime
+/// because the poller only ran `classify_pid` on pid change.
+fn needs_reclassify(pid: u32, tid: u32, prev_pid: u32, prev_tid: u32, prev_kind: u32) -> bool {
+    pid != prev_pid || tid != prev_tid || prev_kind != FG_VALORANT
+}
+
 
 fn hwnd_title_is_valorant(hwnd: HWND) -> bool {
     unsafe {
@@ -349,12 +379,26 @@ fn start_foreground_poller() {
                 }
                 let mut pid: u32 = 0;
                 let tid = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                if pid != 0 && pid != FG_PID.load(Ordering::Relaxed) {
-                    let kind = classify_pid(pid, hwnd);
-                    // Publish the classification before the pid it belongs to.
-                    FG_KIND.store(kind, Ordering::Relaxed);
-                    FG_TID.store(tid, Ordering::Relaxed);
-                    FG_PID.store(pid, Ordering::Release);
+                if pid != 0 {
+                    let prev_pid = FG_PID.load(Ordering::Relaxed);
+                    let prev_tid = FG_TID.load(Ordering::Relaxed);
+                    let prev_kind = FG_KIND.load(Ordering::Relaxed);
+                    if needs_reclassify(pid, tid, prev_pid, prev_tid, prev_kind) {
+                        let kind = classify_pid(pid, hwnd);
+                        // Publish the classification before the pid it belongs to.
+                        FG_KIND.store(kind, Ordering::Relaxed);
+                        FG_TID.store(tid, Ordering::Relaxed);
+                        FG_PID.store(pid, Ordering::Release);
+                        if kind != prev_kind || pid != prev_pid {
+                            tracing::debug!(
+                                "[ChatExpander] Focus pid {} → {} kind {} → {}",
+                                prev_pid,
+                                pid,
+                                prev_kind,
+                                kind
+                            );
+                        }
+                    }
                 }
             }
             // Faster than the old 150 ms — reduces Focus::Unknown windows that
@@ -972,7 +1016,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     }
 
     // Focus::Unknown used to hard-drop keys (poller lag) — fatal for 2-letter
-    // shortcuts like `sa`. If chat is already open, keep buffering.
+    // shortcuts like `sa`. Keep going: Enter must be able to re-open the bar
+    // after a match, even while the poller/HWND has not caught up.
     match focus_state() {
         Focus::Valorant => {
             OTHER_SINCE_MS.store(0, Ordering::Relaxed);
@@ -996,9 +1041,6 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         }
         Focus::Unknown => {
             OTHER_SINCE_MS.store(0, Ordering::Relaxed);
-            if !STATE.lock().chat_open {
-                return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
-            }
         }
     }
 
@@ -1334,9 +1376,27 @@ pub fn on_enabled_changed(on: bool) {
     }
 }
 
+/// Valorant tears down the chat widget on phase changes (match end, agent
+/// select, menus). Stale `chat_open` makes the next Enter look like a send,
+/// and with Focus::Unknown the expander never re-armed until restart.
+pub fn on_match_phase(phase: &str) {
+    let mut st = STATE.lock();
+    if st.injecting {
+        return;
+    }
+    if st.chat_open || !st.buffer.is_empty() {
+        tracing::debug!("[ChatExpander] Phase {phase} — resetting chat bar state");
+        close_chat(&mut st);
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
-    use super::pick_expand_source;
+    use super::{
+        classify_focus, needs_reclassify, pick_expand_source, Focus, FG_NEUTRAL, FG_OTHER,
+        FG_VALORANT,
+    };
 
     #[test]
     fn prefers_turkish_clipboard_over_ascii_buffer() {
@@ -1367,5 +1427,42 @@ mod tests {
     fn decoded_beats_mangled_buffer_when_both_expand() {
         let src = pick_expand_source("Nasilsin <3 kanka", None, Some("Nasılsın <3 kanka"));
         assert_eq!(src, "Nasılsın <3 kanka");
+    }
+
+    #[test]
+    fn exclusive_fullscreen_null_hwnd_keeps_valorant() {
+        assert_eq!(
+            classify_focus(0, 4242, FG_VALORANT),
+            Focus::Valorant
+        );
+    }
+
+    #[test]
+    fn exclusive_fullscreen_null_hwnd_does_not_look_like_other_app() {
+        // Overlay was last classified, then the game went exclusive-fullscreen.
+        // Other would close the bar after 400ms; Unknown lets Enter re-open it.
+        assert_eq!(classify_focus(0, 99, FG_OTHER), Focus::Unknown);
+        assert_eq!(classify_focus(0, 99, FG_NEUTRAL), Focus::Unknown);
+    }
+
+    #[test]
+    fn pid_mismatch_is_unknown_until_poller_catches_up() {
+        assert_eq!(classify_focus(100, 200, FG_VALORANT), Focus::Unknown);
+    }
+
+    #[test]
+    fn matching_pid_uses_kind() {
+        assert_eq!(classify_focus(7, 7, FG_VALORANT), Focus::Valorant);
+        assert_eq!(classify_focus(7, 7, FG_NEUTRAL), Focus::Unknown);
+        assert_eq!(classify_focus(7, 7, FG_OTHER), Focus::Other);
+    }
+
+    #[test]
+    fn reclassify_while_stuck_neutral_even_if_pid_unchanged() {
+        assert!(needs_reclassify(10, 1, 10, 1, FG_NEUTRAL));
+        assert!(needs_reclassify(10, 1, 10, 1, FG_OTHER));
+        assert!(!needs_reclassify(10, 1, 10, 1, FG_VALORANT));
+        assert!(needs_reclassify(11, 1, 10, 1, FG_VALORANT));
+        assert!(needs_reclassify(10, 2, 10, 1, FG_VALORANT));
     }
 }
