@@ -147,6 +147,11 @@ static LAST_RECYCLE_MS: AtomicU64 = AtomicU64::new(0);
 static FG_PID: AtomicU32 = AtomicU32::new(0);
 static FG_TID: AtomicU32 = AtomicU32::new(0);
 static FG_KIND: AtomicU32 = AtomicU32::new(FG_OTHER);
+/// Foreground keyboard layout (HKL bits). Poller writes, hook reads.
+static FG_HKL: AtomicUsize = AtomicUsize::new(0);
+/// vk*2+shift → Unicode scalar (0 = unmapped). Rebuilt off the hook thread.
+static LAYOUT_CHARS: Mutex<[u32; 512]> = Mutex::new([0; 512]);
+
 /// When Focus::Other first became stable, for `FOCUS_OTHER_GRACE_MS`.
 static OTHER_SINCE_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -380,6 +385,7 @@ fn start_foreground_poller() {
                 let mut pid: u32 = 0;
                 let tid = GetWindowThreadProcessId(hwnd, Some(&mut pid));
                 if pid != 0 {
+                    refresh_layout_map(GetKeyboardLayout(tid));
                     let prev_pid = FG_PID.load(Ordering::Relaxed);
                     let prev_tid = FG_TID.load(Ordering::Relaxed);
                     let prev_kind = FG_KIND.load(Ordering::Relaxed);
@@ -400,6 +406,7 @@ fn start_foreground_poller() {
                         }
                     }
                 }
+
             }
             // Faster than the old 150 ms — reduces Focus::Unknown windows that
             // used to drop short shortcuts like `sa` mid-type.
@@ -419,11 +426,32 @@ fn ctrl_down() -> bool {
 /// Map a virtual-key to a typed character without `ToUnicode` / `GetKeyboardState`.
 /// Those APIs are layout-aware but routinely stall a `WH_KEYBOARD_LL` callback
 /// past `LowLevelHooksTimeout` (especially with TR-Q / IME), after which Windows
-/// silently unhooks us. ASCII + OEM is enough to *detect* `sa` / `as` / `<3` /
-/// `!t`. The real line (Turkish letters included) is read from the chat box
-/// via clipboard right before expansion — never reconstruct Unicode from here.
+/// silently unhooks us.
+///
+/// The foreground poller precomputes a vk+shift table with `ToUnicodeEx` so
+/// TR-Q Shift+period is `:` (not US `>`). Falling back to US-QWERTY used to
+/// turn `:D` into `>D`, which the expander then treated as an enemy agent tag
+/// and pasted the mangled buffer. The real line (Turkish letters included) is
+/// still read from the chat box via clipboard right before expansion.
 fn key_to_char(vk: u32) -> Option<char> {
     let shift = shift_down();
+    if FG_HKL.load(Ordering::Relaxed) != 0 {
+        layout_char(vk, shift)
+    } else {
+        key_to_char_us(vk, shift)
+    }
+}
+
+fn layout_char(vk: u32, shift: bool) -> Option<char> {
+    if vk > 255 {
+        return None;
+    }
+    let n = LAYOUT_CHARS.lock()[(vk as usize) * 2 + shift as usize];
+    char::from_u32(n).filter(|c| *c != '\0')
+}
+
+/// US-QWERTY fallback used only before the first layout snapshot.
+fn key_to_char_us(vk: u32, shift: bool) -> Option<char> {
     match vk {
         // 0-9
         0x30..=0x39 => {
@@ -459,6 +487,43 @@ fn key_to_char(vk: u32) -> Option<char> {
         _ => None,
     }
 }
+
+/// Rebuild the hook's vk→char table for `hkl`. Cheap no-op when layout unchanged.
+fn refresh_layout_map(hkl: windows::Win32::UI::Input::KeyboardAndMouse::HKL) {
+    let raw = hkl.0 as usize;
+    if raw == 0 || FG_HKL.load(Ordering::Relaxed) == raw {
+        return;
+    }
+    let mut cells = [0u32; 512];
+    unsafe {
+        let mut state = [0u8; 256];
+        let mut buf = [0u16; 16];
+        for vk in 0u32..=255 {
+            if !is_typeable_vk(vk) {
+                continue;
+            }
+            let scan = MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, hkl);
+            for shift in [false, true] {
+                state.fill(0);
+                if shift {
+                    state[VK_SHIFT.0 as usize] = 0x80;
+                }
+                let n = ToUnicodeEx(vk, scan, &state, &mut buf, 0, hkl);
+                if n > 0 {
+                    let n = (n as usize).min(buf.len());
+                    if let Some(ch) = char::decode_utf16(buf[..n].iter().copied()).next() {
+                        if let Ok(ch) = ch {
+                            cells[(vk as usize) * 2 + shift as usize] = ch as u32;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    *LAYOUT_CHARS.lock() = cells;
+    FG_HKL.store(raw, Ordering::Relaxed);
+}
+
 
 fn send_vk(vk: VIRTUAL_KEY, down: bool) {
     unsafe {
@@ -691,7 +756,8 @@ fn decode_typed_keys(keys: &[TypedKey]) -> String {
 /// Prefer the real in-game line (clipboard or layout-decoded keys) over the
 /// ASCII hook buffer. A candidate must still look like a shortcut so a stale
 /// clipboard cannot swallow `<3`. Longer wins — Turkish letters make the
-/// real line longer than the mangled buffer.
+/// real line longer than the mangled buffer. Same length: clipboard, then
+/// decoded keys, then the hook buffer — so a copied `:D` beats US-mapped `>D`.
 fn pick_expand_source(buffer: &str, copied: Option<&str>, decoded: Option<&str>) -> String {
     fn clean(s: &str) -> Option<String> {
         let c = s.trim_end_matches(['\r', '\n']);
@@ -702,23 +768,26 @@ fn pick_expand_source(buffer: &str, copied: Option<&str>, decoded: Option<&str>)
         }
     }
 
-    let mut cands: Vec<String> = Vec::with_capacity(3);
+    // 0 = clipboard, 1 = decoded keys, 2 = ASCII buffer.
+    let mut cands: Vec<(u8, String)> = Vec::with_capacity(3);
     if let Some(c) = copied.and_then(clean) {
-        cands.push(c);
+        cands.push((0, c));
     }
     if let Some(c) = decoded.and_then(clean) {
-        cands.push(c);
+        cands.push((1, c));
     }
-    cands.push(buffer.to_string());
+    cands.push((2, buffer.to_string()));
 
     cands.sort_by(|a, b| {
-        let ae = crate::chat_text::needs_chat_expansion(a);
-        let be = crate::chat_text::needs_chat_expansion(b);
+        let ae = crate::chat_text::needs_chat_expansion(&a.1);
+        let be = crate::chat_text::needs_chat_expansion(&b.1);
         be.cmp(&ae)
-            .then_with(|| b.chars().count().cmp(&a.chars().count()))
+            .then_with(|| b.1.chars().count().cmp(&a.1.chars().count()))
+            .then_with(|| a.0.cmp(&b.0))
     });
-    cands.into_iter().next().unwrap_or_default()
+    cands.into_iter().next().map(|(_, s)| s).unwrap_or_default()
 }
+
 
 /// Clear whatever is currently in the chat input line.
 fn clear_chat_line(original: &str) {
@@ -1394,9 +1463,10 @@ pub fn on_match_phase(phase: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_focus, needs_reclassify, pick_expand_source, Focus, FG_NEUTRAL, FG_OTHER,
-        FG_VALORANT,
+        classify_focus, key_to_char_us, needs_reclassify, pick_expand_source, Focus, FG_NEUTRAL,
+        FG_OTHER, FG_VALORANT,
     };
+
 
     #[test]
     fn prefers_turkish_clipboard_over_ascii_buffer() {
@@ -1428,6 +1498,26 @@ mod tests {
         let src = pick_expand_source("Nasilsin <3 kanka", None, Some("Nasılsın <3 kanka"));
         assert_eq!(src, "Nasılsın <3 kanka");
     }
+
+    #[test]
+    fn clipboard_colon_d_beats_us_mapped_greater_d() {
+        // TR-Q `:D` copied from the game vs US-QWERTY hook buffer `>D`.
+        let src = pick_expand_source(">D", Some(":D"), None);
+        assert_eq!(src, ":D");
+        let src = pick_expand_source("gg >D", Some("gg :D"), Some("gg :D"));
+        assert_eq!(src, "gg :D");
+    }
+
+    #[test]
+    fn us_layout_maps_shift_period_to_greater_than() {
+        // Documents the US fallback that used to corrupt TR-Q `:`.
+        assert_eq!(key_to_char_us(0xBE, true), Some('>'));
+        assert_eq!(key_to_char_us(0xBE, false), Some('.'));
+        assert_eq!(key_to_char_us(0xBA, true), Some(':'));
+        assert_eq!(key_to_char_us(0xE2, true), Some('>'));
+        assert_eq!(key_to_char_us(0xE2, false), Some('<'));
+    }
+
 
     #[test]
     fn exclusive_fullscreen_null_hwnd_keeps_valorant() {

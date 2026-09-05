@@ -119,59 +119,10 @@ fn apply_agent_mentions(input: &str) -> String {
     while i < chars.len() {
         let c = chars[i];
         if c == '<' || c == '>' {
-            let ally = c == '<';
-            // Remaining text after the marker, lowercased for agent match.
             let rest: String = chars[i + 1..].iter().collect();
             let rest_lower = rest.to_lowercase();
-            // Normalize so `<kay/o` still matches `kayo` if user types slash.
-            // We match against the raw rest_lower first; also try without / - space.
-            let mut matched_agent: Option<&str> = None;
-            let mut matched_len_chars = 0usize;
-
-            for agent in AGENT_NAMES_BY_LEN.iter() {
-                // Direct prefix match on lowercased rest (usual: sage, killjoy).
-                if rest_lower.starts_with(agent) {
-                    let after = agent.len();
-                    let boundary = rest_lower
-                        .as_bytes()
-                        .get(after)
-                        .map(|b| !b.is_ascii_alphanumeric())
-                        .unwrap_or(true);
-                    if boundary {
-                        matched_agent = Some(*agent);
-                        matched_len_chars = agent.chars().count();
-                        break;
-                    }
-                }
-            }
-
-            // Special: kay/o typed with slash → still resolve kayo.
-            if matched_agent.is_none() {
-                let compact: String = rest_lower
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '/' || *ch == '-')
-                    .collect::<String>()
-                    .replace(['/', '-'], "");
-                for agent in AGENT_NAMES_BY_LEN.iter() {
-                    if compact == *agent
-                        || compact.starts_with(agent) && compact.len() == agent.len()
-                    {
-                        // Consume original typed token length (with slashes).
-                        let token: String = rest
-                            .chars()
-                            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '/' || *ch == '-')
-                            .collect();
-                        if token.replace(['/', '-'], "").eq_ignore_ascii_case(agent) {
-                            matched_agent = Some(*agent);
-                            matched_len_chars = token.chars().count();
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if let Some(agent) = matched_agent {
-                let side = if ally {
+            if let Some((agent, matched_len_chars)) = match_agent_prefix(&rest_lower) {
+                let side = if c == '<' {
                     &roster.allies
                 } else {
                     &roster.enemies
@@ -192,19 +143,57 @@ fn apply_agent_mentions(input: &str) -> String {
     out
 }
 
-/// Cheap hook-safe check: `<sage` / `>jett` style tags. Does not resolve the
-/// roster — false positives just intercept a send and paste the same text.
+/// If `rest_lower` starts with a known agent (word boundary, plus `kay/o`),
+/// return `(agent, consumed char count)`.
+fn match_agent_prefix(rest_lower: &str) -> Option<(&'static str, usize)> {
+    for agent in AGENT_NAMES_BY_LEN.iter() {
+        if rest_lower.starts_with(agent) {
+            let after = agent.len();
+            let boundary = rest_lower
+                .as_bytes()
+                .get(after)
+                .map(|b| !b.is_ascii_alphanumeric())
+                .unwrap_or(true);
+            if boundary {
+                return Some((*agent, agent.chars().count()));
+            }
+        }
+    }
+
+    // `kay/o` typed with slash / hyphen still resolves `kayo`.
+    let token: String = rest_lower
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '/' || *ch == '-')
+        .collect();
+    if token.is_empty() {
+        return None;
+    }
+    let compact = token.replace(['/', '-'], "");
+    for agent in AGENT_NAMES_BY_LEN.iter() {
+        if compact == *agent {
+            return Some((*agent, token.chars().count()));
+        }
+    }
+    None
+}
+
+/// Cheap hook-safe check: `<sage` / `>jett` style tags. Must be a real agent
+/// name — a lone letter after `>` (`>D` from a TR-Q `:D`) is not a mention.
 fn looks_like_agent_mention(s: &str) -> bool {
-    let bytes = s.as_bytes();
+    let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
-    while i + 1 < bytes.len() {
-        if (bytes[i] == b'<' || bytes[i] == b'>') && bytes[i + 1].is_ascii_alphabetic() {
-            return true;
+    while i + 1 < chars.len() {
+        if chars[i] == '<' || chars[i] == '>' {
+            let rest_lower: String = chars[i + 1..].iter().collect::<String>().to_lowercase();
+            if match_agent_prefix(&rest_lower).is_some() {
+                return true;
+            }
         }
         i += 1;
     }
     false
 }
+
 
 /// `!t <lang> <message>` — lang is any Google-supported code (`en`, `tr`, `de`,
 /// `zh-CN`, `pt-BR`, …). Message must be non-empty.
@@ -322,4 +311,36 @@ mod tests {
             "İyi akşamlar \u{2665} nasılsın"
         );
     }
+
+    #[test]
+    fn colon_d_emoticon_is_not_a_shortcut() {
+        assert!(!needs_chat_expansion(":D"));
+        assert!(!needs_chat_expansion("lol :D"));
+        assert_eq!(transform_outgoing_chat(":D"), ":D");
+        assert_eq!(transform_outgoing_chat("lol :D"), "lol :D");
+    }
+
+    #[test]
+    fn mangled_trq_greater_d_is_not_an_agent_tag() {
+        // TR-Q Shift+period is `:`; US fallback mapped it to `>`, so `:D`
+        // landed in the hook buffer as `>D` and was treated as `>jett`.
+        assert!(!needs_chat_expansion(">D"));
+        assert!(!needs_chat_expansion("gg >D"));
+        assert!(!looks_like_agent_mention(">D"));
+        assert!(!looks_like_agent_mention(":)"));
+        assert!(!looks_like_agent_mention(">:("));
+        assert_eq!(transform_outgoing_chat(">D"), ">D");
+    }
+
+    #[test]
+    fn real_agent_tags_still_count_as_expansion() {
+        assert!(looks_like_agent_mention(">jett"));
+        assert!(looks_like_agent_mention("<sage"));
+        assert!(looks_like_agent_mention("focus >killjoy please"));
+        assert!(looks_like_agent_mention(">kay/o"));
+        assert!(needs_chat_expansion(">jett"));
+        assert!(!looks_like_agent_mention(">j"));
+        assert!(!looks_like_agent_mention("<3"));
+    }
+
 }
