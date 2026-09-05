@@ -4,6 +4,7 @@ import { useAssetsStore } from "../stores/assetsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
 import { useGameStore } from "../stores/gameStore";
 import { useChatStore } from "../stores/chatStore";
+import { usePanelStore } from "../stores/panelStore";
 import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import type { LastMatchPlayer } from "../lib/types";
@@ -54,6 +55,7 @@ function LastMatchPlayerRow({
 }) {
   const { t, locale } = useI18n();
   const getAgentIcon = useAssetsStore((s) => s.getAgentIcon);
+  const openPlayer = usePanelStore((s) => s.openPlayer);
   const friends = useChatStore((s) => s.friends);
   const outgoingRequests = useChatStore((s) => s.outgoingRequests);
   const sendFriendRequest = useChatStore((s) => s.sendFriendRequest);
@@ -100,12 +102,29 @@ function LastMatchPlayerRow({
     }
   };
 
+  const viewPlayer = () => {
+    if (!player.puuid) return;
+    void openPlayer({
+      puuid: player.puuid,
+      name: rawName || displayName,
+      agent: player.agent,
+      locked: true,
+      party: player.party,
+      is_me: player.is_me,
+      rank_tier: player.rank_tier,
+      rank_rr: 0,
+      level: player.level,
+      player_card_id: player.player_card_id,
+    });
+  };
+
   return (
     <div
       className={`relative h-8 rounded px-1.5 ${
-        player.is_me ? "bg-white/[0.04]" : "bg-white/[0.025]"
+        player.is_me ? "bg-white/[0.04]" : "bg-white/[0.025] cursor-pointer hover:bg-white/[0.05]"
       }`}
       style={{ display: "flex", width: "100%", alignItems: "center", boxSizing: "border-box" }}
+      onClick={viewPlayer}
     >
       {partyColor && (
         <div

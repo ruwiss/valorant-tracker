@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
 import { useChatStore, Tab } from "../../stores/chatStore";
 import { useGameStore } from "../../stores/gameStore";
 import { useSettingsStore } from "../../stores/settingsStore"; // Import Settings Store
+import { usePanelStore } from "../../stores/panelStore";
 import { useI18n } from "../../lib/i18n";
+import type { Friend } from "../../lib/types";
 import clsx from "clsx";
 
 export function ChatPanel() {
@@ -29,6 +31,7 @@ export function ChatPanel() {
     hasMore,
     loading,
   } = useChatStore();
+  const openPlayer = usePanelStore((s) => s.openPlayer);
   const { isConnected, gameState } = useGameStore();
   const { hideWindow, isWindowVisible } = useSettingsStore(); // Get hideWindow & visibility state
   const { t } = useI18n();
@@ -292,9 +295,28 @@ export function ChatPanel() {
     await cancelOutgoingRequest(puuid);
   };
 
+  const openFriendProfile = (e: React.MouseEvent, friend: Friend) => {
+    e.stopPropagation();
+    const name = friend.game_tag
+      ? `${friend.game_name}#${friend.game_tag}`
+      : friend.game_name;
+    void openPlayer({
+      puuid: friend.puuid,
+      name,
+      agent: "",
+      locked: false,
+      party: "",
+      is_me: false,
+      rank_tier: 0,
+      rank_rr: 0,
+      level: 0,
+    }, "friends");
+    setIsOpen(false);
+  };
+
   const handleFriendClick = async (puuid: string) => {
     await startDm(puuid);
-    setActiveTab("DM"); // Switch to DM tab to see the chat
+    setActiveTab("DM");
     setFriendSearch("");
   };
 
@@ -429,7 +451,20 @@ export function ChatPanel() {
                   </div>
                 )}
                 {filteredFriends.map((friend) => (
-                  <button key={friend.puuid} onClick={() => handleFriendClick(friend.puuid)} className="w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-transparent hover:border-white/10 hover:bg-white/5 transition-all group relative overflow-hidden">
+                  <div
+                    key={friend.puuid}
+                    role="button"
+                    tabIndex={0}
+                    title={t("chat.sendMessage")}
+                    onClick={() => void handleFriendClick(friend.puuid)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void handleFriendClick(friend.puuid);
+                      }
+                    }}
+                    className="w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-transparent hover:border-white/10 hover:bg-white/5 transition-all group relative overflow-hidden cursor-pointer"
+                  >
                     {/* Status Line */}
                     <div className={clsx("w-1 h-full absolute left-0 top-0 transition-colors", !friend.activePlatform ? "bg-dim/20" : "bg-accent-cyan shadow-[0_0_8px_cyan]")} />
 
@@ -448,15 +483,18 @@ export function ChatPanel() {
                       </div>
                     </div>
 
-                    {/* Action Icon (Refined Fade Animation) */}
-                    <div className="ml-auto opacity-0 group-hover:opacity-100 transition-all duration-300">
-                      <div className="p-2 bg-accent-red text-white rounded-sm shadow-lg hover:scale-105 active:scale-95 transition-transform">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                      </div>
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      title={t("chat.viewProfile")}
+                      onClick={(e) => openFriendProfile(e, friend)}
+                      className="ml-auto relative z-10 p-2 rounded-sm border border-white/10 bg-white/5 text-dim hover:text-accent-cyan hover:border-accent-cyan/40 hover:bg-accent-cyan/10 transition-all"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="9" />
+                        <path strokeLinecap="round" d="M12 11v5M12 8h.01" />
+                      </svg>
+                    </button>
+                  </div>
                 ))}
                 {filteredFriends.length === 0 && filteredOutgoing.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 opacity-80 animate-fade-in px-8">

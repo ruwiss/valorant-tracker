@@ -69,6 +69,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "chat.cancel_request": "Cancel",
     "chat.cancel_request_success": "Friend request cancelled",
     "chat.cancel_request_failed": "Could not cancel friend request",
+    "chat.sendMessage": "Send message",
+    "chat.viewProfile": "View profile",
 
     // Footer
     "footer.autoLock": "AUTO-LOCK",
@@ -118,6 +120,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.copied": "Copied!",
     "player.weaponSkins": "Weapon Skins",
     "player.loadoutNotFound": "Loadout not found",
+    "player.loadoutNeedsMatch": "Weapon skins available in a match",
     "player.connectionError": "Connection error",
     "player.noSkinData": "No skin data",
     "player.expressions": "Sprays & Flex",
@@ -479,6 +482,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "chat.cancel_request": "İptal",
     "chat.cancel_request_success": "Arkadaşlık isteği iptal edildi",
     "chat.cancel_request_failed": "İstek iptal edilemedi",
+    "chat.sendMessage": "Mesaj gönder",
+    "chat.viewProfile": "Profili gör",
 
     // Footer
     "footer.autoLock": "OTO-KİLİT",
@@ -528,6 +533,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.copied": "Kopyalandı!",
     "player.weaponSkins": "Silah Skinleri",
     "player.loadoutNotFound": "Loadout bulunamadı",
+    "player.loadoutNeedsMatch": "Silah skinleri maç içinde görünür",
     "player.connectionError": "Bağlantı hatası",
     "player.noSkinData": "Skin verisi yok",
     "player.expressions": "Spreyler & Donatılar",

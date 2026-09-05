@@ -5,6 +5,7 @@ import type { PlayerData, CrosshairLayer } from "../lib/types";
 type PanelType = "settings" | "player" | "stats" | "shop" | null;
 export type SettingsSubView = "main" | "chat_shortcuts" | "presets";
 export type PlayerSubView = "skins" | "regulars";
+export type PlayerSource = "roster" | "friends";
 
 const BASE_WIDTH = 380;
 const PANEL_WIDTH = 260;
@@ -52,13 +53,15 @@ interface PanelStore {
   settingsSubView: SettingsSubView;
   /** Nested view when panelType is "player". */
   playerSubView: PlayerSubView;
+  /** Who opened the player panel — friends hides skins / back. */
+  playerSource: PlayerSource;
   selectedPlayer: PlayerData | null;
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
   hoveredCrosshair: HoveredCrosshair | null;
 
   openSettings: () => Promise<void>;
-  openPlayer: (player: PlayerData) => Promise<void>;
+  openPlayer: (player: PlayerData, source?: PlayerSource) => Promise<void>;
   openStats: (player: PlayerData) => Promise<void>;
   openShop: () => Promise<void>;
   close: () => Promise<void>;
@@ -81,6 +84,7 @@ const CLOSED_PANEL = {
   panelType: null as PanelType,
   settingsSubView: "main" as SettingsSubView,
   playerSubView: "skins" as PlayerSubView,
+  playerSource: "roster" as PlayerSource,
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
@@ -165,6 +169,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   panelType: null,
   settingsSubView: "main",
   playerSubView: "skins",
+  playerSource: "roster",
   selectedPlayer: null,
   hoveredWeapon: null,
   hoveredAgent: null,
@@ -182,6 +187,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       isOpen: true,
       panelType: "settings",
       settingsSubView: "main",
+      playerSource: "roster",
       selectedPlayer: null,
       hoveredWeapon: null,
       hoveredAgent: null,
@@ -206,14 +212,14 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       await waitForResize(EXPANDED_WIDTH);
     }
     if (!isCurrentPanelOp(op)) return;
-    set({ isOpen: true, panelType: "shop", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
+    set({ isOpen: true, panelType: "shop", playerSource: "roster", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
   },
 
-  openPlayer: async (player) => {
-    const { isOpen, panelType, selectedPlayer } = get();
+  openPlayer: async (player, source = "roster") => {
+    const { isOpen, panelType, selectedPlayer, playerSource } = get();
 
-    // Toggle: if same player clicked again, close panel
-    if (isOpen && panelType === "player" && selectedPlayer?.puuid === player.puuid) {
+    // Toggle: if same player from the same origin clicked again, close panel
+    if (isOpen && panelType === "player" && selectedPlayer?.puuid === player.puuid && playerSource === source) {
       await get().close();
       return;
     }
@@ -227,7 +233,8 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     set({
       isOpen: true,
       panelType: "player",
-      playerSubView: "skins",
+      playerSubView: source === "friends" ? "regulars" : "skins",
+      playerSource: source,
       selectedPlayer: player,
       hoveredWeapon: null,
       hoveredAgent: null,

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePanelStore } from "../stores/panelStore";
 import { useGameStore } from "../stores/gameStore";
 import { SettingsPanel } from "./SettingsPanel";
@@ -8,16 +8,19 @@ import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
 
 export function SidePanel() {
-  const { isOpen, panelType, settingsSubView, playerSubView, selectedPlayer, close } = usePanelStore();
+  const { isOpen, panelType, settingsSubView, playerSubView, playerSource, selectedPlayer, close } = usePanelStore();
   const { t } = useI18n();
   const gameState = useGameStore((s) => s.gameState);
+  const prevMatchState = useRef(gameState.state);
 
-  // Close player/stats panel automatically when match ends or state clears
+  // Close roster player/stats when a match ends — not when opening from idle (last match / friends).
   useEffect(() => {
-    if (isOpen && (panelType === "player" || panelType === "stats")) {
-      if (gameState.state !== "ingame" && gameState.state !== "pregame") {
-        close();
-      }
+    const prev = prevMatchState.current;
+    prevMatchState.current = gameState.state;
+    const wasLive = prev === "ingame" || prev === "pregame";
+    const nowLive = gameState.state === "ingame" || gameState.state === "pregame";
+    if (wasLive && !nowLive && isOpen && (panelType === "player" || panelType === "stats")) {
+      close();
     }
   }, [gameState.state, isOpen, panelType, close]);
 
@@ -46,7 +49,7 @@ export function SidePanel() {
           (settingsSubView === "chat_shortcuts" || settingsSubView === "presets")
         ) {
           setSettingsSubView("main");
-        } else if (panelType === "player" && playerSubView === "regulars") {
+        } else if (panelType === "player" && playerSubView === "regulars" && playerSource !== "friends") {
           setPlayerSubView("skins");
         } else {
           close();
@@ -55,7 +58,7 @@ export function SidePanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, close, panelType, settingsSubView, playerSubView, setSettingsSubView, setPlayerSubView]);
+  }, [isOpen, close, panelType, settingsSubView, playerSubView, playerSource, setSettingsSubView, setPlayerSubView]);
 
   const canRender =
     isOpen &&
@@ -81,7 +84,7 @@ export function SidePanel() {
       case "shop":
         return t("shop.title");
       default:
-        return playerSubView === "regulars" ? t("player.regulars") : t("player.weaponSkins");
+        return playerSubView === "regulars" || playerSource === "friends" ? t("player.regulars") : t("player.weaponSkins");
     }
   };
 

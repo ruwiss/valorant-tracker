@@ -155,10 +155,13 @@ const weaponIconCache = new Map<string, WeaponInfo>();
 const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 
 export function PlayerPanel() {
-	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView } =
+	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource } =
 		usePanelStore();
+	const fromFriends = playerSource === "friends";
 	const { getAgentIcon } = useAssetsStore();
-	const matchId = useGameStore((state) => state.gameState.match_id); // Get match_id
+	const gameState = useGameStore((state) => state.gameState);
+	const matchId = gameState.match_id;
+	const inMatch = gameState.state === "ingame" || gameState.state === "pregame";
 	const { t, locale } = useI18n();
 	const [skins, setSkins] = useState<WeaponSkin[]>([]);
 	const [expressions, setExpressions] = useState<EquippedExpression[]>([]);
@@ -214,17 +217,23 @@ export function PlayerPanel() {
 				.catch(console.error);
 		}
 	}, [selectedPlayer?.puuid]);
-
 	useEffect(() => {
 		if (!selectedPlayer) {
 			fetchedRef.current = null;
 			return;
 		}
-		// Include matchId in cache key to force refetch on new match
+		if (fromFriends || !inMatch) {
+			fetchedRef.current = null;
+			setLoading(false);
+			setSkins([]);
+			setExpressions([]);
+			setError(null);
+			return;
+		}
 		const cacheKey = `${selectedPlayer.puuid}-${matchId}-${locale}`;
 		if (fetchedRef.current === cacheKey) return;
 		fetchLoadout(selectedPlayer.puuid, cacheKey);
-	}, [selectedPlayer?.puuid, matchId, locale]);
+	}, [selectedPlayer?.puuid, matchId, locale, inMatch, fromFriends]);
 
 	// Fetch weapon icons once
 	useEffect(() => {
@@ -259,6 +268,7 @@ export function PlayerPanel() {
 			const data = await invokeCommand<PlayerSkinData | null>(
 				"get_player_loadout",
 				{ puuid },
+				{ suppressErrorToast: true },
 			);
 			if (usePanelStore.getState().selectedPlayer?.puuid !== puuid) return;
 			if (!data) {
@@ -615,7 +625,7 @@ export function PlayerPanel() {
 	const applyRegularsResult = (data: FrequentTeammatesResponse, puuid: string) => {
 		if (data.status === "rate_limited") {
 			startCooldown(data.retry_after_secs || REGULARS_COOLDOWN_SECS);
-			if (stillThisPlayer(puuid) && usePanelStore.getState().playerSubView === "regulars") {
+			if (stillThisPlayer(puuid) && usePanelStore.getState().playerSubView === "regulars" && !fromFriends) {
 				setPlayerSubView("skins");
 			}
 			return;
@@ -682,16 +692,14 @@ export function PlayerPanel() {
 			applyCachedRegulars(cached);
 			return;
 		}
-		// Live scan is gated on the entry button — never park the opened
-		// view on a "wait Xs" empty state.
 		if (regularsCooldownUntil > Date.now() || regularsLoading || regularsScanInFlight) {
-			setPlayerSubView("skins");
+			if (!fromFriends) setPlayerSubView("skins");
 			syncCooldown();
 			return;
 		}
 		void fetchRegulars(puuid);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [playerSubView, selectedPlayer?.puuid]);
+	}, [playerSubView, selectedPlayer?.puuid, cooldownLeft === 0]);
 
 	const openRegulars = () => {
 		if (!selectedPlayer) return;
@@ -724,18 +732,20 @@ export function PlayerPanel() {
 		const namedCount = regulars.filter((r) => r.name).length;
 		return (
 			<div className="p-2 space-y-2">
-				<button
-					type="button"
-					onClick={() => setPlayerSubView("skins")}
-					className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-dim hover:bg-card/60 hover:text-primary transition-colors"
-				>
-					<svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-						<path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-					</svg>
-					<span className="text-[10px] font-semibold uppercase tracking-wider">
-						{t("player.regularsBack")}
-					</span>
-				</button>
+				{!fromFriends && (
+					<button
+						type="button"
+						onClick={() => setPlayerSubView("skins")}
+						className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-dim hover:bg-card/60 hover:text-primary transition-colors"
+					>
+						<svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+							<path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+						</svg>
+						<span className="text-[10px] font-semibold uppercase tracking-wider">
+							{t("player.regularsBack")}
+						</span>
+					</button>
+				)}
 
 				{regularsLoading && (
 					<div className="flex items-center justify-center py-8">
@@ -745,6 +755,12 @@ export function PlayerPanel() {
 
 				{!regularsLoading && regularsError && (
 					<div className="px-1.5 py-6 text-center text-[10px] text-error">{regularsError}</div>
+				)}
+
+				{!regularsLoading && !regularsError && regulars.length === 0 && regularsScanned === 0 && cooldownLeft > 0 && (
+					<div className="px-1.5 py-6 text-center text-[10px] text-dim">
+						{t("player.regularsCooldown", { s: cooldownLeft })}
+					</div>
 				)}
 
 				{!regularsLoading && !regularsError && (regulars.length > 0 || regularsScanned > 0) && (
@@ -1425,7 +1441,7 @@ export function PlayerPanel() {
 				className="flex-1 overflow-y-auto"
 				onMouseLeave={() => setHoveredWeapon(null)}
 			>
-				{playerSubView === "regulars" ? (
+				{fromFriends || playerSubView === "regulars" ? (
 					renderRegularsView()
 				) : (
 					<>
@@ -1496,7 +1512,7 @@ export function PlayerPanel() {
 
 						{!loading && !error && skins.length === 0 && expressions.length === 0 && (
 							<div className="text-center py-6 text-dim text-[10px]">
-								{t("player.noSkinData")}
+								{inMatch ? t("player.noSkinData") : t("player.loadoutNeedsMatch")}
 							</div>
 						)}
 					</>
