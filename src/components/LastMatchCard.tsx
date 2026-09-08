@@ -72,8 +72,14 @@ function LastMatchPlayerRow({
       : -1;
   const partyColor = partyIndex >= 0 ? PARTY_COLORS[partyIndex % 4] : null;
   const rawName = (player.name || "").trim();
+  const fromHistory = !!player.name_from_history;
   const displayName = rawName || t("player.anonymousSlot", { n: slotIndex });
   const shortName = displayName.includes("#") ? displayName.split("#")[0] : displayName;
+  const nameTitle = fromHistory
+    ? t("player.rememberedNameHint", { name: displayName })
+    : rawName
+      ? t("lastMatch.copyName")
+      : undefined;
   const riotId = parseRiotId(rawName);
   const isFriend = friends.some((f) => f.puuid === player.puuid);
   const isPending = outgoingRequests.some((r) => r.puuid === player.puuid);
@@ -115,6 +121,7 @@ function LastMatchPlayerRow({
       rank_rr: 0,
       level: player.level,
       player_card_id: player.player_card_id,
+      name_from_history: fromHistory,
     });
   };
 
@@ -154,9 +161,13 @@ function LastMatchPlayerRow({
         type="button"
         onClick={(e) => void copyName(e)}
         disabled={!rawName}
-        title={rawName ? t("lastMatch.copyName") : undefined}
-        className={`text-[11px] font-medium text-left ${
-          player.is_me ? "text-accent-gold/80" : "text-primary/80 hover:text-primary"
+        title={nameTitle}
+        className={`text-[11px] text-left ${
+          fromHistory
+            ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/25 ${
+                player.is_me ? "text-accent-gold/70" : "text-secondary/90 hover:text-secondary"
+              }`
+            : `font-medium ${player.is_me ? "text-accent-gold/80" : "text-primary/80 hover:text-primary"}`
         } ${rawName ? "cursor-pointer" : "cursor-default"}`}
         style={{
           flex: "1 1 0%",

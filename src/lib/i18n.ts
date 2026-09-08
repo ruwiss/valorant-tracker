@@ -149,6 +149,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Player Card
     "player.level": "Lvl",
     "player.anonymousSlot": "Player {n}",
+    "player.rememberedNameHint": "Hidden Riot ID — remembered from a previous match as {name}",
     "player.hiddenProfile": "Hidden Profile",
     "player.copied": "Copied!",
     "player.weaponSkins": "Weapon Skins",
@@ -595,6 +596,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Player Card
     "player.level": "Svye",
     "player.anonymousSlot": "{n}. Oyuncu",
+    "player.rememberedNameHint": "Gizli Riot ID — önceki bir maçtan {name} olarak hatırlandı",
     "player.hiddenProfile": "Gizli Profil",
     "player.copied": "Kopyalandı!",
     "player.weaponSkins": "Silah Skinleri",

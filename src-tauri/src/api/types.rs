@@ -204,6 +204,9 @@ pub struct PlayerData {
     /// Equipped player card UUID for soft banner background in the roster.
     #[serde(default)]
     pub player_card_id: Option<String>,
+    /// Riot hid this identity; `name` was filled from a previous match we stored.
+    #[serde(default)]
+    pub name_from_history: bool,
 }
 
 // Presence types for party detection
@@ -538,6 +541,9 @@ pub struct LastMatchPlayer {
     pub assists: i32,
     pub score: i32,
     pub acs: i32,
+    /// Riot hid this identity; `name` was filled from a previous match we stored.
+    #[serde(default)]
+    pub name_from_history: bool,
 }
 
 // Loadout types

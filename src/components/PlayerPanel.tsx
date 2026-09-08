@@ -1298,7 +1298,16 @@ export function PlayerPanel() {
 							<div className="flex items-center gap-2">
 								<button
 									onClick={copyName}
-									className="text-xs font-bold text-primary hover:text-accent-cyan transition-colors truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+									title={
+										selectedPlayer.name_from_history
+											? t("player.rememberedNameHint", { name: selectedPlayer.name })
+											: selectedPlayer.name
+									}
+									className={`text-xs truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors ${
+										selectedPlayer.name_from_history
+											? "italic font-semibold text-secondary underline decoration-dotted underline-offset-2 decoration-white/30 hover:text-secondary/80"
+											: "font-bold text-primary hover:text-accent-cyan"
+									}`}
 								>
 									{selectedPlayer.name}
 								</button>

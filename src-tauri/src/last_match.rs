@@ -132,6 +132,7 @@ async fn fetch_last_match_from_api(
                 }
                 let names = api.get_player_names(&name_ids).await;
                 apply_resolved_names(&mut parsed, &names);
+                remember_and_fill_seen_names(&mut parsed);
                 return Ok(Some(parsed));
             }
         }
@@ -281,6 +282,32 @@ fn resolve_score(
     (ally_score, enemy_score, won, rounds_played)
 }
 
+
+fn remember_and_fill_seen_names(m: &mut LastMatch) {
+    crate::seen_names::remember(
+        std::iter::once(&m.me)
+            .chain(m.allies.iter())
+            .chain(m.enemies.iter())
+            .map(|p| (p.puuid.as_str(), p.name.as_str())),
+    );
+    let fill = |p: &mut LastMatchPlayer| {
+        if crate::seen_names::is_riot_id(&p.name) {
+            return;
+        }
+        if let Some(seen) = crate::seen_names::lookup(&p.puuid) {
+            p.name = seen;
+            p.name_from_history = true;
+        }
+    };
+    fill(&mut m.me);
+    for p in &mut m.allies {
+        fill(p);
+    }
+    for p in &mut m.enemies {
+        fill(p);
+    }
+}
+
 fn apply_resolved_names(m: &mut LastMatch, names: &HashMap<String, String>) {
     let apply = |p: &mut LastMatchPlayer| {
         if let Some(n) = names.get(&p.puuid) {
@@ -344,6 +371,7 @@ fn to_last_match_player(
         assists,
         score,
         acs,
+        name_from_history: false,
     }
 }
 

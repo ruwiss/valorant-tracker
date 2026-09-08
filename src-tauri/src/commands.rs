@@ -774,6 +774,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         .collect();
 
                     let names = api.get_player_names(&puuids).await;
+                    crate::seen_names::remember(names.iter().map(|(id, n)| (id.as_str(), n.as_str())));
 
                     // Get parties with caching - only fetch once per match
                     let parties =
@@ -810,13 +811,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             .cloned()
                             .unwrap_or_else(|| "Solo".into());
 
-                        // Use agent name (capitalized) for hidden players
                         let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-                        let display_name = if player_name.is_empty() {
-                            capitalize_first(&agent_name)
-                        } else {
-                            player_name
-                        };
+                        let (display_name, name_from_history) =
+                            crate::seen_names::resolve_hidden(&p.subject, &player_name, &agent_name);
 
                         allies.push(PlayerData {
                             puuid: p.subject.clone(),
@@ -834,6 +831,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             previous_encounter_agent,
                             previous_encounter_was_enemy,
                             player_card_id,
+                            name_from_history,
                         });
                     }
 
@@ -959,6 +957,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         .collect();
 
                     let names = api.get_player_names(&puuids).await;
+                    crate::seen_names::remember(names.iter().map(|(id, n)| (id.as_str(), n.as_str())));
 
                     // Get parties with caching
                     let parties =
@@ -1005,13 +1004,9 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             .cloned()
                             .unwrap_or_else(|| "Solo".into());
 
-                        // Use agent name (capitalized) for hidden players
                         let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-                        let display_name = if player_name.is_empty() {
-                            capitalize_first(&agent_name)
-                        } else {
-                            player_name
-                        };
+                        let (display_name, name_from_history) =
+                            crate::seen_names::resolve_hidden(&p.subject, &player_name, &agent_name);
 
                         let player = PlayerData {
                             puuid: p.subject.clone(),
@@ -1027,6 +1022,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             previous_encounter_agent,
                             previous_encounter_was_enemy,
                             player_card_id,
+                            name_from_history,
                         };
 
                         if p.team_id == my_team {
@@ -1353,6 +1349,7 @@ async fn build_range_game_state(
     let my_puuid = api.puuid.read().clone();
     let puuids: Vec<String> = match_data.players.iter().map(|p| p.subject.clone()).collect();
     let names = api.get_player_names(&puuids).await;
+    crate::seen_names::remember(names.iter().map(|(id, n)| (id.as_str(), n.as_str())));
 
     let mut allies = Vec::new();
     for p in match_data.players {
@@ -1366,11 +1363,8 @@ async fn build_range_game_state(
         };
         let rank = p.seasonal_badge_info.and_then(|s| s.rank).unwrap_or(0);
         let player_name = names.get(&p.subject).cloned().unwrap_or_default();
-        let display_name = if player_name.is_empty() {
-            capitalize_first(&agent_name)
-        } else {
-            player_name
-        };
+        let (display_name, name_from_history) =
+            crate::seen_names::resolve_hidden(&p.subject, &player_name, &agent_name);
 
         allies.push(PlayerData {
             puuid: p.subject.clone(),
@@ -1386,6 +1380,7 @@ async fn build_range_game_state(
             previous_encounter_agent: None,
             previous_encounter_was_enemy: None,
             player_card_id,
+            name_from_history,
         });
     }
 
@@ -1406,6 +1401,7 @@ async fn build_range_game_state(
             previous_encounter_agent: None,
             previous_encounter_was_enemy: None,
             player_card_id: None,
+            name_from_history: false,
         });
     }
 
@@ -1691,21 +1687,6 @@ fn get_agent_name(agent_id: &str) -> String {
         }
     }
     String::new()
-}
-
-/// Capitalize first letter, lowercase the rest (e.g., "jett" -> "Jett", "REYNA" -> "Reyna")
-fn capitalize_first(s: &str) -> String {
-    if s.is_empty() {
-        return String::new();
-    }
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first
-            .to_uppercase()
-            .chain(chars.flat_map(|c| c.to_lowercase()))
-            .collect(),
-    }
 }
 
 const SPRAY_ITEM_TYPE_ID: &str = "d5f120f8-ff8c-4aac-92ea-f2b5acbe9475";

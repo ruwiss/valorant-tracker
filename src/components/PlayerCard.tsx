@@ -47,6 +47,8 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
 
   // Hidden Riot ID: backend uses agent name when known; before agent select
   // the name is empty — match in-game "Player 1" / "1. Oyuncu" labeling.
+  // `name_from_history` means Riot hid the id but we recalled it from a past match.
+  const fromHistory = !!player.name_from_history;
   const displayName = (() => {
     const raw = (player.name || "").trim();
     if (raw) return raw;
@@ -55,6 +57,9 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
     }
     return t("player.anonymousSlot", { n: slotIndex });
   })();
+  const nameTitle = fromHistory
+    ? t("player.rememberedNameHint", { name: displayName })
+    : displayName;
 
   // Rate limit logic (force re-render every second if active to update tooltip/state)
   const now = Date.now();
@@ -178,18 +183,43 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
         {player.agent ? player.agent.charAt(0).toUpperCase() + player.agent.slice(1) : "—"}
       </span>
 
-      {/* Name */}
+      {/* Name — recalled ids stay visually distinct from a live Riot ID */}
       <span
-        className={`relative z-10 flex-1 min-w-0 text-xs font-semibold truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
-          player.is_me
-            ? "text-accent-gold"
-            : !player.name?.trim() && !player.agent
-              ? "text-secondary italic"
-              : "text-primary"
-        }`}
-        title={displayName}
+        className="relative z-10 flex-1 min-w-0 flex items-center gap-0.5"
+        title={nameTitle}
       >
-        {displayName}
+        <span
+          className={`min-w-0 text-xs truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
+            fromHistory
+              ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/30 ${
+                  player.is_me ? "text-accent-gold/75" : "text-secondary"
+                }`
+              : `font-semibold ${
+                  player.is_me
+                    ? "text-accent-gold"
+                    : !player.name?.trim() && !player.agent
+                      ? "text-secondary italic"
+                      : "text-primary"
+                }`
+          }`}
+        >
+          {displayName}
+        </span>
+        {fromHistory && (
+          <svg
+            className={`shrink-0 w-2.5 h-2.5 opacity-55 ${
+              player.is_me ? "text-accent-gold/70" : "text-secondary"
+            }`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            aria-hidden
+          >
+            <circle cx="12" cy="12" r="8" />
+            <path d="M12 8v4l2.4 1.4" strokeLinecap="round" />
+          </svg>
+        )}
       </span>
 
       {/* Level - left of stats button, tries initial data then stats data */}

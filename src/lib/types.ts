@@ -29,6 +29,8 @@ export interface PlayerData {
   previous_encounter_was_enemy?: boolean;
   /** Equipped player card UUID — used for soft banner art in the roster. */
   player_card_id?: string | null;
+  /** Riot hid this identity; `name` was recalled from a previous match. */
+  name_from_history?: boolean;
 }
 
 export interface FrequentAgentPick {
@@ -79,6 +81,8 @@ export interface LastMatchPlayer {
   assists: number;
   score: number;
   acs: number;
+  /** Riot hid this identity; `name` was recalled from a previous match. */
+  name_from_history?: boolean;
 }
 
 export interface LastMatch {

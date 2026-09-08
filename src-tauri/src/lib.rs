@@ -14,6 +14,7 @@ mod single_instance;
 mod state;
 mod usage;
 mod last_match;
+mod seen_names;
 mod party;
 
 use single_instance::{SingleInstanceGuard, SingleInstanceResult};
@@ -170,10 +171,12 @@ pub fn run() -> RunResult {
                 *app.state::<AppState>().presets.write() = Some(Arc::new(store));
                 // Editable chat shortcuts (sa/as/symbols + user rules)
                 chat_rules::init(chat_rules::rules_path(&data_dir));
+                crate::seen_names::init(&data_dir);
             } else {
                 tracing::error!("[Presets] Could not resolve app_data_dir; presets disabled");
                 // Still seed in-memory defaults so shortcuts work without persistence.
                 chat_rules::init(std::env::temp_dir().join("valorant-tracker-chat_shortcuts.json"));
+                crate::seen_names::init(&std::env::temp_dir());
             }
 
             // One-time unique-install ping (does not block startup).
