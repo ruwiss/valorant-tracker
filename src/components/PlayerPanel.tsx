@@ -497,7 +497,7 @@ export function PlayerPanel() {
 	const translateDone =
 		translatedName !== null && translatedName !== "Hata";
 
-	/** Translate a single name/tag fragment via Rust (same path as chat `!t`). */
+	/** Translate a single name/tag fragment via Rust. */
 	const translateFragment = async (
 		text: string,
 		targetLang: string,

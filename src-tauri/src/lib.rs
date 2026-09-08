@@ -114,6 +114,8 @@ pub fn run() -> RunResult {
             commands::get_chat_messages,
             commands::get_active_conversations,
             commands::send_message,
+            commands::get_live_chat_messages,
+            commands::send_live_chat,
             commands::get_paginated_chat_messages,
             commands::get_friends,
             commands::get_outgoing_friend_requests,

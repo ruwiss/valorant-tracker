@@ -288,7 +288,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 let phase = current_state.state.as_str();
                 if last_phase != phase {
                     // Valorant tears down the chat widget between matches;
-                    // stale expander state made sa/!t die after a few games.
+                    // stale expander state made sa/as die after a few games.
                     #[cfg(windows)]
                     crate::chat_expander::on_match_phase(phase);
                 }
@@ -1625,7 +1625,7 @@ pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
     state.discord.is_enabled()
 }
 
-/// Enable/disable outgoing chat shortcuts (`sa`, `as`, `<3`, `!t <lang> …`).
+/// Enable/disable outgoing chat shortcuts (`sa`, `as`, `<3`, agent tags).
 /// Covers both paths: the in-game keyboard expander and messages sent from the
 /// overlay's own chat panel.
 #[tauri::command]
@@ -2001,6 +2001,79 @@ pub async fn get_active_conversations(
     });
 
     Ok(conversations)
+}
+
+
+#[tauri::command]
+pub async fn get_live_chat_messages(
+    state: State<'_, AppState>,
+) -> Result<LiveChatSnapshot, String> {
+    let api = &state.api;
+    if !*api.connected.read() {
+        return Ok(LiveChatSnapshot::default());
+    }
+    Ok(api.get_live_chat_snapshot().await)
+}
+
+#[tauri::command]
+pub async fn send_live_chat(
+    state: State<'_, AppState>,
+    message: String,
+    channel: String,
+    translate_to: Option<String>,
+) -> Result<bool, String> {
+    let api = &state.api;
+    if !*api.connected.read() {
+        return Err("Not connected".into());
+    }
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("Empty message".into());
+    }
+    let payload = if let Some(lang) = translate_to
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let lang = lang.to_string();
+        let source = message.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let expanded = crate::chat_text::transform_outgoing_chat(&source);
+            crate::translate::google_translate(&expanded, &lang)
+                .filter(|t| !t.trim().is_empty())
+                .ok_or_else(|| "Translation failed".to_string())
+        })
+        .await
+        .map_err(|e| format!("Translate task failed: {}", e))??
+    } else {
+        message
+    };
+    match api.send_live_chat(&payload, &channel).await {
+        Ok(true) => Ok(true),
+        other => {
+            tracing::info!("[live_chat] HTTP send {other:?} — injecting into game chat");
+            let ch = channel.clone();
+            let msg = payload.clone();
+            let injected = tauri::async_runtime::spawn_blocking(move || {
+                crate::chat_expander::send_from_overlay(&ch, &msg)
+            })
+            .await
+            .map_err(|e| format!("Send task failed: {e}"))?;
+            match injected {
+                Ok(()) => {
+                    api.remember_live_send(&payload, &channel);
+                    Ok(true)
+                }
+                Err(e) => {
+                    if let Err(http_err) = other {
+                        Err(http_err)
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -3176,7 +3249,7 @@ pub struct TranslateResult {
     pub source_lang: String,
 }
 
-/// Translate free text via Google Translate (same path as chat `!t` shortcuts).
+/// Translate free text via Google Translate (overlay chat + name lookup).
 /// Runs on a blocking thread so the async runtime is not stalled.
 /// Returns Err when the network/API fails so the UI can show an error state.
 #[tauri::command]
@@ -3194,7 +3267,7 @@ pub async fn translate_text(
 
     let target_lang = target_lang.trim().to_string();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        crate::chat_text::google_translate_detailed(&text, &target_lang)
+        crate::translate::google_translate_detailed(&text, &target_lang)
     })
     .await
     .map_err(|e| format!("Translate task failed: {}", e))?;

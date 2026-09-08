@@ -50,6 +50,10 @@ pub struct ValorantAPI {
     /// Shared match-details cache (party detect + on-demand frequent-teammate scan).
     match_details_cache: RwLock<HashMap<String, MatchDetailsResponse>>,
     match_details_order: RwLock<std::collections::VecDeque<String>>,
+    /// Last coregame/pregame id we successfully attempted to join live MUCs for.
+    joined_live_match: RwLock<String>,
+    /// Overlay-sent lines echoed into CANLI (game inject has no HTTP history).
+    outgoing_live: RwLock<Vec<LiveChatMessage>>,
 }
 
 /// Outcome of a remote GET. Callers that care about match lifecycle must
@@ -111,6 +115,8 @@ impl ValorantAPI {
             last_recovery_check: RwLock::new(std::time::Instant::now()),
             match_details_cache: RwLock::new(HashMap::new()),
             match_details_order: RwLock::new(std::collections::VecDeque::new()),
+            joined_live_match: RwLock::new(String::new()),
+            outgoing_live: RwLock::new(Vec::new()),
         }
     }
 
@@ -2162,6 +2168,138 @@ pub struct PartyDetectResult {
     pub history_fetched: HashSet<String>,
 }
 
+
+pub fn classify_live_channel(cid: &str, _message_type: &str) -> &'static str {
+    let cid = cid.to_ascii_lowercase();
+    if cid.contains("ares-parties") {
+        "party"
+    } else if cid.contains("-all@") || cid.contains("-all@ares-coregame") {
+        "all"
+    } else if cid.contains("ares-coregame") || cid.contains("ares-pregame") {
+        "team"
+    } else {
+        "party"
+    }
+}
+
+fn is_live_chat_message(cid: &str, _message_type: &str) -> bool {
+    let cid = cid.to_ascii_lowercase();
+    cid.contains("ares-coregame") || cid.contains("ares-pregame") || cid.contains("ares-parties")
+}
+
+fn muc_from_value(value: &serde_json::Value) -> Option<MucToken> {
+    let token = ["Token", "token", "MUCToken", "Jwt", "jwt", "Password", "password"]
+        .iter()
+        .find_map(|k| value.get(*k).and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let room = ["Room", "room", "RoomId", "MUCName", "AllMUCName", "TeamMUCName"]
+        .iter()
+        .find_map(|k| value.get(*k).and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    if token.is_none() && room.is_none() {
+        None
+    } else {
+        Some(MucToken { token, room })
+    }
+}
+
+fn target_region_from_cid(cid: &str) -> Option<String> {
+    let domain = cid.split_once('@')?.1;
+    let host = domain.split('.').next()?;
+    // ares-coregame / ares-parties have no region; eu2.pvp.net -> eu2
+    if host.starts_with("ares-") {
+        domain.split('.').nth(1).map(|s| s.to_string())
+    } else {
+        Some(host.to_string())
+    }
+}
+
+fn looks_like_dm_cid(cid: &str) -> bool {
+    let cid = cid.to_ascii_lowercase();
+    cid.contains("ares-chats") || (!cid.contains("ares-coregame") && !cid.contains("ares-pregame") && !cid.contains("ares-parties") && cid.contains(".pvp.net"))
+}
+
+fn is_live_conversation(conv: &Conversation) -> bool {
+    is_live_chat_message(&conv.cid, &conv.conversation_type)
+}
+
+fn parse_conversations_json(raw: &str) -> Option<ConversationsResponse> {
+    if let Ok(parsed) = serde_json::from_str::<ConversationsResponse>(raw) {
+        return Some(parsed);
+    }
+    if let Ok(list) = serde_json::from_str::<Vec<Conversation>>(raw) {
+        return Some(ConversationsResponse { conversations: list });
+    }
+    if let Ok(one) = serde_json::from_str::<Conversation>(raw) {
+        if !one.cid.is_empty() {
+            return Some(ConversationsResponse {
+                conversations: vec![one],
+            });
+        }
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        let arr = value
+            .get("conversations")
+            .or_else(|| value.get("Conversations"))
+            .cloned()
+            .or_else(|| value.as_array().cloned().map(serde_json::Value::Array));
+        if let Some(arr) = arr {
+            let mut conversations = Vec::new();
+            if let Some(items) = arr.as_array() {
+                for item in items {
+                    if let Ok(conv) = serde_json::from_value::<Conversation>(item.clone()) {
+                        if !conv.cid.is_empty() {
+                            conversations.push(conv);
+                        }
+                    }
+                }
+            }
+            return Some(ConversationsResponse { conversations });
+        }
+    }
+    tracing::warn!(
+        "[conversations] parse failed ({} bytes): {}",
+        raw.len(),
+        raw.chars().take(240).collect::<String>()
+    );
+    None
+}
+
+fn parse_chat_history_json(raw: &str) -> Option<ChatHistoryResponse> {
+    if let Ok(parsed) = serde_json::from_str::<ChatHistoryResponse>(raw) {
+        return Some(parsed);
+    }
+    if let Ok(list) = serde_json::from_str::<Vec<ChatMessage>>(raw) {
+        return Some(ChatHistoryResponse { messages: list });
+    }
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        let arr = value
+            .get("messages")
+            .or_else(|| value.get("Messages"))
+            .cloned()
+            .or_else(|| value.as_array().cloned().map(serde_json::Value::Array));
+        if let Some(arr) = arr {
+            let mut messages = Vec::new();
+            if let Some(items) = arr.as_array() {
+                for item in items {
+                    if let Ok(msg) = serde_json::from_value::<ChatMessage>(item.clone()) {
+                        messages.push(msg);
+                    }
+                }
+            }
+            return Some(ChatHistoryResponse { messages });
+        }
+    }
+    tracing::warn!(
+        "[chat_history] parse failed ({} bytes): {}",
+        raw.len(),
+        raw.chars().take(240).collect::<String>()
+    );
+    None
+}
+
 impl ValorantAPI {
     // Chat API Methods
 
@@ -2178,7 +2316,13 @@ impl ValorantAPI {
             .send()
             .await
         {
-            Ok(resp) => resp.json().await.ok(),
+            Ok(resp) if resp.status().is_success() => {
+                parse_conversations_json(&resp.text().await.unwrap_or_default())
+            }
+            Ok(resp) => {
+                tracing::debug!("[get_conversations] HTTP {}", resp.status());
+                None
+            }
             Err(_) => None,
         }
     }
@@ -2191,7 +2335,8 @@ impl ValorantAPI {
         let url = if let Some(conversation_id) = cid {
             format!(
                 "https://127.0.0.1:{}/chat/v6/messages?cid={}",
-                port, conversation_id
+                port,
+                conversation_id
             )
         } else {
             format!("https://127.0.0.1:{}/chat/v6/messages", port)
@@ -2215,21 +2360,16 @@ impl ValorantAPI {
                     return None;
                 }
 
-                match resp.json().await {
-                    Ok(history) => {
-                        if cid.is_some() {
-                            tracing::info!(
-                                "[get_chat_history] CID {} returned messages",
-                                cid.unwrap()
-                            );
-                        }
-                        Some(history)
-                    }
-                    Err(e) => {
-                        tracing::debug!("[get_chat_history] Parse error: {}", e);
-                        None
-                    }
+                let raw = resp.text().await.unwrap_or_default();
+                let history = parse_chat_history_json(&raw);
+                if let Some(ref history) = history {
+                    tracing::debug!(
+                        "[get_chat_history] {} message(s) cid={:?}",
+                        history.messages.len(),
+                        cid
+                    );
                 }
+                history
             }
             Err(e) => {
                 tracing::debug!("[get_chat_history] Request error: {}", e);
@@ -2238,15 +2378,13 @@ impl ValorantAPI {
         }
     }
 
-    /// Get local game chat conversation info (in-match team/all chat).
-    pub async fn get_game_chat(&self) -> Option<ConversationsResponse> {
+    async fn get_named_conversations(&self, slug: &str) -> Option<ConversationsResponse> {
         let port = self.local_port.read().clone();
         let auth = self.local_auth.read().clone();
         let url = format!(
-            "https://127.0.0.1:{}/chat/v6/conversations/ares-coregame",
-            port
+            "https://127.0.0.1:{}/chat/v6/conversations/{}",
+            port, slug
         );
-
         match self
             .client
             .get(&url)
@@ -2254,30 +2392,40 @@ impl ValorantAPI {
             .send()
             .await
         {
-            Ok(resp) => resp.json().await.ok(),
-            Err(_) => None,
+            Ok(resp) if resp.status().is_success() => {
+                parse_conversations_json(&resp.text().await.unwrap_or_default())
+            }
+            _ => None,
+        }
+    }
+
+    /// Get local game chat conversation info (in-match + agent-select team/all).
+    pub async fn get_game_chat(&self) -> Option<ConversationsResponse> {
+        let (core, pre) = tokio::join!(
+            self.get_named_conversations("ares-coregame"),
+            self.get_named_conversations("ares-pregame"),
+        );
+        let mut conversations = Vec::new();
+        let mut merge = |extra: Option<ConversationsResponse>| {
+            let Some(extra) = extra else { return };
+            for conv in extra.conversations {
+                if !conversations.iter().any(|c: &Conversation| c.cid == conv.cid) {
+                    conversations.push(conv);
+                }
+            }
+        };
+        merge(core);
+        merge(pre);
+        if conversations.is_empty() {
+            None
+        } else {
+            Some(ConversationsResponse { conversations })
         }
     }
 
     /// Get local party chat conversation info (lobby/party stack chat).
     pub async fn get_party_chat(&self) -> Option<ConversationsResponse> {
-        let port = self.local_port.read().clone();
-        let auth = self.local_auth.read().clone();
-        let url = format!(
-            "https://127.0.0.1:{}/chat/v6/conversations/ares-parties",
-            port
-        );
-
-        match self
-            .client
-            .get(&url)
-            .header("Authorization", &auth)
-            .send()
-            .await
-        {
-            Ok(resp) => resp.json().await.ok(),
-            Err(_) => None,
-        }
+        self.get_named_conversations("ares-parties").await
     }
 
     /// Send a chat message
@@ -2291,8 +2439,7 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
         let url = format!("https://127.0.0.1:{}/chat/v6/messages", port);
 
-        // Shortcuts (sa/as/<3/!t) — shared with the in-game keyboard expander.
-        // Translate may block briefly on network; only when `!t` is used.
+        // Shortcuts (sa/as/<3, agent tags) — shared with the in-game keyboard expander.
         let message = crate::chat_text::transform_outgoing_chat(message);
 
         let body = SendChatRequest {
@@ -2311,13 +2458,25 @@ impl ValorantAPI {
             .await
         {
             Ok(resp) => {
-                if resp.status().is_success() {
+                let status = resp.status();
+                if status.is_success() {
                     resp.json().await.ok()
                 } else {
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        "[send_chat] {} {} -> {} {}",
+                        message_type,
+                        cid,
+                        status,
+                        body.chars().take(240).collect::<String>()
+                    );
                     None
                 }
             }
-            Err(_) => None,
+            Err(e) => {
+                tracing::warn!("[send_chat] request error {cid}: {e}");
+                None
+            }
         }
     }
 
@@ -2348,6 +2507,667 @@ impl ValorantAPI {
         }
         false
     }
+
+    async fn get_domain_messages(&self, domain: &str) -> Option<ChatHistoryResponse> {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!(
+            "https://127.0.0.1:{}/chat/v6/messages/{}",
+            port, domain
+        );
+        match self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                parse_chat_history_json(&resp.text().await.unwrap_or_default())
+            }
+            _ => None,
+        }
+    }
+
+    async fn live_party_id(&self) -> Option<String> {
+        let puuid = self.puuid.read().clone();
+        if !puuid.is_empty() {
+            if let Some(id) = self.get_presences().await.get(&puuid).cloned() {
+                if !id.is_empty() {
+                    return Some(id);
+                }
+            }
+        }
+        self.get_my_party().await.0
+    }
+
+    async fn chat_muc_hosts(&self) -> Vec<String> {
+        // Live rooms are `{id}@ares-coregame.eu2.pvp.net` even when the chat
+        // session pid is `@eu1.pvp.net`. Prefer the *2 cluster first.
+        let mut hosts = Vec::new();
+        if let Some(session) = self.get_chat_session_region().await {
+            if let Some(prefix) = session.strip_suffix('1') {
+                hosts.push(format!("{prefix}2.pvp.net"));
+                hosts.push(format!("{session}.pvp.net"));
+            } else if let Some(prefix) = session.strip_suffix('2') {
+                hosts.push(format!("{session}.pvp.net"));
+                hosts.push(format!("{prefix}1.pvp.net"));
+            } else {
+                hosts.push(format!("{session}2.pvp.net"));
+                hosts.push(format!("{session}.pvp.net"));
+            }
+        }
+        let shard = self.shard.read().clone();
+        if !shard.is_empty() {
+            hosts.push(format!("{shard}2.pvp.net"));
+            hosts.push(format!("{shard}1.pvp.net"));
+            hosts.push(format!("{shard}.pvp.net"));
+        }
+        hosts.push("eu2.pvp.net".into());
+        let mut out = Vec::new();
+        for h in hosts {
+            if !out.contains(&h) {
+                out.push(h);
+            }
+        }
+        out
+    }
+
+    async fn get_chat_session_region(&self) -> Option<String> {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v1/session", port);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .ok()?;
+        let value: serde_json::Value = resp.json().await.ok()?;
+        value
+            .get("region")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    fn party_cids(party_id: &str, hosts: &[String]) -> Vec<String> {
+        hosts
+            .iter()
+            .map(|h| format!("{party_id}@ares-parties.{h}"))
+            .collect()
+    }
+
+    fn team_cids(match_id: &str, team: &str, hosts: &[String], pregame: bool) -> Vec<String> {
+        let team = team.to_ascii_lowercase();
+        let mut out = Vec::new();
+        for host in hosts {
+            if pregame {
+                let n = if team == "red" || team == "2" { "2" } else { "1" };
+                out.push(format!("{match_id}-{n}@ares-pregame.{host}"));
+            } else {
+                let color = if team == "red" || team == "2" { "red" } else { "blue" };
+                out.push(format!("{match_id}-{color}@ares-coregame.{host}"));
+            }
+        }
+        out
+    }
+
+    fn all_cids(match_id: &str, hosts: &[String]) -> Vec<String> {
+        hosts
+            .iter()
+            .map(|h| format!("{match_id}-all@ares-coregame.{h}"))
+            .collect()
+    }
+
+    /// Team / all / party feed for the overlay chat panel.
+    /// Game rooms are `{matchId}-blue|red@ares-coregame.{{host}}` and `{matchId}-all@...`.
+    /// Party is `{partyId}@ares-parties.{{host}}`. Friend DMs are never included.
+    pub async fn get_live_chat_snapshot(&self) -> LiveChatSnapshot {
+        let (core_msgs, pre_msgs, party_msgs, party_id, core_id, pre_id) = tokio::join!(
+            self.get_domain_messages("ares-coregame"),
+            self.get_domain_messages("ares-pregame"),
+            self.get_domain_messages("ares-parties"),
+            self.live_party_id(),
+            self.get_coregame_match_id(),
+            self.get_pregame_match_id(),
+        );
+
+        let mut messages: Vec<LiveChatMessage> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for extra in [core_msgs, pre_msgs, party_msgs] {
+            if let Some(history) = extra {
+                for msg in history.messages {
+                    self.push_live_message(msg, None, &mut messages, &mut seen);
+                }
+            }
+        }
+
+        if let Some(match_id) = core_id.as_deref().or(pre_id.as_deref()) {
+            if self.joined_live_match.read().as_str() != match_id {
+                self.attach_game_rooms(match_id, pre_id.is_some() && core_id.is_none())
+                    .await;
+                *self.joined_live_match.write() = match_id.to_string();
+            }
+        } else if !self.joined_live_match.read().is_empty() {
+            self.joined_live_match.write().clear();
+        }
+
+        if let Some(match_id) = &core_id {
+            if let Some(match_data) = self.get_coregame_match(match_id).await {
+                tracing::info!(
+                    "[live_chat] official muc all={:?} team={:?}",
+                    match_data.all_muc_name,
+                    match_data.team_muc_name
+                );
+                for cid in [match_data.all_muc_name, match_data.team_muc_name]
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| !s.is_empty())
+                {
+                    self.collect_live_messages(&cid, None, &mut messages, &mut seen)
+                        .await;
+                }
+            }
+            let hosts = self.chat_muc_hosts().await;
+            let team = self
+                .my_team_color(match_id)
+                .await
+                .unwrap_or_else(|| "blue".into());
+            for cid in Self::team_cids(match_id, &team, &hosts, false)
+                .into_iter()
+                .chain(Self::all_cids(match_id, &hosts))
+            {
+                self.collect_live_messages(&cid, None, &mut messages, &mut seen)
+                    .await;
+            }
+        } else if let Some(match_id) = &pre_id {
+            let hosts = self.chat_muc_hosts().await;
+            let team = self
+                .my_pregame_team(match_id)
+                .await
+                .unwrap_or_else(|| "1".into());
+            for cid in Self::team_cids(match_id, &team, &hosts, true) {
+                self.collect_live_messages(&cid, None, &mut messages, &mut seen)
+                    .await;
+            }
+        }
+
+        let (game_convs, party_convs) = tokio::join!(self.get_game_chat(), self.get_party_chat());
+        let listed_game = game_convs
+            .as_ref()
+            .map(|r| {
+                r.conversations
+                    .iter()
+                    .any(|c| is_live_chat_message(&c.cid, &c.conversation_type))
+            })
+            .unwrap_or(false);
+        let listed_party = party_convs
+            .as_ref()
+            .map(|r| {
+                r.conversations
+                    .iter()
+                    .any(|c| is_live_chat_message(&c.cid, &c.conversation_type))
+            })
+            .unwrap_or(false);
+
+        // Match/agent-select: the game client is already in those MUCs even if
+        // the conversation list lags. Solo lobby party_id is NOT a joined room.
+        let has_game = core_id.is_some()
+            || pre_id.is_some()
+            || listed_game
+            || messages.iter().any(|m| m.channel == "team" || m.channel == "all");
+        // Lobby / range / party chat is typed in the game client even when
+        // `/chat/v6/conversations/ares-*` is empty. Keep TAKIM/PARTİ unlocked.
+        let has_party = true;
+        let _ = listed_party;
+
+        {
+            let extra = self.outgoing_live.read().clone();
+            for msg in extra {
+                if seen.insert(msg.id.clone()) {
+                    messages.push(msg);
+                }
+            }
+        }
+        messages.sort_by(|a, b| a.time.cmp(&b.time));
+
+        const CAP: usize = 150;
+        if messages.len() > CAP {
+            messages.drain(0..messages.len() - CAP);
+        }
+
+        tracing::info!(
+            "[live_chat] msgs={} has_game={} has_party={} party={:?} core={:?} pre={:?}",
+            messages.len(),
+            has_game,
+            has_party,
+            party_id,
+            core_id,
+            pre_id
+        );
+
+        LiveChatSnapshot {
+            messages,
+            has_game,
+            has_party,
+        }
+    }
+
+    fn push_live_message(
+        &self,
+        msg: ChatMessage,
+        force_channel: Option<&'static str>,
+        out: &mut Vec<LiveChatMessage>,
+        seen: &mut HashSet<String>,
+    ) {
+        if msg.body.trim().is_empty() {
+            return;
+        }
+        if !is_live_chat_message(&msg.cid, &msg.message_type) {
+            return;
+        }
+        let id = if !msg.id.is_empty() {
+            msg.id.clone()
+        } else if !msg.mid.is_empty() {
+            msg.mid.clone()
+        } else {
+            format!("{}:{}:{}", msg.cid, msg.time, msg.body)
+        };
+        if !seen.insert(id.clone()) {
+            return;
+        }
+        let channel = force_channel
+            .unwrap_or_else(|| classify_live_channel(&msg.cid, &msg.message_type))
+            .to_string();
+        out.push(LiveChatMessage {
+            body: msg.body,
+            cid: msg.cid,
+            game_name: msg.game_name,
+            game_tag: msg.game_tag,
+            id,
+            mid: msg.mid,
+            puuid: msg.puuid,
+            time: msg.time,
+            message_type: msg.message_type,
+            channel,
+        });
+    }
+
+    async fn collect_live_messages(
+        &self,
+        cid: &str,
+        force_channel: Option<&'static str>,
+        out: &mut Vec<LiveChatMessage>,
+        seen: &mut HashSet<String>,
+    ) {
+        let Some(history) = self.get_chat_history(Some(cid)).await else {
+            return;
+        };
+        for msg in history.messages {
+            self.push_live_message(msg, force_channel, out, seen);
+        }
+    }
+
+    async fn fetch_muc_json(&self, path: &str) -> Option<MucToken> {
+        let url = self.glz_url(path);
+        match self.get_remote_ex::<serde_json::Value>(&url).await {
+            RemoteResult::Ok(value) => {
+                let keys = value
+                    .as_object()
+                    .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                let tok = muc_from_value(&value);
+                tracing::info!(
+                    "[live_chat] token {} keys={:?} has_token={} room={:?}",
+                    path,
+                    keys,
+                    tok.as_ref().and_then(|t| t.token.as_ref()).is_some(),
+                    tok.as_ref().and_then(|t| t.room.clone())
+                );
+                tok
+            }
+            RemoteResult::NotFound => {
+                tracing::info!("[live_chat] token {} -> 404", path);
+                None
+            }
+            RemoteResult::Transient => {
+                tracing::info!("[live_chat] token {} -> transient", path);
+                None
+            }
+        }
+    }
+
+    async fn fetch_party_muc(&self, party_id: &str) -> Option<MucToken> {
+        self.fetch_muc_json(&format!("/parties/v1/parties/{party_id}/muctoken"))
+            .await
+    }
+
+    async fn fetch_coregame_chat_token(&self, match_id: &str) -> Option<MucToken> {
+        if let Some(tok) = self
+            .fetch_muc_json(&format!("/core-game/v1/matches/{match_id}/chattoken"))
+            .await
+        {
+            return Some(tok);
+        }
+        let puuid = self.puuid.read().clone();
+        if let Some(tok) = self
+            .fetch_muc_json(&format!("/core-game/v1/players/{puuid}/chattoken"))
+            .await
+        {
+            return Some(tok);
+        }
+        // Same match payload the overlay already uses for AllMUCName / TeamMUCName.
+        let url = self.glz_url(&format!("/core-game/v1/matches/{match_id}"));
+        if let RemoteResult::Ok(value) = self.get_remote_ex::<serde_json::Value>(&url).await {
+            let keys = value
+                .as_object()
+                .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            tracing::info!("[live_chat] match keys={keys:?}");
+            if let Some(tok) = muc_from_value(&value) {
+                return Some(tok);
+            }
+        }
+        None
+    }
+
+    async fn fetch_pregame_chat_token(&self, match_id: &str) -> Option<MucToken> {
+        self.fetch_muc_json(&format!("/pregame/v1/matches/{match_id}/chattoken"))
+            .await
+    }
+
+    async fn join_muc(&self, cid: &str, password: Option<&str>) -> bool {
+        if looks_like_dm_cid(cid) || !is_live_chat_message(cid, "groupchat") {
+            return false;
+        }
+        let Some((id, domain)) = cid.split_once('@') else {
+            return false;
+        };
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        let url = format!("https://127.0.0.1:{}/chat/v6/conversations", port);
+        let mut body = serde_json::json!({
+            "id": id,
+            "domain": domain,
+            "type": "groupchat",
+        });
+        if let Some(region) = target_region_from_cid(cid) {
+            body["targetRegion"] = serde_json::Value::String(region);
+        }
+        let has_password = password.filter(|s| !s.is_empty());
+        if let Some(password) = has_password {
+            body["password"] = serde_json::Value::String(password.to_string());
+        }
+        match self
+            .client
+            .post(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                let joined = status.is_success()
+                    && text.contains("cid")
+                    && !text.contains(r#"conversations":[]"#)
+                    && text.contains('@');
+                tracing::info!(
+                    "[live_chat] join {} password={} -> {} joined={} body={}",
+                    cid,
+                    has_password.is_some(),
+                    status,
+                    joined,
+                    text.chars().take(160).collect::<String>()
+                );
+                joined
+            }
+            Err(e) => {
+                tracing::debug!("[live_chat] join error {cid}: {e}");
+                false
+            }
+        }
+    }
+
+    async fn attach_game_rooms(&self, match_id: &str, pregame: bool) {
+        let hosts = self.chat_muc_hosts().await;
+        let token = if pregame {
+            self.fetch_pregame_chat_token(match_id).await
+        } else {
+            self.fetch_coregame_chat_token(match_id).await
+        };
+        let password = token.as_ref().and_then(|t| t.token.clone());
+        let mut cids = Vec::new();
+        if let Some(room) = token
+            .as_ref()
+            .and_then(|t| t.room.clone())
+            .filter(|s| !s.is_empty())
+        {
+            cids.push(room);
+        }
+        if !pregame {
+            if let Some(match_data) = self.get_coregame_match(match_id).await {
+                for cid in [match_data.all_muc_name, match_data.team_muc_name]
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| !s.is_empty())
+                {
+                    if !cids.contains(&cid) {
+                        cids.push(cid);
+                    }
+                }
+            }
+            let team = self
+                .my_team_color(match_id)
+                .await
+                .unwrap_or_else(|| "blue".into());
+            // Official log host is eu2; try that first only.
+            for cid in Self::team_cids(match_id, &team, &hosts, false)
+                .into_iter()
+                .chain(Self::all_cids(match_id, &hosts))
+            {
+                if !cids.contains(&cid) {
+                    cids.push(cid);
+                }
+            }
+        } else {
+            let team = self
+                .my_pregame_team(match_id)
+                .await
+                .unwrap_or_else(|| "1".into());
+            for cid in Self::team_cids(match_id, &team, &hosts, true) {
+                if !cids.contains(&cid) {
+                    cids.push(cid);
+                }
+            }
+        }
+        let pw = password.as_deref();
+        for cid in cids.iter().take(4) {
+            if self.join_muc(cid, pw).await {
+                break;
+            }
+        }
+    }
+
+    async fn ensure_live_rooms(&self) {
+        if let Some(match_id) = self.get_coregame_match_id().await {
+            self.attach_game_rooms(&match_id, false).await;
+            return;
+        }
+        if let Some(match_id) = self.get_pregame_match_id().await {
+            self.attach_game_rooms(&match_id, true).await;
+        }
+    }
+
+    pub fn remember_live_send(&self, body: &str, channel: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_default();
+        let msg = LiveChatMessage {
+            body: body.to_string(),
+            cid: format!("outgoing:{channel}"),
+            game_name: String::new(),
+            game_tag: String::new(),
+            id: format!("out-{now}"),
+            mid: format!("out-{now}"),
+            puuid: self.puuid.read().clone(),
+            time: now,
+            message_type: "groupchat".into(),
+            channel: channel.to_string(),
+        };
+        let mut q = self.outgoing_live.write();
+        q.push(msg);
+        if q.len() > 40 {
+            let n = q.len() - 40;
+            q.drain(0..n);
+        }
+    }
+
+    /// Send to team / all / party MUC rooms. Never friend DMs.
+    ///
+    /// Only POSTs to rooms the local client has actually joined. Guessed
+    /// `{matchId}-blue@…` / `{partyId}@ares-parties` CIDs 404 and burn
+    /// seconds — the overlay then injects too late and the line is lost.
+    pub async fn send_live_chat(&self, message: &str, channel: &str) -> Result<bool, String> {
+        let cids = self.listed_live_cids(channel).await;
+        tracing::info!("[live_chat] send channel={channel} listed={cids:?}");
+        for cid in &cids {
+            if looks_like_dm_cid(cid) || !is_live_chat_message(cid, "groupchat") {
+                continue;
+            }
+            if self
+                .send_chat_message(cid, message, "groupchat")
+                .await
+                .is_some()
+            {
+                self.remember_live_send(message, channel);
+                return Ok(true);
+            }
+        }
+        Err("Chat room is not open. Open team/party chat in-game first, or send during a match.".into())
+    }
+
+    async fn listed_live_cids(&self, channel: &str) -> Vec<String> {
+        let (game, party) = tokio::join!(self.get_game_chat(), self.get_party_chat());
+        let mut out = Vec::new();
+        let mut push = |extra: Option<ConversationsResponse>| {
+            let Some(extra) = extra else { return };
+            for conv in extra.conversations {
+                if !is_live_chat_message(&conv.cid, &conv.conversation_type) {
+                    continue;
+                }
+                let kind = classify_live_channel(&conv.cid, &conv.conversation_type);
+                let ok = match channel {
+                    "all" => kind == "all",
+                    "team" => kind == "team" || kind == "party",
+                    "party" => kind == "party",
+                    _ => false,
+                };
+                if ok && !out.contains(&conv.cid) {
+                    out.push(conv.cid);
+                }
+            }
+        };
+        if channel == "party" || channel == "team" {
+            push(party);
+        }
+        if channel != "party" {
+            push(game);
+        }
+        out
+    }
+
+    async fn resolve_live_cids(&self, channel: &str) -> Result<Vec<String>, String> {
+        let mut cids = self.listed_live_cids(channel).await;
+        let hosts = self.chat_muc_hosts().await;
+        match channel {
+            "all" => {
+                let Some(match_id) = self.get_coregame_match_id().await else {
+                    if cids.is_empty() {
+                        return Err("Not in a match".into());
+                    }
+                    return Ok(cids);
+                };
+                if let Some(match_data) = self.get_coregame_match(&match_id).await {
+                    if let Some(cid) = match_data.all_muc_name.filter(|s| !s.is_empty()) {
+                        cids.insert(0, cid);
+                    }
+                }
+                for cid in Self::all_cids(&match_id, &hosts) {
+                    if !cids.contains(&cid) {
+                        cids.push(cid);
+                    }
+                }
+            }
+            "team" => {
+                if let Some(match_id) = self.get_coregame_match_id().await {
+                    let team = self
+                        .my_team_color(&match_id)
+                        .await
+                        .unwrap_or_else(|| "blue".into());
+                    if let Some(match_data) = self.get_coregame_match(&match_id).await {
+                        if let Some(cid) = match_data.team_muc_name.filter(|s| !s.is_empty()) {
+                            cids.insert(0, cid);
+                        }
+                    }
+                    for cid in Self::team_cids(&match_id, &team, &hosts, false) {
+                        if !cids.contains(&cid) {
+                            cids.push(cid);
+                        }
+                    }
+                } else if let Some(match_id) = self.get_pregame_match_id().await {
+                    let team = self
+                        .my_pregame_team(&match_id)
+                        .await
+                        .unwrap_or_else(|| "1".into());
+                    for cid in Self::team_cids(&match_id, &team, &hosts, true) {
+                        if !cids.contains(&cid) {
+                            cids.push(cid);
+                        }
+                    }
+                }
+            }
+            "party" => {
+                if let Some(party_id) = self.live_party_id().await {
+                    for cid in Self::party_cids(&party_id, &hosts) {
+                        if !cids.contains(&cid) {
+                            cids.push(cid);
+                        }
+                    }
+                }
+            }
+            _ => return Err("Invalid channel".into()),
+        }
+        cids.retain(|cid| is_live_chat_message(cid, "groupchat") && !looks_like_dm_cid(cid));
+        if cids.is_empty() {
+            return Err(match channel {
+                "all" => "Not in a match".into(),
+                "party" => "Party chat is not open yet".into(),
+                _ => "Team chat is not open yet".into(),
+            });
+        }
+        Ok(cids)
+    }
+
+    async fn my_team_color(&self, match_id: &str) -> Option<String> {
+        let me = self.puuid.read().clone();
+        let match_data = self.get_coregame_match(match_id).await?;
+        match_data
+            .players
+            .iter()
+            .find(|p| p.subject == me)
+            .map(|p| p.team_id.clone())
+    }
+
+    async fn my_pregame_team(&self, match_id: &str) -> Option<String> {
+        let match_data = self.get_pregame_match(match_id).await?;
+        match_data.ally_team.map(|t| t.team_id)
+    }
+
     /// Get friends list
     pub async fn get_friends(&self) -> Option<FriendsResponse> {
         let port = self.local_port.read().clone();
@@ -2870,5 +3690,48 @@ impl ValorantAPI {
 
         tracing::info!("[Tracker] Successfully fetched stats");
         Ok(json)
+    }
+}
+
+#[cfg(test)]
+mod live_chat_tests {
+    use super::classify_live_channel;
+
+    #[test]
+    fn classify_coregame_chat_is_all() {
+        assert_eq!(
+            classify_live_channel("abc-all@ares-coregame.eu2.pvp.net", "groupchat"),
+            "all"
+        );
+        assert_eq!(
+            classify_live_channel("abc-blue@ares-coregame.eu2.pvp.net", "groupchat"),
+            "team"
+        );
+        assert_eq!(
+            classify_live_channel("abc-red@ares-coregame.eu2.pvp.net", "chat"),
+            "team"
+        );
+    }
+
+    #[test]
+    fn classify_party_is_party() {
+        assert_eq!(
+            classify_live_channel("xyz@ares-parties.eu2.pvp.net", "groupchat"),
+            "party"
+        );
+        assert_eq!(
+            classify_live_channel("abc-1@ares-pregame.eu2.pvp.net", "groupchat"),
+            "team"
+        );
+    }
+
+    #[test]
+    fn dm_on_parties_is_not_live() {
+        assert!(super::is_live_chat_message("abc@ares-parties.eu2.pvp.net", "groupchat"));
+        assert!(super::is_live_chat_message("abc-blue@ares-coregame.eu2.pvp.net", "groupchat"));
+        assert!(super::is_live_chat_message("abc-1@ares-pregame.eu2.pvp.net", "groupchat"));
+        assert!(!super::is_live_chat_message("unknown-lobby-id", "groupchat"));
+        assert!(!super::is_live_chat_message("p1/p2@ares-chats.eu", "chat"));
+        assert!(!super::is_live_chat_message("7181bafc-db85-53ae-80a4-6a41a1df3b59@eu2.pvp.net", "chat"));
     }
 }

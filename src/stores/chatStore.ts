@@ -1,9 +1,16 @@
 import { create } from "zustand";
 import { invokeCommand } from "../utils/ipc";
-import { ChatMessage, Conversation, PaginatedMessages, Friend, FriendRequest } from "../lib/types";
+import { ChatMessage, Conversation, PaginatedMessages, Friend, FriendRequest, LiveChatMessage, LiveChatSnapshot, LiveChatChannel } from "../lib/types";
 import { useI18n } from "../lib/i18n";
+import { useSettingsStore } from "./settingsStore";
 
-export type Tab = "DM" | "FRIENDS";
+export type Tab = "LIVE" | "DM" | "FRIENDS";
+
+export function isLiveConversation(conv: Conversation): boolean {
+  if (!conv.cid) return false;
+  const cid = conv.cid.toLowerCase();
+  return cid.includes("ares-coregame") || cid.includes("ares-pregame") || cid.includes("ares-parties");
+}
 
 interface ChatStore {
   activeCid: string | null;
@@ -16,6 +23,13 @@ interface ChatStore {
   loading: boolean;
   isOpen: boolean;
 
+  // Live in-game / party feed
+  liveMessages: LiveChatMessage[];
+  liveHasGame: boolean;
+  liveHasParty: boolean;
+  liveSendChannel: LiveChatChannel;
+  liveUnread: number;
+
   // Pagination
   page: number;
   hasMore: boolean;
@@ -23,6 +37,9 @@ interface ChatStore {
   setIsOpen: (isOpen: boolean) => void;
   setActiveCid: (cid: string | null) => void;
   setActiveTab: (tab: Tab) => void;
+  setLiveSendChannel: (channel: LiveChatChannel) => void;
+  fetchLiveMessages: () => Promise<void>;
+  sendLiveMessage: (message: string, channel: LiveChatChannel) => Promise<boolean>;
 
   fetchConversations: () => Promise<void>;
   fetchMessages: (reload?: boolean) => Promise<void>;
@@ -66,10 +83,72 @@ function applyOutgoingRequests(
   });
 }
 
+
+function classifyLiveMessage(cid: string, _type: string): LiveChatChannel {
+  const id = cid.toLowerCase();
+  if (id.includes("ares-parties")) return "party";
+  if (id.includes("-all@")) return "all";
+  if (id.includes("ares-coregame") || id.includes("ares-pregame")) return "team";
+  return "party";
+}
+
+async function fallbackLiveFromConversations(conversations: Conversation[]): Promise<{
+  messages: LiveChatMessage[];
+  hasGame: boolean;
+  hasParty: boolean;
+}> {
+  const live = conversations.filter(isLiveConversation);
+  const hasGame = live.some((c) => {
+    const id = c.cid.toLowerCase();
+    return id.includes("coregame") || id.includes("pregame");
+  });
+  const hasParty = live.some((c) => {
+    const id = c.cid.toLowerCase();
+    return !id.includes("coregame") && !id.includes("pregame");
+  });
+  if (live.length === 0) return { messages: [], hasGame, hasParty };
+
+  const pages = await Promise.all(
+    live.map((conv) =>
+      invokeCommand<PaginatedMessages>(
+        "get_paginated_chat_messages",
+        { cid: conv.cid, page: 0, pageSize: 80 },
+        { suppressErrorToast: true },
+      ).catch(() => null),
+    ),
+  );
+
+  const seen = new Set<string>();
+  const messages: LiveChatMessage[] = [];
+  for (const page of pages) {
+    if (!page?.messages) continue;
+    for (const msg of page.messages) {
+      if (!msg.body?.trim() || seen.has(msg.id)) continue;
+      const channel = classifyLiveMessage(msg.cid, msg.type);
+      if (channel === "party" && msg.type === "chat") continue;
+      seen.add(msg.id);
+      messages.push({
+        body: msg.body,
+        cid: msg.cid,
+        game_name: msg.game_name,
+        game_tag: msg.game_tag,
+        id: msg.id,
+        mid: msg.mid,
+        puuid: msg.puuid,
+        time: msg.time,
+        type: msg.type,
+        channel,
+      });
+    }
+  }
+  messages.sort((a, b) => Number(a.time) - Number(b.time));
+  return { messages, hasGame, hasParty };
+}
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   activeCid: null,
   // No default open DM → land on friends; switch to DM when a conversation is opened.
-  activeTab: "FRIENDS",
+  activeTab: "LIVE",
   conversations: [],
   messages: [],
   friends: [],
@@ -77,15 +156,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   cancellingPuuid: null,
   loading: false,
   isOpen: false,
+  liveMessages: [],
+  liveHasGame: false,
+  liveHasParty: false,
+  liveSendChannel: "team",
+  liveUnread: 0,
   page: 0,
   hasMore: false,
 
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  setActiveTab: (tab) => set({ activeTab: tab, ...(tab === "LIVE" ? { liveUnread: 0 } : {}) }),
+
+  setLiveSendChannel: (channel) => set({ liveSendChannel: channel }),
 
   setIsOpen: (isOpen) => {
-    // Opening the panel with no active conversation → friends tab (not empty DM).
+    // Opening the panel with no active conversation → live match/party chat.
     if (isOpen && !get().activeCid) {
-      set({ isOpen: true, activeTab: "FRIENDS" });
+      set({ isOpen: true, activeTab: "LIVE", liveUnread: 0 });
       return;
     }
     set({ isOpen });
@@ -381,5 +467,125 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       } catch (e) {
           console.error("Failed to start DM", e);
       }
-  }
+  },
+
+  fetchLiveMessages: async () => {
+    try {
+      const snap = await invokeCommand<LiveChatSnapshot>("get_live_chat_messages", undefined, {
+        suppressErrorToast: true,
+      });
+      let messages = snap?.messages ?? [];
+      let hasGame = snap?.has_game ?? false;
+      let hasParty = snap?.has_party ?? false;
+
+      if (messages.length === 0) {
+        const fallback = await fallbackLiveFromConversations(get().conversations);
+        if (fallback.messages.length > 0) {
+          messages = fallback.messages;
+          hasGame = hasGame || fallback.hasGame;
+          hasParty = hasParty || fallback.hasParty;
+        }
+      }
+
+      if (messages.length === 0) {
+        const all = await invokeCommand<ChatMessage[]>(
+          "get_chat_messages",
+          { cid: null },
+          { suppressErrorToast: true },
+        ).catch(() => null);
+        if (all?.length) {
+          const seen = new Set<string>();
+          for (const msg of all) {
+            if (!msg.body?.trim() || seen.has(msg.id)) continue;
+            const cid = (msg.cid || "").toLowerCase();
+            const liveCid =
+              cid.includes("ares-coregame") ||
+              cid.includes("ares-pregame") ||
+              cid.includes("ares-parties");
+            if (!liveCid) continue;
+            seen.add(msg.id);
+            const channel = classifyLiveMessage(msg.cid, msg.type);
+            messages.push({
+              body: msg.body,
+              cid: msg.cid,
+              game_name: msg.game_name,
+              game_tag: msg.game_tag,
+              id: msg.id,
+              mid: msg.mid,
+              puuid: msg.puuid,
+              time: msg.time,
+              type: msg.type,
+              channel,
+            });
+            if (channel === "team" || channel === "all") hasGame = true;
+            if (channel === "party") hasParty = true;
+          }
+          messages.sort((a, b) => Number(a.time) - Number(b.time));
+        }
+      }
+
+      if (!hasGame && !hasParty && messages.length > 0) {
+        hasParty = messages.some((m) => m.channel === "party");
+        hasGame = messages.some((m) => m.channel === "team" || m.channel === "all");
+        if (!hasGame && !hasParty) hasParty = true;
+      }
+
+      const prevIds = new Set(get().liveMessages.map((m) => m.id));
+      const fresh = messages.filter((m) => !prevIds.has(m.id));
+      const onLive = get().activeTab === "LIVE";
+      set({
+        liveMessages: messages,
+        liveHasGame: hasGame || messages.some((m) => m.channel === "team" || m.channel === "all"),
+        liveHasParty: hasParty || messages.some((m) => m.channel === "party"),
+        liveUnread: onLive ? 0 : get().liveUnread + fresh.length,
+      });
+    } catch (e) {
+      console.error("Failed to fetch live chat", e);
+    }
+  },
+
+  sendLiveMessage: async (message, channel) => {
+    const settings = useSettingsStore.getState();
+    const translateTo = settings.chatTranslateOnSend ? settings.chatOutgoingLang : null;
+    const t = useI18n.getState().t;
+    try {
+      const success = await invokeCommand<boolean>(
+        "send_live_chat",
+        { message, channel, translateTo },
+        { errorMessage: t("chat.sendFailed") },
+      );
+      if (success) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await get().fetchLiveMessages();
+        return true;
+      }
+    } catch (e) {
+      console.error("Failed to send live chat", e);
+    }
+
+    const conv = get().conversations.find((c) => {
+      if (!isLiveConversation(c)) return false;
+      const cid = c.cid.toLowerCase();
+      if (channel === "all") return cid.includes("-all@") || cid.includes("ares-coregame");
+      if (channel === "party") return cid.includes("ares-parties");
+      return cid.includes("ares-coregame") || cid.includes("ares-pregame") || cid.includes("ares-parties");
+    });
+    if (!conv) return false;
+    const type = channel === "all" ? "chat" : "groupchat";
+    try {
+      const success = await invokeCommand<boolean>(
+        "send_message",
+        { cid: conv.cid, message, messageType: type },
+        { errorMessage: t("chat.sendFailed") },
+      );
+      if (success) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await get().fetchLiveMessages();
+      }
+      return success || false;
+    } catch (e) {
+      console.error("Failed to send live chat fallback", e);
+      return false;
+    }
+  },
 }));

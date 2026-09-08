@@ -3,7 +3,6 @@
  * Real expansion runs in Rust (API send + in-game keyboard expander).
  *
  * Greetings: sa / as
- * Translate: !t <lang> <text>
  * Agents: <sage (ally) / >jett (enemy) → @Name (no #tag)
  * Symbols: <3 </3 -> <- ... :check: :wrong: :warn: :skull: / :kurukafa:
  */

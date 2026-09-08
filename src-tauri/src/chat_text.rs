@@ -6,15 +6,12 @@
 //! - whole message `as` → `Aleyküm Selam`
 //! - symbol emoticons (`<3`, `:)` , `->`, …) → Unicode text chars (not emoji)
 //! - agent tags: `<sage` (ally) / `>jett` (enemy) → `@Name` (no #tag)
-//! - `!t <lang> <text>` → Google Translate (auto source → lang)
 
 use crate::api::types::GameState;
 use crate::constants::AGENTS;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-pub use crate::translate::{google_translate, google_translate_detailed};
 
 /// Master switch for outgoing chat shortcuts, driven by the Settings toggle.
 /// Shared by the in-game keyboard expander and the overlay's own send path so
@@ -195,50 +192,12 @@ fn looks_like_agent_mention(s: &str) -> bool {
 }
 
 
-/// `!t <lang> <message>` — lang is any Google-supported code (`en`, `tr`, `de`,
-/// `zh-CN`, `pt-BR`, …). Message must be non-empty.
-pub fn parse_translate_command(raw: &str) -> Option<(&str, &str)> {
-    let t = raw.trim();
-    // Case-insensitive "!t" prefix.
-    let rest = if t.len() >= 2 && t.as_bytes()[..2].eq_ignore_ascii_case(b"!t") {
-        &t[2..]
-    } else {
-        return None;
-    };
-    let rest = rest.trim_start();
-    if rest.is_empty() {
-        return None;
-    }
-    let mut parts = rest.splitn(2, char::is_whitespace);
-    let lang = parts.next()?.trim();
-    let text = parts.next()?.trim();
-    if lang.is_empty() || text.is_empty() {
-        return None;
-    }
-    if !is_plausible_lang_code(lang) {
-        return None;
-    }
-    Some((lang, text))
-}
-
-fn is_plausible_lang_code(lang: &str) -> bool {
-    let b = lang.as_bytes();
-    if b.len() < 2 || b.len() > 12 {
-        return false;
-    }
-    b.iter().all(|c| c.is_ascii_alphabetic() || *c == b'-') && b[0].is_ascii_alphabetic()
-}
-
-/// Apply all outgoing shortcuts. Safe to call from any thread (uses blocking HTTP
-/// only when `!t` is present).
+/// Apply all outgoing shortcuts.
 ///
 /// Order:
-/// 1. `!t <lang> …` translate (always available)
-/// 2. User/system **equals** + **contains** rules (`chat_rules`)
-/// 3. Agent mentions (`<sage` / `>jett`)
-/// 4. Contains rules again only if agent mentions changed text? — no:
-///    Agent mentions run after equals, then contains so symbols still apply
-///    to the remaining text. Equals already replaced the whole message.
+/// 1. User/system **equals** rules (`chat_rules`, e.g. sa → Selamun Aleyküm)
+/// 2. Agent mentions (`<sage` / `>jett`)
+/// 3. Contains rules (symbols + user "contains" phrases)
 pub fn transform_outgoing_chat(message: &str) -> String {
     if !shortcuts_enabled() {
         return message.to_string();
@@ -249,29 +208,10 @@ pub fn transform_outgoing_chat(message: &str) -> String {
         return message.to_string();
     }
 
-    // 1) Translate command — may hit the network.
-    let mut out = if let Some((lang, text)) = parse_translate_command(trimmed) {
-        match google_translate(text, lang) {
-            Some(translated) => {
-                tracing::info!("[ChatText] !t {} {:?} → {:?}", lang, text, translated);
-                translated
-            }
-            None => {
-                tracing::warn!("[ChatText] Translate failed; sending original text");
-                text.to_string()
-            }
-        }
-    } else {
-        // 2) Equals rules (whole message, e.g. sa → Selamun Aleyküm).
-        crate::chat_rules::apply_equals_rules(trimmed)
-    };
-
-    // 3) Agent tags (`<sage` / `>jett`) — before symbol/contains so `<3` still works.
+    let mut out = crate::chat_rules::apply_equals_rules(trimmed);
+    // Agent tags (`<sage` / `>jett`) — before symbol/contains so `<3` still works.
     out = apply_agent_mentions(&out);
-
-    // 4) Contains rules (symbols + user "contains" phrases).
     out = crate::chat_rules::apply_contains_rules(&out);
-
     out
 }
 
@@ -284,9 +224,6 @@ pub fn needs_chat_expansion(raw: &str) -> bool {
     let t = raw.trim();
     if t.is_empty() {
         return false;
-    }
-    if parse_translate_command(t).is_some() {
-        return true;
     }
     if crate::chat_rules::needs_rule_expansion(t) {
         return true;
@@ -343,4 +280,9 @@ mod tests {
         assert!(!looks_like_agent_mention("<3"));
     }
 
+    #[test]
+    fn bang_t_is_no_longer_a_shortcut() {
+        assert!(!needs_chat_expansion("!t en merhaba"));
+        assert_eq!(transform_outgoing_chat("!t en merhaba"), "!t en merhaba");
+    }
 }

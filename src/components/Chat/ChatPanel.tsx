@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
-import { useChatStore, Tab } from "../../stores/chatStore";
+import { useChatStore, Tab, isLiveConversation } from "../../stores/chatStore";
+import { LiveChatView } from "./LiveChatView";
 import { useGameStore } from "../../stores/gameStore";
 import { useSettingsStore } from "../../stores/settingsStore"; // Import Settings Store
 import { usePanelStore } from "../../stores/panelStore";
@@ -22,7 +23,9 @@ export function ChatPanel() {
     cancellingPuuid,
     fetchConversations,
     fetchMessages,
+    fetchLiveMessages,
     fetchFriends,
+    liveUnread,
     fetchOutgoingRequests,
     cancelOutgoingRequest,
     loadMoreMessages,
@@ -126,6 +129,7 @@ export function ChatPanel() {
     // Initial fetch whenever we open or reconnect or BECOME VISIBLE
     if (isWindowVisible) {
       fetchConversations();
+      fetchLiveMessages();
       fetchMessages(true);
       fetchFriends();
       fetchOutgoingRequests();
@@ -136,13 +140,13 @@ export function ChatPanel() {
 
     const interval = setInterval(() => {
       fetchConversations();
-      // Only poll messages if we are in DM tab
+      fetchLiveMessages();
       if (activeTab === "DM") {
         fetchMessages();
       }
       fetchFriends();
       fetchOutgoingRequests();
-    }, 2000);
+    }, activeTab === "LIVE" ? 1200 : 2000);
 
     return () => clearInterval(interval);
   }, [isOpen, isConnected, activeCid, isWindowVisible, activeTab]);
@@ -263,17 +267,17 @@ export function ChatPanel() {
 
   /** Prefer in-game / party channel labels over generic "TEAM". */
   const conversationLabel = (conv: (typeof conversations)[number]) => {
-    const cid = conv.cid.toLowerCase();
-    if (cid.includes("coregame")) return t("chat.game");
-    if (cid.includes("parties") && conv.type === "groupchat") return t("chat.party");
-    if (conv.type === "groupchat") return conv.game_name || t("chat.team");
-    return conv.game_name || t("chat.dm");
+    const raw = (conv.game_name || "").trim();
+    if (raw && raw !== "AGENT" && raw !== "AJAN") return raw.split("#")[0];
+    const friend = friends.find((f) => conv.cid.toLowerCase().includes(f.puuid.toLowerCase()));
+    if (friend?.game_name) return friend.game_name;
+    return t("chat.dm");
   };
 
   // Chat tab: DMs + live game/party channels (groupchat goes to in-game Valorant chat).
   const filteredConversations = useMemo(() => {
     if (activeTab !== "DM") return [];
-    return conversations;
+    return conversations.filter((c) => !isLiveConversation(c));
   }, [conversations, activeTab]);
 
   const filteredFriends = useMemo(() => {
@@ -326,12 +330,9 @@ export function ChatPanel() {
 
     // Auto-select logic based on tab
     if (tab === "DM") {
-      // Prefer live game chat, then party, then first conversation.
       const preferred =
-        conversations.find((c) => c.cid.toLowerCase().includes("coregame")) ||
-        conversations.find((c) => c.type === "groupchat" && c.cid.toLowerCase().includes("parties")) ||
-        conversations.find((c) => c.type === "groupchat") ||
-        conversations[0];
+        conversations.find((c) => !isLiveConversation(c)) ||
+        null;
       setActiveCid(preferred ? preferred.cid : null);
     }
   };
@@ -366,12 +367,17 @@ export function ChatPanel() {
 
         {/* TABS */}
         <div className="flex px-2 pt-2 gap-1 border-b border-white/5 bg-black/20 shrink-0">
-          {(["DM", "FRIENDS"] as Tab[]).map((tab) => (
+          {(["LIVE", "DM", "FRIENDS"] as Tab[]).map((tab) => (
             <button key={tab} onClick={() => handleTabChange(tab)} className={clsx("flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative uppercase hover:bg-white/5 rounded-t-sm flex items-center justify-center", activeTab === tab ? "text-white bg-white/5" : "text-dim")}>
               {t(`tabs.${tab.toLowerCase()}`)}
               {tab === "FRIENDS" && outgoingRequests.length > 0 && (
                 <span className="ml-1.5 min-w-[16px] h-4 px-1 rounded-sm bg-accent-red/80 text-white text-[9px] leading-4 font-bold">
                   {outgoingRequests.length}
+                </span>
+              )}
+              {tab === "LIVE" && liveUnread > 0 && (
+                <span className="ml-1.5 min-w-[16px] h-4 px-1 rounded-sm bg-accent-red/80 text-white text-[9px] leading-4 font-bold">
+                  {liveUnread > 99 ? "99+" : liveUnread}
                 </span>
               )}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent-red shadow-[0_0_10px_#ff4655]" />}
@@ -384,7 +390,9 @@ export function ChatPanel() {
           <div className="scan-lines absolute inset-0 pointer-events-none opacity-10" />
 
           {/* CASE: FRIENDS TAB */}
-          {activeTab === "FRIENDS" ? (
+          {activeTab === "LIVE" ? (
+            <LiveChatView />
+          ) : activeTab === "FRIENDS" ? (
             <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
               {/* Search Bar */}
               <div className="relative shrink-0 group">
@@ -536,21 +544,44 @@ export function ChatPanel() {
               */}
               {/* Conversation Horizontal Scroll (Hidden if empty) */}
               {filteredConversations.length > 0 && (
-                <div className="h-14 shrink-0 flex items-center gap-2 px-4 overflow-x-auto border-b border-white/5 bg-black/10 scrollbar-none">
-                  {filteredConversations.map((conv) => (
-                    <button
-                      key={conv.cid}
-                      onClick={() => setActiveCid(conv.cid)}
-                      className={clsx(
-                        "px-3 py-1.5 rounded-sm flex items-center gap-2 border transition-all text-[11px] font-bold uppercase tracking-wider whitespace-nowrap",
-                        activeCid === conv.cid ? "bg-accent-red/20 border-accent-red text-white shadow-[0_0_10px_rgba(255,70,85,0.2)]" : "bg-white/5 border-transparent text-dim hover:bg-white/10 hover:text-white",
-                      )}
-                    >
-                      <div className={clsx("w-1.5 h-1.5 rounded-full", conv.type === "groupchat" ? "bg-accent-cyan" : "bg-accent-gold")} />
-                      {conversationLabel(conv)}
-                      {conv.unread_count > 0 && <span className="ml-1 bg-accent-red text-white text-[9px] px-1 rounded-sm">{conv.unread_count}</span>}
-                    </button>
-                  ))}
+                <div className="relative shrink-0 border-b border-white/5 bg-black/20">
+                  <div
+                    className="dm-rail flex items-center gap-1 px-3 py-1.5 overflow-x-auto"
+                    onWheel={(e) => {
+                      const el = e.currentTarget;
+                      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                        el.scrollLeft += e.deltaY;
+                      }
+                    }}
+                  >
+                    {filteredConversations.map((conv) => {
+                      const name = conversationLabel(conv);
+                      const on = activeCid === conv.cid;
+                      return (
+                        <button
+                          key={conv.cid}
+                          type="button"
+                          onClick={() => setActiveCid(conv.cid)}
+                          title={name}
+                          className={clsx(
+                            "h-7 max-w-[8.5rem] shrink-0 px-2.5 rounded-sm text-[11px] font-semibold tracking-normal whitespace-nowrap truncate border transition-all",
+                            on
+                              ? "bg-accent-red/20 border-accent-red/70 text-white"
+                              : "bg-white/5 border-transparent text-white/70 hover:text-white hover:bg-white/10",
+                          )}
+                        >
+                          {name}
+                          {conv.unread_count > 0 && (
+                            <span className="ml-1.5 align-middle inline-block min-w-4 px-1 rounded-sm bg-accent-red text-white text-[9px] leading-4 font-bold">
+                              {conv.unread_count > 99 ? "99+" : conv.unread_count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-linear-to-r from-black/50 to-transparent" />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 w-5 bg-linear-to-l from-black/60 to-transparent" />
                 </div>
               )}
 

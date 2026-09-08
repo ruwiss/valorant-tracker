@@ -40,7 +40,7 @@ type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled, minimizeToTray, setMinimizeToTray } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled, chatAutoTranslate, setChatAutoTranslate, chatTranslateOnSend, setChatTranslateOnSend, chatOutgoingLang, setChatOutgoingLang, minimizeToTray, setMinimizeToTray } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { constants } = useConstantsStore();
@@ -569,6 +569,48 @@ export function SettingsPanel() {
                 {t("settings.chatShortcutsEdit")}
               </button>
               <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.chatShortcutsDesc")}</p>
+
+              <label className="text-[10px] text-dim block mb-1 pt-1">{t("settings.chatAutoTranslate")}</label>
+              <div className="flex gap-1.5">
+                <button onClick={() => setChatAutoTranslate(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${chatAutoTranslate ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.on")}
+                </button>
+                <button onClick={() => setChatAutoTranslate(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!chatAutoTranslate ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.off")}
+                </button>
+              </div>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.chatAutoTranslateDesc")}</p>
+
+              <label className="text-[10px] text-dim block mb-1 pt-1">{t("settings.chatTranslateOnSend")}</label>
+              <div className="flex gap-1.5">
+                <button onClick={() => setChatTranslateOnSend(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${chatTranslateOnSend ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.on")}
+                </button>
+                <button onClick={() => setChatTranslateOnSend(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!chatTranslateOnSend ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
+                  {t("settings.off")}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-dim">{t("settings.chatOutgoingLang")}</span>
+                <select
+                  value={chatOutgoingLang}
+                  onChange={(e) => setChatOutgoingLang(e.target.value)}
+                  className="h-7 flex-1 bg-black/40 border border-border/60 text-[10px] font-semibold text-primary px-2 rounded focus:outline-none"
+                >
+                  <option value="en">EN</option>
+                  <option value="tr">TR</option>
+                  <option value="es">ES</option>
+                  <option value="de">DE</option>
+                  <option value="fr">FR</option>
+                  <option value="pt">PT</option>
+                  <option value="ru">RU</option>
+                  <option value="ja">JA</option>
+                  <option value="ko">KO</option>
+                  <option value="zh-CN">ZH</option>
+                  <option value="ar">AR</option>
+                </select>
+              </div>
+              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.chatTranslateOnSendDesc")}</p>
             </section>
 
             {/* Presets */}

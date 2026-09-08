@@ -66,6 +66,9 @@ interface SettingsState {
   autoLockDelaySeconds: number;
   discordRpcEnabled: boolean;
   chatShortcutsEnabled: boolean;
+  chatAutoTranslate: boolean;
+  chatTranslateOnSend: boolean;
+  chatOutgoingLang: string;
   /** Hide to tray (true, default) vs normal taskbar minimize (false). */
   minimizeToTray: boolean;
   /** First-launch tip toast; shown once then persisted as seen. */
@@ -94,6 +97,9 @@ interface SettingsStore extends SettingsState {
   syncDiscordRpc: () => void;
   setChatShortcutsEnabled: (enabled: boolean) => void;
   syncChatShortcuts: () => void;
+  setChatAutoTranslate: (enabled: boolean) => void;
+  setChatTranslateOnSend: (enabled: boolean) => void;
+  setChatOutgoingLang: (lang: string) => void;
   setMinimizeToTray: (enabled: boolean) => void;
   markWelcomeSeen: () => void;
 }
@@ -234,6 +240,9 @@ export const useSettingsStore = create<SettingsStore>()(
       autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
       chatShortcutsEnabled: true,
+      chatAutoTranslate: false,
+      chatTranslateOnSend: false,
+      chatOutgoingLang: "en",
       minimizeToTray: true,
       hasSeenWelcome: false,
 
@@ -278,6 +287,10 @@ export const useSettingsStore = create<SettingsStore>()(
           invokeCommand("set_chat_shortcuts", { enabled: get().chatShortcutsEnabled }).catch(console.error);
         });
       },
+
+      setChatAutoTranslate: (enabled) => set({ chatAutoTranslate: enabled }),
+      setChatTranslateOnSend: (enabled) => set({ chatTranslateOnSend: enabled }),
+      setChatOutgoingLang: (lang) => set({ chatOutgoingLang: lang || "en" }),
 
       setMinimizeToTray: (enabled: boolean) => {
         set({ minimizeToTray: enabled });
@@ -513,6 +526,9 @@ export const useSettingsStore = create<SettingsStore>()(
         autoLockDelaySeconds: state.autoLockDelaySeconds,
         discordRpcEnabled: state.discordRpcEnabled,
         chatShortcutsEnabled: state.chatShortcutsEnabled,
+        chatAutoTranslate: state.chatAutoTranslate,
+        chatTranslateOnSend: state.chatTranslateOnSend,
+        chatOutgoingLang: state.chatOutgoingLang,
         minimizeToTray: state.minimizeToTray,
         hasSeenWelcome: state.hasSeenWelcome,
       }),
@@ -527,6 +543,9 @@ export const useSettingsStore = create<SettingsStore>()(
           ),
           // Legacy saves without this key keep the default (tray).
           minimizeToTray: p.minimizeToTray ?? current.minimizeToTray,
+          chatAutoTranslate: p.chatAutoTranslate ?? current.chatAutoTranslate,
+          chatTranslateOnSend: p.chatTranslateOnSend ?? current.chatTranslateOnSend,
+          chatOutgoingLang: p.chatOutgoingLang || current.chatOutgoingLang || "en",
         };
       },
       onRehydrateStorage: () => (_state, error) => {

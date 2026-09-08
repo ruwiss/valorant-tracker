@@ -117,6 +117,10 @@ pub struct CoregameMatch {
     /// on the post-game scoreboard.
     #[serde(default, deserialize_with = "lenient_opt")]
     pub post_game_details: Option<serde_json::Value>,
+    #[serde(default, rename = "AllMUCName")]
+    pub all_muc_name: Option<String>,
+    #[serde(default, rename = "TeamMUCName")]
+    pub team_muc_name: Option<String>,
 }
 
 impl CoregameMatch {
@@ -258,6 +262,15 @@ pub struct PartyPlayerResponse {
 #[serde(rename_all = "PascalCase")]
 pub struct PartyResponse {
     pub members: Vec<PartyMember>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct MucToken {
+    #[serde(default, alias = "token", alias = "MUCToken", alias = "Jwt", alias = "jwt")]
+    pub token: Option<String>,
+    #[serde(default, alias = "room")]
+    pub room: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -664,39 +677,69 @@ pub struct WeaponSkin {
 // Chat Related Structs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatHistoryResponse {
+    #[serde(default)]
     pub messages: Vec<ChatMessage>,
+}
+
+fn deserialize_chat_time<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        _ => Ok(String::new()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    #[serde(default)]
     pub body: String,
+    #[serde(default)]
     pub cid: String,
+    #[serde(default)]
     pub game_name: String,
+    #[serde(default)]
     pub game_tag: String,
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub mid: String,
+    #[serde(default)]
     pub puuid: String,
+    #[serde(default)]
     pub read: bool,
+    #[serde(default, deserialize_with = "deserialize_chat_time", alias = "timestamp")]
     pub time: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub message_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationsResponse {
+    #[serde(default)]
     pub conversations: Vec<Conversation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conversation {
+    #[serde(default)]
     pub cid: String,
+    #[serde(default)]
     pub direct_messages: bool,
+    #[serde(default)]
     pub global_read: bool,
+    #[serde(default)]
     pub message_history: bool,
+    #[serde(default)]
     pub muted: bool,
+    #[serde(default)]
     pub muted_restriction: bool,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub conversation_type: String,
+    #[serde(default)]
     pub unread_count: i32,
     pub game_name: Option<String>, // Enhanced with player name if DM
 }
@@ -722,6 +765,30 @@ pub struct PaginatedMessages {
     pub page_size: usize,
     pub has_next: bool,
     pub has_prev: bool,
+}
+
+/// Overlay live feed: team / all (global) / party messages as they arrive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveChatMessage {
+    pub body: String,
+    pub cid: String,
+    pub game_name: String,
+    pub game_tag: String,
+    pub id: String,
+    pub mid: String,
+    pub puuid: String,
+    pub time: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    /// `team` | `all` | `party`
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LiveChatSnapshot {
+    pub messages: Vec<LiveChatMessage>,
+    pub has_game: bool,
+    pub has_party: bool,
 }
 
 // Friend & Chat Participants Structs

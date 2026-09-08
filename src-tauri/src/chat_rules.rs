@@ -5,7 +5,7 @@
 //! - `equals`   — whole trimmed message equals pattern (case-insensitive)
 //! - `contains` — replace every occurrence in the message (case-insensitive)
 //!
-//! Special handlers (`!t …`, `<agent` / `>agent`) stay hard-coded in `chat_text`
+//! Special handlers (`<agent` / `>agent` mentions) stay hard-coded in `chat_text`
 //! and are not part of this list.
 
 use parking_lot::Mutex;
