@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
 import { useChatStore, Tab, isLiveConversation } from "../../stores/chatStore";
-import { LiveChatView } from "./LiveChatView";
 import { useGameStore } from "../../stores/gameStore";
 import { useSettingsStore } from "../../stores/settingsStore"; // Import Settings Store
 import { usePanelStore } from "../../stores/panelStore";
@@ -23,9 +22,7 @@ export function ChatPanel() {
     cancellingPuuid,
     fetchConversations,
     fetchMessages,
-    fetchLiveMessages,
     fetchFriends,
-    liveUnread,
     fetchOutgoingRequests,
     cancelOutgoingRequest,
     loadMoreMessages,
@@ -122,14 +119,12 @@ export function ChatPanel() {
   // Get my PUUID
   const myPuuid = gameState.allies.find((a) => a.is_me)?.puuid;
 
-  // Initial & Polling Logic
   useEffect(() => {
     if (!isOpen || !isConnected()) return;
 
     // Initial fetch whenever we open or reconnect or BECOME VISIBLE
     if (isWindowVisible) {
       fetchConversations();
-      fetchLiveMessages();
       fetchMessages(true);
       fetchFriends();
       fetchOutgoingRequests();
@@ -140,13 +135,12 @@ export function ChatPanel() {
 
     const interval = setInterval(() => {
       fetchConversations();
-      fetchLiveMessages();
       if (activeTab === "DM") {
         fetchMessages();
       }
       fetchFriends();
       fetchOutgoingRequests();
-    }, activeTab === "LIVE" ? 1200 : 2000);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [isOpen, isConnected, activeCid, isWindowVisible, activeTab]);
@@ -265,7 +259,6 @@ export function ChatPanel() {
   // In render:
   // <form onSubmit={handleSend} ...>
 
-  /** Prefer in-game / party channel labels over generic "TEAM". */
   const conversationLabel = (conv: (typeof conversations)[number]) => {
     const raw = (conv.game_name || "").trim();
     if (raw && raw !== "AGENT" && raw !== "AJAN") return raw.split("#")[0];
@@ -274,7 +267,7 @@ export function ChatPanel() {
     return t("chat.dm");
   };
 
-  // Chat tab: DMs + live game/party channels (groupchat goes to in-game Valorant chat).
+  // Chat tab: friend DMs only (in-game / party rooms stay out of this list).
   const filteredConversations = useMemo(() => {
     if (activeTab !== "DM") return [];
     return conversations.filter((c) => !isLiveConversation(c));
@@ -367,17 +360,12 @@ export function ChatPanel() {
 
         {/* TABS */}
         <div className="flex px-2 pt-2 gap-1 border-b border-white/5 bg-black/20 shrink-0">
-          {(["LIVE", "DM", "FRIENDS"] as Tab[]).map((tab) => (
+          {(["DM", "FRIENDS"] as Tab[]).map((tab) => (
             <button key={tab} onClick={() => handleTabChange(tab)} className={clsx("flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative uppercase hover:bg-white/5 rounded-t-sm flex items-center justify-center", activeTab === tab ? "text-white bg-white/5" : "text-dim")}>
               {t(`tabs.${tab.toLowerCase()}`)}
               {tab === "FRIENDS" && outgoingRequests.length > 0 && (
                 <span className="ml-1.5 min-w-[16px] h-4 px-1 rounded-sm bg-accent-red/80 text-white text-[9px] leading-4 font-bold">
                   {outgoingRequests.length}
-                </span>
-              )}
-              {tab === "LIVE" && liveUnread > 0 && (
-                <span className="ml-1.5 min-w-[16px] h-4 px-1 rounded-sm bg-accent-red/80 text-white text-[9px] leading-4 font-bold">
-                  {liveUnread > 99 ? "99+" : liveUnread}
                 </span>
               )}
               {activeTab === tab && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent-red shadow-[0_0_10px_#ff4655]" />}
@@ -389,10 +377,7 @@ export function ChatPanel() {
         <div className="flex-1 flex flex-col overflow-hidden relative">
           <div className="scan-lines absolute inset-0 pointer-events-none opacity-10" />
 
-          {/* CASE: FRIENDS TAB */}
-          {activeTab === "LIVE" ? (
-            <LiveChatView />
-          ) : activeTab === "FRIENDS" ? (
+          {activeTab === "FRIENDS" ? (
             <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
               {/* Search Bar */}
               <div className="relative shrink-0 group">

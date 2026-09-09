@@ -267,14 +267,6 @@ pub struct PartyResponse {
     pub members: Vec<PartyMember>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct MucToken {
-    #[serde(default, alias = "token", alias = "MUCToken", alias = "Jwt", alias = "jwt")]
-    pub token: Option<String>,
-    #[serde(default, alias = "room")]
-    pub room: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -773,29 +765,6 @@ pub struct PaginatedMessages {
     pub has_prev: bool,
 }
 
-/// Overlay live feed: team / all (global) / party messages as they arrive.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiveChatMessage {
-    pub body: String,
-    pub cid: String,
-    pub game_name: String,
-    pub game_tag: String,
-    pub id: String,
-    pub mid: String,
-    pub puuid: String,
-    pub time: String,
-    #[serde(rename = "type")]
-    pub message_type: String,
-    /// `team` | `all` | `party`
-    pub channel: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LiveChatSnapshot {
-    pub messages: Vec<LiveChatMessage>,
-    pub has_game: bool,
-    pub has_party: bool,
-}
 
 // Friend & Chat Participants Structs
 #[derive(Debug, Clone, Serialize, Deserialize)]

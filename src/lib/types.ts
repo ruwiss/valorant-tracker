@@ -138,27 +138,6 @@ export interface PaginatedMessages {
   has_prev: boolean;
 }
 
-export type LiveChatChannel = "team" | "all" | "party";
-
-export interface LiveChatMessage {
-  body: string;
-  cid: string;
-  game_name: string;
-  game_tag: string;
-  id: string;
-  mid: string;
-  puuid: string;
-  time: string;
-  type: string;
-  channel: LiveChatChannel;
-}
-
-export interface LiveChatSnapshot {
-  messages: LiveChatMessage[];
-  has_game: boolean;
-  has_party: boolean;
-}
-
 export interface Friend {
   activePlatform: string | null;
   displayGroup: string;

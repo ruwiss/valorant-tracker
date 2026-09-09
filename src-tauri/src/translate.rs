@@ -93,6 +93,7 @@ pub fn google_translate_detailed(text: &str, target_lang: &str) -> Option<Transl
     None
 }
 
+#[allow(dead_code)]
 pub fn google_translate(text: &str, target_lang: &str) -> Option<String> {
     google_translate_detailed(text, target_lang).map(|r| r.text)
 }

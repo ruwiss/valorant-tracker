@@ -17,7 +17,7 @@ Desktop overlay for VALORANT. Live match data, a few automation tools, and chat.
 - Player stats: K/D, win rate, ACS, peak rank, and other combat numbers.
 - Daily shop and Night Market, with VP and Radianite balances.
 - Translate a foreign player name and see which language it came from.
-- Overlay chat shows live team / all / party messages and friend DMs. Incoming auto-translate and translate-before-send are optional. In-game shortcuts (`sa` / `as`, symbols, agent tags) still expand; custom rules live in settings.
+- Overlay chat shows friend DMs. In-game shortcuts (`sa` / `as`, symbols, agent tags) still expand; custom rules live in settings.
 - Discord Rich Presence can show your map and score.
 - Save sensitivity, crosshair, keybinds, audio, and video, then apply that preset to another account.
 

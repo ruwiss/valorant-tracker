@@ -1902,29 +1902,7 @@ pub async fn get_active_conversations(
         .map(|c| c.conversations)
         .unwrap_or_default();
 
-    // Force-include live game + party channels when present. These are the
-    // in-match / lobby chats teammates see — not friend DMs. The general
-    // conversations list sometimes omits them or lists them late.
-    let merge_channel =
-        |list: &mut Vec<Conversation>, extra: Option<ConversationsResponse>, label: &str| {
-            let Some(extra) = extra else { return };
-            for mut conv in extra.conversations {
-                if !list.iter().any(|c| c.cid == conv.cid) {
-                    conv.game_name = Some(label.to_string());
-                    list.push(conv);
-                } else if let Some(existing) = list.iter_mut().find(|c| c.cid == conv.cid) {
-                    // Prefer a clear channel label over empty/raw names.
-                    if existing.game_name.as_deref().unwrap_or("").is_empty() {
-                        existing.game_name = Some(label.to_string());
-                    }
-                }
-            }
-        };
-
-    merge_channel(&mut conversations, api.get_game_chat().await, "GAME");
-    merge_channel(&mut conversations, api.get_party_chat().await, "PARTY");
-
-    // Label group chats by CID when still unnamed.
+    // Label leftover group chats so the DM tab can filter them out.
     for conv in &mut conversations {
         if conv.conversation_type == "groupchat" {
             let cid = conv.cid.to_lowercase();
@@ -1944,9 +1922,6 @@ pub async fn get_active_conversations(
     let mut puuids = Vec::new();
     for conv in &conversations {
         if conv.conversation_type == "chat" && !conv.cid.contains('@') {
-            // Try to guess PUUID from CID if it IS a PUUID (DM conversations usually are)
-            // But wait, the CID for DMs is usually "puuid@ares-parties.glz" or just a UUID
-            // Let's safe check if the CID looks like a UUID
             if conv.cid.len() == 36 {
                 puuids.push(conv.cid.clone());
             }
@@ -1964,97 +1939,14 @@ pub async fn get_active_conversations(
         }
     }
 
-    // Pin in-game channels first so they're easy to pick during a match.
     conversations.sort_by(|a, b| {
         let rank = |c: &Conversation| -> u8 {
-            let cid = c.cid.to_lowercase();
-            if cid.contains("coregame") {
-                0
-            } else if cid.contains("parties") && c.conversation_type == "groupchat" {
-                1
-            } else if c.conversation_type == "groupchat" {
-                2
-            } else {
-                3
-            }
+            if c.conversation_type == "groupchat" { 1 } else { 0 }
         };
         rank(a).cmp(&rank(b))
     });
 
     Ok(conversations)
-}
-
-
-#[tauri::command]
-pub async fn get_live_chat_messages(
-    state: State<'_, AppState>,
-) -> Result<LiveChatSnapshot, String> {
-    let api = &state.api;
-    if !*api.connected.read() {
-        return Ok(LiveChatSnapshot::default());
-    }
-    Ok(api.get_live_chat_snapshot().await)
-}
-
-#[tauri::command]
-pub async fn send_live_chat(
-    state: State<'_, AppState>,
-    message: String,
-    channel: String,
-    translate_to: Option<String>,
-) -> Result<bool, String> {
-    let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
-    let message = message.trim().to_string();
-    if message.is_empty() {
-        return Err("Empty message".into());
-    }
-    let payload = if let Some(lang) = translate_to
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        let lang = lang.to_string();
-        let source = message.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let expanded = crate::chat_text::transform_outgoing_chat(&source);
-            crate::translate::google_translate(&expanded, &lang)
-                .filter(|t| !t.trim().is_empty())
-                .ok_or_else(|| "Translation failed".to_string())
-        })
-        .await
-        .map_err(|e| format!("Translate task failed: {}", e))??
-    } else {
-        message
-    };
-    match api.send_live_chat(&payload, &channel).await {
-        Ok(true) => Ok(true),
-        other => {
-            tracing::info!("[live_chat] HTTP send {other:?} — injecting into game chat");
-            let ch = channel.clone();
-            let msg = payload.clone();
-            let injected = tauri::async_runtime::spawn_blocking(move || {
-                crate::chat_expander::send_from_overlay(&ch, &msg)
-            })
-            .await
-            .map_err(|e| format!("Send task failed: {e}"))?;
-            match injected {
-                Ok(()) => {
-                    api.remember_live_send(&payload, &channel);
-                    Ok(true)
-                }
-                Err(e) => {
-                    if let Err(http_err) = other {
-                        Err(http_err)
-                    } else {
-                        Err(e)
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[tauri::command]
