@@ -138,6 +138,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsScanned": "Last {n} matches",
     "player.regularsHidden": "Hidden name",
     "player.regularsAgents": "Most played",
+    "player.authorBadge": "Made this overlay",
+    "player.authorHint": "Overlay author",
 
     // Weapon Categories
     "weapons.primary": "PRIMARY",
@@ -551,6 +553,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsScanned": "Son {n} maç",
     "player.regularsHidden": "Gizli isim",
     "player.regularsAgents": "En çok oynadığı",
+    "player.authorBadge": "Bu overlay'i yazan kişi",
+    "player.authorHint": "Overlay yazarı",
 
     // Weapon Categories
     "weapons.primary": "ANA SİLAHLAR",

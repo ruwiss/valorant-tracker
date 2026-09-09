@@ -5,9 +5,10 @@ import { useLastMatchStore } from "../stores/lastMatchStore";
 import { useGameStore } from "../stores/gameStore";
 import { useChatStore } from "../stores/chatStore";
 import { usePanelStore } from "../stores/panelStore";
-import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
+import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/constants";
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import type { LastMatchPlayer } from "../lib/types";
+import { AuthorCrown } from "./AuthorCrown";
 
 function parseRiotId(name: string): { gameName: string; gameTag: string } | null {
   const hash = name.lastIndexOf("#");
@@ -73,13 +74,16 @@ function LastMatchPlayerRow({
   const partyColor = partyIndex >= 0 ? PARTY_COLORS[partyIndex % 4] : null;
   const rawName = (player.name || "").trim();
   const fromHistory = !!player.name_from_history;
+  const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
   const displayName = rawName || t("player.anonymousSlot", { n: slotIndex });
   const shortName = displayName.includes("#") ? displayName.split("#")[0] : displayName;
-  const nameTitle = fromHistory
-    ? t("player.rememberedNameHint", { name: displayName })
-    : rawName
-      ? t("lastMatch.copyName")
-      : undefined;
+  const nameTitle = isAuthor
+    ? t("player.authorHint")
+    : fromHistory
+      ? t("player.rememberedNameHint", { name: displayName })
+      : rawName
+        ? t("lastMatch.copyName")
+        : undefined;
   const riotId = parseRiotId(rawName);
   const isFriend = friends.some((f) => f.puuid === player.puuid);
   const isPending = outgoingRequests.some((r) => r.puuid === player.puuid);
@@ -157,29 +161,34 @@ function LastMatchPlayerRow({
           <div className="w-1.5 h-1.5 rounded-full bg-dim" />
         )}
       </div>
-      <button
-        type="button"
-        onClick={(e) => void copyName(e)}
-        disabled={!rawName}
-        title={nameTitle}
-        className={`text-[11px] text-left ${
-          fromHistory
-            ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/25 ${
-                player.is_me ? "text-accent-gold/70" : "text-secondary/90 hover:text-secondary"
-              }`
-            : `font-medium ${player.is_me ? "text-accent-gold/80" : "text-primary/80 hover:text-primary"}`
-        } ${rawName ? "cursor-pointer" : "cursor-default"}`}
-        style={{
-          flex: "1 1 0%",
-          minWidth: 0,
-          marginLeft: 6,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
+      <div
+        className="flex items-center min-w-0"
+        style={{ flex: "1 1 0%", minWidth: 0, marginLeft: 6, gap: 3 }}
       >
-        {copied ? t("player.copied") : shortName}
-      </button>
+        <button
+          type="button"
+          onClick={(e) => void copyName(e)}
+          disabled={!rawName}
+          title={nameTitle}
+          className={`min-w-0 truncate text-[11px] text-left ${
+            isAuthor
+              ? "font-bold text-accent-gold"
+              : fromHistory
+                ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/25 ${
+                    player.is_me ? "text-accent-gold/70" : "text-secondary/90 hover:text-secondary"
+                  }`
+                : `font-medium ${player.is_me ? "text-accent-gold/80" : "text-primary/80 hover:text-primary"}`
+          } ${rawName ? "cursor-pointer" : "cursor-default"}`}
+        >
+          {copied ? t("player.copied") : shortName}
+        </button>
+        {isAuthor && (
+          <AuthorCrown
+            className="w-2.5 h-2.5 shrink-0 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]"
+            title={t("player.authorHint")}
+          />
+        )}
+      </div>
 
       <div
         className="shrink-0 flex items-center"

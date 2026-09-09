@@ -5,8 +5,9 @@ import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useI18n, SKIN_API_LOCALES, getLocalizedRank } from "../lib/i18n";
 import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } from "../lib/types";
-import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS } from "../lib/constants";
+import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
+import { AuthorCrown } from "./AuthorCrown";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
 let regularsCooldownUntil = 0;
@@ -833,6 +834,7 @@ export function PlayerPanel() {
 									const label = mate.name || t("player.regularsHidden");
 									const canCopy = !!mate.name;
 									const isCopied = regularsCopied === mate.name;
+									const mateIsAuthor = mate.puuid.toLowerCase() === AUTHOR_PUUID;
 									return (
 										<button
 											key={mate.puuid}
@@ -844,7 +846,13 @@ export function PlayerPanel() {
 													? "hover:bg-card/60 cursor-pointer"
 													: "opacity-50 cursor-default"
 											}`}
-											title={canCopy ? t("player.copy") : t("player.hiddenProfile")}
+											title={
+												mateIsAuthor
+													? t("player.authorHint")
+													: canCopy
+														? t("player.copy")
+														: t("player.hiddenProfile")
+											}
 										>
 											{(mate.top_agents || []).slice(0, 3).map((pick) => {
 												const icon = getAgentIcon(pick.agent);
@@ -862,8 +870,20 @@ export function PlayerPanel() {
 												) : null;
 											})}
 											<div className="min-w-0 flex-1">
-												<div className="truncate text-[11px] font-semibold text-primary">
-													{label}
+												<div
+													className={`flex min-w-0 items-center gap-1 truncate text-[11px] ${
+														mateIsAuthor
+															? "font-bold text-accent-gold"
+															: "font-semibold text-primary"
+													}`}
+												>
+													<span className="truncate">{label}</span>
+													{mateIsAuthor && (
+														<AuthorCrown
+															className="w-2.5 h-2.5 text-accent-gold"
+															title={t("player.authorHint")}
+														/>
+													)}
 												</div>
 												<div className="text-[8px] uppercase tracking-wide text-dim">
 													{isCopied
@@ -967,6 +987,7 @@ export function PlayerPanel() {
 	const cardBannerUrl = selectedPlayer.player_card_id
 		? `https://media.valorant-api.com/playercards/${selectedPlayer.player_card_id}/wideart.png`
 		: null;
+	const isAuthor = selectedPlayer.puuid.toLowerCase() === AUTHOR_PUUID;
 
 	// Group skins by category - lowercase keys for case-insensitive matching
 	const skinsByWeaponId = new Map(
@@ -1299,18 +1320,28 @@ export function PlayerPanel() {
 								<button
 									onClick={copyName}
 									title={
-										selectedPlayer.name_from_history
-											? t("player.rememberedNameHint", { name: selectedPlayer.name })
-											: selectedPlayer.name
+										isAuthor
+											? t("player.authorHint")
+											: selectedPlayer.name_from_history
+												? t("player.rememberedNameHint", { name: selectedPlayer.name })
+												: selectedPlayer.name
 									}
 									className={`text-xs truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors ${
-										selectedPlayer.name_from_history
-											? "italic font-semibold text-secondary underline decoration-dotted underline-offset-2 decoration-white/30 hover:text-secondary/80"
-											: "font-bold text-primary hover:text-accent-cyan"
+										isAuthor
+											? "font-bold text-accent-gold hover:text-accent-gold/80"
+											: selectedPlayer.name_from_history
+												? "italic font-semibold text-secondary underline decoration-dotted underline-offset-2 decoration-white/30 hover:text-secondary/80"
+												: "font-bold text-primary hover:text-accent-cyan"
 									}`}
 								>
 									{selectedPlayer.name}
 								</button>
+								{isAuthor && (
+									<AuthorCrown
+										className="w-3 h-3 text-accent-gold drop-shadow-[0_0_5px_rgba(236,178,46,0.75)]"
+										title={t("player.authorHint")}
+									/>
+								)}
 
 								{/* Recent Encounter Badge */}
 								{selectedPlayer.previous_encounter && (
@@ -1399,6 +1430,14 @@ export function PlayerPanel() {
 									{t("player.copied")}
 								</span>
 							)}
+							{isAuthor && (
+								<div className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded px-1 py-px bg-accent-gold/12 border border-accent-gold/25">
+									<span className="text-[8px] font-semibold tracking-wide text-accent-gold uppercase truncate leading-tight">
+										{t("player.authorBadge")}
+									</span>
+								</div>
+							)}
+
 
 							<div className="flex items-center gap-1.5 mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
 								{selectedPlayer.agent && (

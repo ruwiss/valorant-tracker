@@ -1,11 +1,12 @@
 import type { PlayerData } from "../lib/types";
 import { CachedImage } from "./CachedImage";
-import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS } from "../lib/constants";
+import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/constants";
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import { useAssetsStore } from "../stores/assetsStore";
 import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
 import { useState, useEffect } from "react";
+import { AuthorCrown } from "./AuthorCrown";
 
 interface Props {
   player: PlayerData;
@@ -49,6 +50,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   // the name is empty — match in-game "Player 1" / "1. Oyuncu" labeling.
   // `name_from_history` means Riot hid the id but we recalled it from a past match.
   const fromHistory = !!player.name_from_history;
+  const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
   const displayName = (() => {
     const raw = (player.name || "").trim();
     if (raw) return raw;
@@ -57,9 +59,11 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
     }
     return t("player.anonymousSlot", { n: slotIndex });
   })();
-  const nameTitle = fromHistory
-    ? t("player.rememberedNameHint", { name: displayName })
-    : displayName;
+  const nameTitle = isAuthor
+    ? t("player.authorHint")
+    : fromHistory
+      ? t("player.rememberedNameHint", { name: displayName })
+      : displayName;
 
   // Rate limit logic (force re-render every second if active to update tooltip/state)
   const now = Date.now();
@@ -190,21 +194,24 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
       >
         <span
           className={`min-w-0 text-xs truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
-            fromHistory
-              ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/30 ${
-                  player.is_me ? "text-accent-gold/75" : "text-secondary"
-                }`
-              : `font-semibold ${
-                  player.is_me
-                    ? "text-accent-gold"
-                    : !player.name?.trim() && !player.agent
-                      ? "text-secondary italic"
-                      : "text-primary"
-                }`
+            isAuthor
+              ? "font-bold text-accent-gold"
+              : fromHistory
+                ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/30 ${
+                    player.is_me ? "text-accent-gold/75" : "text-secondary"
+                  }`
+                : `font-semibold ${
+                    player.is_me
+                      ? "text-accent-gold"
+                      : !player.name?.trim() && !player.agent
+                        ? "text-secondary italic"
+                        : "text-primary"
+                  }`
           }`}
         >
           {displayName}
         </span>
+        {isAuthor && <AuthorCrown className="w-2.5 h-2.5 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]" title={t("player.authorHint")} />}
         {fromHistory && (
           <svg
             className={`shrink-0 w-2.5 h-2.5 opacity-55 ${

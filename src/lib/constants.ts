@@ -5,6 +5,9 @@ export const AGENTS = [
   "vyse", "tejo", "veto", "waylay", "miks"
 ] as const;
 
+/** Overlay author's Valorant PUUID — crown + bold name in match lists. */
+export const AUTHOR_PUUID = "f0d30b16-3bd9-590b-b8ef-76fb751b93f7";
+
 export const AGENT_COLORS: Record<string, string> = {
   jett: "#7de8e0",      // cyan/teal - rüzgar
   reyna: "#bd3fff",     // parlak mor - vampir
