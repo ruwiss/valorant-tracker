@@ -125,6 +125,7 @@ const WEAPON_CATEGORIES = {
 	primary: [
 		"9c82e19d-4575-0200-1a81-3eacf00cf872", // Vandal
 		"ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a", // Phantom
+		"8db0a1bf-4a50-832a-4566-faaaa6d250ca", // Warden
 		"a03b24d3-4319-996d-0f8c-94bbfba1dfc7", // Operator
 		"4ade7faa-4cf1-8376-95ef-39884480959b", // Guardian
 		"ae3de142-4d85-2547-dd26-4e90bed35cf7", // Bulldog

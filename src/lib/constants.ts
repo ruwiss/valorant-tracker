@@ -63,6 +63,7 @@ export const WEAPON_NAMES: Record<string, string> = {
   "9c82e19d-4575-0200-1a81-3eacf00cf872": "Vandal",
   "ae3de142-4d85-2547-dd26-4e90bed35cf7": "Bulldog",
   "ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a": "Phantom",
+  "8db0a1bf-4a50-832a-4566-faaaa6d250ca": "Warden",
   "ec845bf4-4f79-ddda-a3da-0db3774b2794": "Judge",
   "910be174-449b-c412-ab22-d0873436b21b": "Bucky",
   "44d4e95c-4157-0037-81b2-17841bf2e8e3": "Frenzy",
