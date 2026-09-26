@@ -112,15 +112,23 @@ impl DiscordPresence {
         }
 
         // Build details/state/image for the current state.
-        let (details, state_line, image_key, keep_timer) = render(gs, conn_status);
+        let (details, state_line, image_key, _keep_timer) = render(gs, conn_status);
 
-        // Maintain the match elapsed-timer: (re)start it when a new match begins,
-        // clear it outside of a match.
-        if keep_timer {
-            let new_id = gs.match_id.clone();
-            if st.timed_match_id != new_id || st.match_start.is_none() {
+        // Elapsed time is "now - match_start". Only mint a new start when a
+        // different match id appears. A missing id, a connecting blip, or a
+        // pause must not clear it — the next push would restart the clock at 0.
+        if Self::should_keep_match_timer(gs, conn_status) {
+            let new_id = gs.match_id.clone().filter(|id| !id.is_empty());
+            let id_changed = match (&st.timed_match_id, &new_id) {
+                (Some(old), Some(new)) => old != new,
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if st.match_start.is_none() || id_changed {
                 st.match_start = Some(now_secs());
-                st.timed_match_id = new_id;
+                if new_id.is_some() {
+                    st.timed_match_id = new_id;
+                }
             }
         } else {
             st.match_start = None;
@@ -160,16 +168,22 @@ impl DiscordPresence {
             };
             match res {
                 Ok(_) => {
-                    pushed = true;
-                    break;
+                    // Write succeeding is not enough: Discord answers every
+                    // SET_ACTIVITY and also PINGs. The crate never reads those
+                    // frames, so the pipe fills in ~10-15 min, Discord drops
+                    // the socket, and the new session shows elapsed 0.
+                    let alive = Self::drain_one(&mut st.client);
+                    if alive {
+                        pushed = true;
+                        break;
+                    }
+                    Self::drop_client(&mut st);
+                    if attempt == 1 {
+                        st.last_signature.clear();
+                    }
                 }
                 Err(_) => {
-                    // Socket likely dropped - close and let the next loop
-                    // iteration reconnect from scratch.
-                    if let Some(client) = st.client.as_mut() {
-                        let _ = client.close();
-                    }
-                    st.client = None;
+                    Self::drop_client(&mut st);
                     if attempt == 1 {
                         // Both tries failed; reconnect on a later tick.
                         st.last_signature.clear();
@@ -211,6 +225,46 @@ impl DiscordPresence {
             act = act.timestamps(activity::Timestamps::new().start(start));
         }
         act
+    }
+
+    /// True while a match clock should survive. Connection blips and pause
+    /// send a blank payload; that is not "match ended".
+    fn should_keep_match_timer(gs: &GameState, conn_status: &str) -> bool {
+        gs.state == "ingame" || matches!(conn_status, "connecting" | "paused")
+    }
+
+    fn drop_client(st: &mut DiscordState) {
+        if let Some(client) = st.client.as_mut() {
+            let _ = client.close();
+        }
+        st.client = None;
+    }
+
+    /// Read the frame Discord just queued. Opcode 3 is a PING; answer with
+    /// PONG (4) or Discord closes the pipe. Returns false if the socket died.
+    ///
+    /// `recv` blocks, so the read runs on a short-lived thread. A missing
+    /// reply must not stall the supervisor.
+    fn drain_one(slot: &mut Option<DiscordIpcClient>) -> bool {
+        let Some(mut owned) = slot.take() else {
+            return false;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let ok = match owned.recv() {
+                Ok((3, payload)) => owned.send(payload, 4).is_ok(),
+                Ok(_) => true,
+                Err(_) => false,
+            };
+            let _ = tx.send((owned, ok));
+        });
+        match rx.recv_timeout(std::time::Duration::from_millis(400)) {
+            Ok((owned, ok)) => {
+                *slot = Some(owned);
+                ok
+            }
+            Err(_) => false,
+        }
     }
 }
 

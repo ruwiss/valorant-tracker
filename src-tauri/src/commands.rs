@@ -207,7 +207,8 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                 last_emitted_state_json = json;
                             }
                         }
-                        discord.update(&cached, "connecting");
+                        // Do not push "connecting" to Discord. That payload drops
+                        // the match clock, and the next live push restarts it at 0.
                     }
                 }
 
