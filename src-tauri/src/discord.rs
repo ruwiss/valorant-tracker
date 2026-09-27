@@ -37,10 +37,9 @@ struct DiscordState {
     /// re-pushes an unchanged activity so a silently-dropped IPC socket (which
     /// happens when the game goes fullscreen) self-heals instead of vanishing.
     last_push_secs: i64,
-    /// Match start timestamp (unix secs) for the elapsed-time display.
-    match_start: Option<i64>,
-    /// The match_id the current `match_start` belongs to.
-    timed_match_id: Option<String>,
+    /// Session start (unix secs). Sent on every push so a status change
+    /// (menu → match → menu) does not restart Discord's elapsed clock.
+    session_start: Option<i64>,
 }
 
 /// Re-push the activity at least this often even if nothing changed, so a
@@ -55,8 +54,7 @@ impl DiscordPresence {
                 enabled: false,
                 last_signature: String::new(),
                 last_push_secs: 0,
-                match_start: None,
-                timed_match_id: None,
+                session_start: None,
             }),
         }
     }
@@ -76,6 +74,7 @@ impl DiscordPresence {
             }
             st.client = None;
             st.last_signature.clear();
+            st.session_start = None;
         }
     }
 
@@ -112,27 +111,13 @@ impl DiscordPresence {
         }
 
         // Build details/state/image for the current state.
-        let (details, state_line, image_key, _keep_timer) = render(gs, conn_status);
+        let (details, state_line, image_key) = render(gs, conn_status);
 
-        // Elapsed time is "now - match_start". Only mint a new start when a
-        // different match id appears. A missing id, a connecting blip, or a
-        // pause must not clear it — the next push would restart the clock at 0.
-        if Self::should_keep_match_timer(gs, conn_status) {
-            let new_id = gs.match_id.clone().filter(|id| !id.is_empty());
-            let id_changed = match (&st.timed_match_id, &new_id) {
-                (Some(old), Some(new)) => old != new,
-                (None, Some(_)) => true,
-                _ => false,
-            };
-            if st.match_start.is_none() || id_changed {
-                st.match_start = Some(now_secs());
-                if new_id.is_some() {
-                    st.timed_match_id = new_id;
-                }
-            }
-        } else {
-            st.match_start = None;
-            st.timed_match_id = None;
+        // One clock for the whole RPC session. Omitting the timestamp, or
+        // minting a new one when the map/score text changes, makes Discord
+        // restart elapsed at 0.
+        if st.session_start.is_none() {
+            st.session_start = Some(now_secs());
         }
 
         // Dedup identical payloads (timer changes are continuous so we exclude it
@@ -148,7 +133,7 @@ impl DiscordPresence {
             return;
         }
 
-        let match_start = st.match_start;
+        let session_start = st.session_start;
 
         // Try to push; if the socket is dead, reconnect once and retry in the
         // same tick so a drop costs zero visible downtime.
@@ -163,7 +148,7 @@ impl DiscordPresence {
                     &details,
                     &state_line,
                     &image_key,
-                    match_start,
+                    session_start,
                 ))
             };
             match res {
@@ -204,7 +189,7 @@ impl DiscordPresence {
         details: &'a str,
         state_line: &'a str,
         image_key: &'a str,
-        match_start: Option<i64>,
+        session_start: Option<i64>,
     ) -> activity::Activity<'a> {
         // Hover text is always "VALORANT" (the map name already shows in
         // `details`); the small logo brands the presence.
@@ -221,16 +206,10 @@ impl DiscordPresence {
         if !state_line.is_empty() {
             act = act.state(state_line);
         }
-        if let Some(start) = match_start {
+        if let Some(start) = session_start {
             act = act.timestamps(activity::Timestamps::new().start(start));
         }
         act
-    }
-
-    /// True while a match clock should survive. Connection blips and pause
-    /// send a blank payload; that is not "match ended".
-    fn should_keep_match_timer(gs: &GameState, conn_status: &str) -> bool {
-        gs.state == "ingame" || matches!(conn_status, "connecting" | "paused")
     }
 
     fn drop_client(st: &mut DiscordState) {
@@ -282,15 +261,14 @@ fn now_secs() -> i64 {
 }
 
 /// Map a GameState + connection status to Discord activity fields.
-/// Returns (details, state, large_image_key, large_image_text, keep_match_timer).
-fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
+/// Returns (details, state, large_image_key).
+fn render(gs: &GameState, conn_status: &str) -> (String, String, String) {
     // Connection problems take precedence over a stale game state.
     if conn_status == "paused" {
         return (
             "İzleme duraklatıldı".into(),
             String::new(),
             DEFAULT_LARGE_IMAGE.into(),
-            false,
         );
     }
     if conn_status == "waiting_for_game" || conn_status == "connecting" {
@@ -298,7 +276,6 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
             "Oyun bekleniyor".into(),
             String::new(),
             DEFAULT_LARGE_IMAGE.into(),
-            false,
         );
     }
 
@@ -308,31 +285,21 @@ fn render(gs: &GameState, conn_status: &str) -> (String, String, String, bool) {
             // "Maçta" with a blank map or a fake 0-0 — fall back to lobby text.
             let map = gs.map_name.clone().filter(|m| !m.is_empty());
             let Some(map) = map else {
-                return (
-                    "Menüde".into(),
-                    String::new(),
-                    DEFAULT_LARGE_IMAGE.into(),
-                    false,
-                );
+                return ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into());
             };
             let details = match (gs.ally_score, gs.enemy_score) {
                 (Some(a), Some(e)) => format!("{map}  {a} - {e}"),
                 _ => map.clone(),
             };
-            (details, "Maçta".into(), map_image_key(&map), true)
+            (details, "Maçta".into(), map_image_key(&map))
         }
         "pregame" => {
             let map = gs.map_name.clone().unwrap_or_else(|| "Bilinmeyen".into());
             let image = map_image_key(&map);
-            ("Ajan seçimi".into(), map, image, false)
+            ("Ajan seçimi".into(), map, image)
         }
         // idle / disconnected / unknown → lobby presence (not a live match)
-        _ => (
-            "Menüde".into(),
-            String::new(),
-            DEFAULT_LARGE_IMAGE.into(),
-            false,
-        ),
+        _ => ("Menüde".into(), String::new(), DEFAULT_LARGE_IMAGE.into()),
     }
 }
 
