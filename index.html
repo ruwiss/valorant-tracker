@@ -504,6 +504,16 @@
 
   function setRoute(route, reset) {
     state.route = route;
+    var sorts = {
+      overview: ["last_seen"],
+      live: ["last_seen"],
+      users: ["riot_name", "app_version", "first_seen", "last_seen"],
+      sessions: ["started_at", "app_version"]
+    };
+    if (!sorts[route] || sorts[route].indexOf(state.sort) === -1) {
+      state.sort = route === "sessions" ? "started_at" : "last_seen";
+      state.asc = false;
+    }
     if (reset) {
       state.page = 1;
       state.phase = "all";
