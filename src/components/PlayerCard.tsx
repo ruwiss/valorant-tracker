@@ -7,6 +7,8 @@ import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
 import { useState, useEffect } from "react";
 import { AuthorCrown } from "./AuthorCrown";
+import { OverlayUserMark } from "./OverlayUserMark";
+import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 
 interface Props {
   player: PlayerData;
@@ -16,6 +18,7 @@ interface Props {
 
 export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const { t, locale } = useI18n();
+  const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
   const { getError, getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
@@ -51,6 +54,9 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   // `name_from_history` means Riot hid the id but we recalled it from a past match.
   const fromHistory = !!player.name_from_history;
   const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
+  const normalizedPuuid = normalizePuuid(player.puuid);
+  const isOverlayUser =
+    !isAuthor && normalizedPuuid != null && overlayPuuids.includes(normalizedPuuid);
   const displayName = (() => {
     const raw = (player.name || "").trim();
     if (raw) return raw;
@@ -212,6 +218,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
           {displayName}
         </span>
         {isAuthor && <AuthorCrown className="w-2.5 h-2.5 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]" title={t("player.authorHint")} />}
+        {isOverlayUser && <OverlayUserMark title={t("player.overlayUserHint")} />}
         {fromHistory && (
           <svg
             className={`shrink-0 w-2.5 h-2.5 opacity-55 ${

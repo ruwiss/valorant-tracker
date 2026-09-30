@@ -1,14 +1,15 @@
 {
     "name": "valorant-tracker",
     "private": true,
-    "version": "1.9.3",
+    "version": "1.9.4",
     "type": "module",
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build",
         "preview": "vite preview",
-        "tauri": "powershell -ExecutionPolicy Bypass -NoProfile -Command \"$env:TAURI_SIGNING_PRIVATE_KEY=(Get-Content valorant-tracker.key -Raw); $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD='omergundogar'; npx tauri\"",
-        "generate-json": "node scripts/generate_latest_json.cjs"
+        "tauri": "powershell -ExecutionPolicy Bypass -NoProfile -Command \"$env:TAURI_SIGNING_PRIVATE_KEY=(Get-Content valorant-tracker.key -Raw); $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD='omergundogar'; if (Test-Path telemetry.local.json) { $tel = Get-Content telemetry.local.json -Raw | ConvertFrom-Json; $env:SUPABASE_URL=$tel.url; $env:SUPABASE_ANON_KEY=$tel.anonKey }; npx tauri\"",
+        "generate-json": "node scripts/generate_latest_json.cjs",
+        "admin": "npx --yes serve admin -p 4173"
     },
     "dependencies": {
         "@tauri-apps/api": "^2",

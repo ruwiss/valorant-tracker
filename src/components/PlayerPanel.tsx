@@ -8,6 +8,8 @@ import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } f
 import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
+import { OverlayUserMark } from "./OverlayUserMark";
+import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
 let regularsCooldownUntil = 0;
@@ -165,6 +167,7 @@ export function PlayerPanel() {
 	const matchId = gameState.match_id;
 	const inMatch = gameState.state === "ingame" || gameState.state === "pregame";
 	const { t, locale } = useI18n();
+	const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
 	const [skins, setSkins] = useState<WeaponSkin[]>([]);
 	const [expressions, setExpressions] = useState<EquippedExpression[]>([]);
 	const [skinMeta, setSkinMeta] = useState<Map<string, SkinInfo>>(new Map());
@@ -836,6 +839,11 @@ export function PlayerPanel() {
 									const canCopy = !!mate.name;
 									const isCopied = regularsCopied === mate.name;
 									const mateIsAuthor = mate.puuid.toLowerCase() === AUTHOR_PUUID;
+									const matePuuid = normalizePuuid(mate.puuid);
+									const mateIsOverlayUser =
+										!mateIsAuthor &&
+										matePuuid != null &&
+										overlayPuuids.includes(matePuuid);
 									return (
 										<button
 											key={mate.puuid}
@@ -884,6 +892,9 @@ export function PlayerPanel() {
 															className="w-2.5 h-2.5 text-accent-gold"
 															title={t("player.authorHint")}
 														/>
+													)}
+													{mateIsOverlayUser && (
+														<OverlayUserMark title={t("player.overlayUserHint")} />
 													)}
 												</div>
 												<div className="text-[8px] uppercase tracking-wide text-dim">
@@ -989,6 +1000,9 @@ export function PlayerPanel() {
 		? `https://media.valorant-api.com/playercards/${selectedPlayer.player_card_id}/wideart.png`
 		: null;
 	const isAuthor = selectedPlayer.puuid.toLowerCase() === AUTHOR_PUUID;
+	const selectedPuuid = normalizePuuid(selectedPlayer.puuid);
+	const isOverlayUser =
+		!isAuthor && selectedPuuid != null && overlayPuuids.includes(selectedPuuid);
 
 	// Group skins by category - lowercase keys for case-insensitive matching
 	const skinsByWeaponId = new Map(
@@ -1343,6 +1357,9 @@ export function PlayerPanel() {
 										title={t("player.authorHint")}
 									/>
 								)}
+								{isOverlayUser && (
+									<OverlayUserMark title={t("player.overlayUserHint")} />
+								)}
 
 								{/* Recent Encounter Badge */}
 								{selectedPlayer.previous_encounter && (
@@ -1435,6 +1452,13 @@ export function PlayerPanel() {
 								<div className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded px-1 py-px bg-accent-gold/12 border border-accent-gold/25">
 									<span className="text-[8px] font-semibold tracking-wide text-accent-gold uppercase truncate leading-tight">
 										{t("player.authorBadge")}
+									</span>
+								</div>
+							)}
+							{isOverlayUser && (
+								<div className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded px-1 py-px border border-white/15">
+									<span className="text-[8px] font-semibold tracking-wide text-secondary uppercase truncate leading-tight">
+										{t("player.overlayUserBadge")}
 									</span>
 								</div>
 							)}

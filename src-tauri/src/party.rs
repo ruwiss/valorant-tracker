@@ -297,6 +297,7 @@ mod tests {
             rank_tier: 0,
             level: 1,
             player_card_id: None,
+            name_from_history: false,
             kills: 0,
             deaths: 0,
             assists: 0,

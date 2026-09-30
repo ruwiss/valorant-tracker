@@ -13,6 +13,7 @@ mod process;
 mod single_instance;
 mod state;
 mod usage;
+mod telemetry;
 mod last_match;
 mod seen_names;
 mod party;
@@ -184,6 +185,15 @@ pub fn run() -> RunResult {
                 tauri::async_runtime::spawn(async move {
                     let _ = crate::usage::report(&handle, &client).await;
                 });
+            }
+
+            {
+                let handle = app.handle().clone();
+                if let Some(bridge) = crate::telemetry::attach(&handle) {
+                    tauri::async_runtime::spawn(async move {
+                        crate::telemetry::run(handle, bridge).await;
+                    });
+                }
             }
 
             // Start the named pipe server to listen for signals from other instances

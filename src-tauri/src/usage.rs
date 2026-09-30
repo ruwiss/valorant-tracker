@@ -62,6 +62,23 @@ fn save(path: &PathBuf, rec: &InstallRecord) {
     }
 }
 
+fn ensure_record(path: &PathBuf) -> InstallRecord {
+    let mut rec = load(path);
+    if rec.id.is_empty() {
+        rec.id = uuid::Uuid::new_v4().to_string();
+    }
+    // Persist before any network call so a crash retries with the same id.
+    save(path, &rec);
+    rec
+}
+
+/// Load or create the install id under the same lock `report` uses.
+pub async fn ensure_install_id(app: &tauri::AppHandle) -> Option<String> {
+    let _guard = REPORT_LOCK.lock().await;
+    let path = record_path(app)?;
+    Some(ensure_record(&path).id)
+}
+
 async fn fetch_count(client: &reqwest::Client, increment: bool) -> Option<u64> {
     let url = if increment { HIT_URL } else { GET_URL };
 
@@ -85,13 +102,7 @@ async fn fetch_count(client: &reqwest::Client, increment: bool) -> Option<u64> {
 pub async fn report(app: &tauri::AppHandle, client: &reqwest::Client) -> Option<u64> {
     let _guard = REPORT_LOCK.lock().await;
     let path = record_path(app)?;
-    let mut rec = load(&path);
-    if rec.id.is_empty() {
-        rec.id = uuid::Uuid::new_v4().to_string();
-    }
-    // Persist before the network call so a crash mid-ping retries with
-    // the same record (counted stays false until /hit succeeds).
-    save(&path, &rec);
+    let mut rec = ensure_record(&path);
 
     let increment = !rec.counted;
     match fetch_count(client, increment).await {

@@ -140,6 +140,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsAgents": "Most played",
     "player.authorBadge": "Made this overlay",
     "player.authorHint": "Overlay author",
+    "player.overlayUserBadge": "Uses this overlay",
+    "player.overlayUserHint": "Uses this overlay",
 
     // Weapon Categories
     "weapons.primary": "PRIMARY",
@@ -555,6 +557,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsAgents": "En çok oynadığı",
     "player.authorBadge": "Bu overlay'i yazan kişi",
     "player.authorHint": "Overlay yazarı",
+    "player.overlayUserBadge": "Bu overlay'i kullanıyor",
+    "player.overlayUserHint": "Bu overlay'i kullanıyor",
 
     // Weapon Categories
     "weapons.primary": "ANA SİLAHLAR",

@@ -9,6 +9,8 @@ import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/con
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
+import { OverlayUserMark } from "./OverlayUserMark";
+import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 
 function parseRiotId(name: string): { gameName: string; gameTag: string } | null {
   const hash = name.lastIndexOf("#");
@@ -55,6 +57,7 @@ function LastMatchPlayerRow({
   showPlacement?: boolean;
 }) {
   const { t, locale } = useI18n();
+  const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
   const getAgentIcon = useAssetsStore((s) => s.getAgentIcon);
   const openPlayer = usePanelStore((s) => s.openPlayer);
   const friends = useChatStore((s) => s.friends);
@@ -75,6 +78,9 @@ function LastMatchPlayerRow({
   const rawName = (player.name || "").trim();
   const fromHistory = !!player.name_from_history;
   const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
+  const normalizedPuuid = normalizePuuid(player.puuid);
+  const isOverlayUser =
+    !isAuthor && normalizedPuuid != null && overlayPuuids.includes(normalizedPuuid);
   const displayName = rawName || t("player.anonymousSlot", { n: slotIndex });
   const shortName = displayName.includes("#") ? displayName.split("#")[0] : displayName;
   const nameTitle = isAuthor
@@ -188,6 +194,7 @@ function LastMatchPlayerRow({
             title={t("player.authorHint")}
           />
         )}
+        {isOverlayUser && <OverlayUserMark title={t("player.overlayUserHint")} />}
       </div>
 
       <div

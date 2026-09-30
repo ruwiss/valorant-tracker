@@ -1,4 +1,5 @@
 use crate::api::types::*;
+use serde::Deserialize;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
@@ -1439,6 +1440,47 @@ impl ValorantAPI {
             }
         }
         party_map
+    }
+
+    /// Local Riot chat session. Works in menus, not only inside a match.
+    pub async fn get_my_riot_id(&self) -> Option<(String, String)> {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        if port.is_empty() || auth.is_empty() {
+            return None;
+        }
+        let url = format!("https://127.0.0.1:{port}/chat/v1/session");
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        #[derive(Deserialize)]
+        struct ChatSession {
+            #[serde(default)]
+            puuid: String,
+            #[serde(default, alias = "gameName")]
+            game_name: String,
+            #[serde(default, alias = "gameTag")]
+            game_tag: String,
+        }
+        let session = resp.json::<ChatSession>().await.ok()?;
+        let name = session.game_name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let tag = session.game_tag.trim();
+        let display = if tag.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}#{tag}")
+        };
+        Some((session.puuid, display))
     }
 
     /// Read our OWN presence: session loop phase + live round score.

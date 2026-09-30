@@ -7,6 +7,7 @@ import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
+import { useOverlayUsersStore } from "../stores/overlayUsersStore";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionEvent, GameState, LastMatch } from "../lib/types";
 
@@ -94,6 +95,13 @@ export function useGameLoop() {
         }
       });
 
+    const setupOverlayUsersListener = () =>
+      listen<{ puuids: string[] }>("overlay_users", (event) => {
+        const incoming = event.payload?.puuids;
+        if (!incoming?.length) return;
+        useOverlayUsersStore.getState().add(incoming);
+      });
+
     // 4. Initial sync - render correct state without waiting for the next event.
     const initialSync = async () => {
       try {
@@ -116,6 +124,7 @@ export function useGameLoop() {
     let unlistenShowOverlay: (() => void) | undefined;
     let unlistenVisibility: (() => void) | undefined;
     let unlistenLastMatch: (() => void) | undefined;
+    let unlistenOverlayUsers: (() => void) | undefined;
 
     setupConnectionListener().then((u) => { unlistenConnection = u; });
     setupStateListener().then((u) => { unlistenState = u; });
@@ -128,6 +137,9 @@ export function useGameLoop() {
     setupLastMatchListener().then((u) => { unlistenLastMatch = u; }).catch((e) =>
       console.error("[GameLoop] Failed to setup last-match listener:", e)
     );
+    setupOverlayUsersListener().then((u) => { unlistenOverlayUsers = u; }).catch((e) =>
+      console.error("[GameLoop] Failed to setup overlay-users listener:", e)
+    );
     initialSync();
 
     return () => {
@@ -136,6 +148,7 @@ export function useGameLoop() {
       if (unlistenShowOverlay) unlistenShowOverlay();
       if (unlistenVisibility) unlistenVisibility();
       if (unlistenLastMatch) unlistenLastMatch();
+      if (unlistenOverlayUsers) unlistenOverlayUsers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
