@@ -3,163 +3,461 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kullanım Telemetrisi</title>
+<title>Tracker — Yönetim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0d1117;
-    --fg: #ece8e1;
+    --bg: #0a0a0c;
+    --rail: #101013;
+    --surface: #141418;
+    --surface-2: #1b1b20;
+    --line: rgba(255,255,255,0.08);
+    --line-strong: rgba(255,255,255,0.14);
+    --text: #f3efe8;
+    --muted: #8d877e;
+    --faint: #5e5953;
     --accent: #ff4655;
-    --card: #161b22;
-    --muted: #8b949e;
+    --accent-dim: rgba(255,70,85,0.14);
+    --ok: #3dd68c;
+    --warn: #e2b15a;
+    --shadow: 0 18px 50px rgba(0,0,0,0.35);
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0;
     background: var(--bg);
-    color: var(--fg);
-    font-family: system-ui, sans-serif;
-    line-height: 1.5;
+    color: var(--text);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 1.4rem; margin: 0 0 4px; }
-  h2 { font-size: 1.05rem; margin: 32px 0 12px; color: var(--fg); }
-  .muted { color: var(--muted); }
-  .card {
-    background: var(--card);
-    border: 1px solid #21262d;
-    border-radius: 8px;
-    padding: 16px;
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  a { color: inherit; }
+
+  .login-screen {
+    min-height: 100%;
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
   }
-  button {
+  .login-brand {
+    padding: 48px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background:
+      linear-gradient(160deg, rgba(255,70,85,0.16), transparent 42%),
+      var(--rail);
+    border-right: 1px solid var(--line);
+  }
+  .mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    font-size: 12px;
+  }
+  .mark i {
+    width: 10px;
+    height: 10px;
+    background: var(--accent);
+    display: block;
+  }
+  .login-brand h1 {
+    margin: 0;
+    font-size: 42px;
+    line-height: 1.05;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    max-width: 12ch;
+  }
+  .login-brand p { color: var(--muted); max-width: 36ch; margin: 16px 0 0; }
+  .login-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+  }
+  .login-card { width: min(360px, 100%); }
+  .login-card h2 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+  .field span { color: var(--muted); font-size: 12px; }
+  input, select {
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: 2px;
+    padding: 9px 10px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .btn {
+    border: 1px solid transparent;
     background: var(--accent);
     color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font: inherit;
-    cursor: pointer;
+    border-radius: 2px;
+    padding: 9px 14px;
+    font-weight: 500;
   }
-  button.secondary { background: #21262d; color: var(--fg); border: 1px solid #30363d; }
-  button:disabled { opacity: 0.5; cursor: default; }
-  input {
+  .btn.ghost {
+    background: transparent;
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+  .btn.small { padding: 6px 10px; font-size: 13px; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .err { color: var(--accent); min-height: 1.2em; margin-top: 10px; font-size: 13px; }
+  .login-card .btn { width: 100%; margin-top: 18px; }
+
+  .app { display: none; min-height: 100%; }
+  .app.on { display: grid; grid-template-columns: 228px 1fr; }
+  .rail {
+    background: var(--rail);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 18px 12px;
+  }
+  .nav { display: flex; flex-direction: column; gap: 2px; margin-top: 28px; }
+  .nav button {
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-left: 2px solid transparent;
+    color: var(--muted);
+    padding: 9px 12px;
+    border-radius: 0;
+  }
+  .nav button.active {
+    color: var(--text);
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+  }
+  .nav button:hover { color: var(--text); }
+  .rail-foot { margin-top: auto; padding: 12px; color: var(--muted); font-size: 12px; }
+  .rail-foot .who { color: var(--text); margin-bottom: 10px; word-break: break-all; }
+  .rail-foot .btn { width: 100%; }
+
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    background: rgba(10,10,12,0.92);
+    backdrop-filter: blur(10px);
+    z-index: 2;
+  }
+  .menu-btn { display: none; }
+  .crumb { font-size: 13px; color: var(--muted); }
+  .crumb strong { color: var(--text); font-weight: 600; }
+  .top-spacer { flex: 1; }
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .live-pill i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--faint);
     display: block;
-    width: 100%;
-    margin: 6px 0 12px;
-    padding: 8px 10px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: var(--fg);
-    font: inherit;
   }
-  label { font-size: 0.9rem; color: var(--muted); }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
-  .stat .num { font-size: 1.8rem; font-weight: 600; }
-  .stat .lbl { font-size: 0.85rem; color: var(--muted); }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  td.puuid { font-family: ui-monospace, monospace; font-size: 0.75rem; word-break: break-all; max-width: 260px; }
-  .empty { color: var(--muted); padding: 16px 0; }
-  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.85rem; }
-  .bar-row .ver { width: 110px; color: var(--muted); }
-  .bar-track { flex: 1; background: #0d1117; border-radius: 4px; height: 14px; overflow: hidden; }
-  .bar-fill { background: var(--accent); height: 100%; }
-  .bar-row .cnt { width: 90px; text-align: right; }
-  .bar-row .online { width: 70px; text-align: right; color: var(--muted); }
-  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .err { color: var(--accent); margin-top: 12px; font-size: 0.9rem; }
-  #login-form { max-width: 360px; margin: 60px auto; }
+  .live-pill.on i { background: var(--ok); box-shadow: 0 0 0 3px rgba(61,214,140,0.15); }
+  .search {
+    width: min(280px, 36vw);
+    background: var(--surface);
+  }
+
+  .page { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+  .page-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; }
+  .page-head h1 { margin: 0; font-size: 26px; letter-spacing: -0.03em; font-weight: 600; }
+  .page-head p { margin: 4px 0 0; color: var(--muted); }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 14px 14px 12px;
+  }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 28px; letter-spacing: -0.04em; margin-top: 6px; font-weight: 600; }
+  .stat .s { color: var(--faint); font-size: 12px; margin-top: 4px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 10px; }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    min-width: 0;
+  }
+  .panel h2 {
+    margin: 0;
+    padding: 12px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel .body { padding: 12px 14px 14px; }
+
+  .hour {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 3px;
+    align-items: end;
+    height: 92px;
+  }
+  .hour span {
+    display: block;
+    background: var(--accent);
+    min-height: 2px;
+    opacity: 0.85;
+  }
+  .hour-labels {
+    display: flex;
+    justify-content: space-between;
+    color: var(--faint);
+    font-size: 11px;
+    margin-top: 6px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .ver-row { display: grid; grid-template-columns: 72px 1fr 36px; gap: 8px; align-items: center; margin: 7px 0; font-size: 13px; }
+  .ver-row b { font-weight: 500; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .track { height: 6px; background: var(--surface-2); }
+  .track i { display: block; height: 100%; background: var(--accent); }
+
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .toolbar input, .toolbar select { background: var(--surface); }
+  .toolbar .grow { flex: 1; min-width: 180px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  th.nosort { cursor: default; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: rgba(255,255,255,0.025); }
+  .mono { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 7px;
+    border: 1px solid var(--line-strong);
+    font-size: 12px;
+    color: var(--text);
+  }
+  .pill.ingame { border-color: rgba(61,214,140,0.45); color: var(--ok); }
+  .pill.pregame { border-color: rgba(226,177,90,0.5); color: var(--warn); }
+  .pill.idle, .pill.paused, .pill.offline { color: var(--muted); }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .pager .spacer { flex: 1; }
+  .empty, .loading {
+    padding: 28px 14px;
+    color: var(--muted);
+  }
+  .skel {
+    height: 12px;
+    background: linear-gradient(90deg, var(--surface-2), #24242a, var(--surface-2));
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    margin: 10px 0;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .drawer-back {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: none;
+    z-index: 5;
+  }
+  .drawer-back.on { display: block; }
+  .drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: min(420px, 100%);
+    background: var(--rail);
+    border-left: 1px solid var(--line);
+    z-index: 6;
+    transform: translateX(100%);
+    transition: transform 0.18s ease;
+    overflow: auto;
+    box-shadow: var(--shadow);
+  }
+  .drawer.on { transform: none; }
+  .drawer header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .drawer h3 { margin: 0; font-size: 16px; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px 10px; padding: 16px; font-size: 13px; }
+  .kv span { color: var(--muted); }
+  .copy {
+    background: none;
+    border: 0;
+    color: var(--accent);
+    padding: 0;
+    font-size: 12px;
+  }
+
+  @media (max-width: 980px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .login-screen { grid-template-columns: 1fr; }
+    .login-brand { display: none; }
+  }
+  @media (max-width: 760px) {
+    .app.on { grid-template-columns: 1fr; }
+    .rail {
+      position: fixed;
+      z-index: 7;
+      transform: translateX(-105%);
+      transition: transform 0.16s ease;
+      width: 240px;
+    }
+    .rail.open { transform: none; }
+    .menu-btn { display: inline-flex; }
+    .search { display: none; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-
-  <div id="config-error" class="card" style="display:none; max-width:520px; margin:60px auto;">
-    <strong>Yapılandırma eksik.</strong>
-    <p class="muted">admin/config.example.js dosyasını config.js yap, içine kendi Supabase url ve anon key değerlerini yaz ve sayfayı yenile.</p>
+<div id="config-error" class="login-panel" style="display:none">
+  <div class="login-card">
+    <h2>Yapılandırma eksik</h2>
+    <p class="muted">config.js içinde Supabase adresi ve anon anahtar olmalı.</p>
   </div>
+</div>
 
-  <div id="login-form" class="card" style="display:none;">
-    <h1>Yönetici girişi</h1>
-    <form id="signin">
-      <label for="email">E-posta</label>
-      <input id="email" type="email" required autocomplete="username">
-      <label for="password">Şifre</label>
-      <input id="password" type="password" required autocomplete="current-password">
-      <button type="submit">Giriş yap</button>
+<div id="login-screen" class="login-screen" style="display:none">
+  <div class="login-brand">
+    <div class="mark"><i></i> VALORANT TRACKER</div>
+    <div>
+      <h1>Kim açık, kim hangi sürümde.</h1>
+      <p>Kurulumlar, oturumlar ve lobideki overlay kullanıcıları. Saatler İstanbul.</p>
+    </div>
+    <div class="muted">Yönetici girişi</div>
+  </div>
+  <div class="login-panel">
+    <form id="signin" class="login-card">
+      <h2>Giriş</h2>
+      <p class="muted">Bu ekran sadece sana açık.</p>
+      <label class="field"><span>E-posta</span><input id="email" type="email" required autocomplete="username"></label>
+      <label class="field"><span>Şifre</span><input id="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn" type="submit">Giriş yap</button>
       <div id="login-error" class="err"></div>
     </form>
   </div>
+</div>
 
-  <div id="dashboard" style="display:none;">
-    <div class="topbar">
-      <h1>Kullanım Telemetrisi</h1>
-      <div>
-        <span id="who" class="muted" style="margin-right:12px;"></span>
-        <button id="refresh" class="secondary" type="button">Yenile</button>
-        <button id="signout" class="secondary" type="button">Çıkış yap</button>
-      </div>
+<div id="app" class="app">
+  <aside class="rail" id="rail">
+    <div class="mark"><i></i> TRACKER</div>
+    <nav class="nav" id="nav">
+      <button data-route="overview">Genel bakış</button>
+      <button data-route="live">Canlı</button>
+      <button data-route="users">Kullanıcılar</button>
+      <button data-route="sessions">Oturumlar</button>
+    </nav>
+    <div class="rail-foot">
+      <div class="who" id="who"></div>
+      <button class="btn ghost small" id="signout" type="button">Çıkış</button>
     </div>
-    <div id="fetch-error" class="err"></div>
-
-    <div class="stats">
-      <div class="card stat"><div class="num" id="st-online">-</div><div class="lbl">Şu an açık</div></div>
-      <div class="card stat"><div class="num" id="st-today">-</div><div class="lbl">Bugün aktif</div></div>
-      <div class="card stat"><div class="num" id="st-total">-</div><div class="lbl">Toplam kullanıcı</div></div>
-    </div>
-
-    <h2>Sürüm çubukları <span class="muted">(son 30 gün, çevrimiçi / toplam)</span></h2>
-    <div class="card" id="versions"><div class="empty">Veri yok.</div></div>
-
-    <h2>Canlı <span class="muted">(son 6 dakika)</span></h2>
-    <div class="card" style="overflow-x:auto;">
-      <table>
-        <thead><tr><th>Riot adı</th><th>Sürüm</th><th>Faz</th><th>Harita</th><th>Mod</th><th>Son görülme</th></tr></thead>
-        <tbody id="live-body"></tbody>
-      </table>
-      <div id="live-empty" class="empty" style="display:none;">Şu an çevrimiçi kullanıcı yok.</div>
-    </div>
-
-    <h2>Kullanıcılar</h2>
-    <div class="card" style="overflow-x:auto;">
-      <table>
-        <thead><tr><th>PUUID</th><th>Riot adı</th><th>Sürüm</th><th>İlk görülme</th><th>Son görülme</th></tr></thead>
-        <tbody id="users-body"></tbody>
-      </table>
-      <div id="users-empty" class="empty" style="display:none;">Henüz kullanıcı kaydı yok.</div>
-    </div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <button class="btn ghost small menu-btn" id="menu" type="button">Menü</button>
+      <div class="crumb" id="crumb"></div>
+      <div class="top-spacer"></div>
+      <div class="live-pill" id="live-pill"><i></i><span>bağlantı yok</span></div>
+      <input class="search" id="global-search" placeholder="İsim veya PUUID" autocomplete="off">
+      <button class="btn ghost small" id="refresh" type="button">Yenile</button>
+    </header>
+    <div class="page" id="page"></div>
   </div>
 </div>
+<div class="drawer-back" id="drawer-back"></div>
+<aside class="drawer" id="drawer"></aside>
 
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function () {
   "use strict";
-
   var cfg = window.TELEMETRY_CONFIG;
-  if (!cfg || !cfg.url || !cfg.anonKey ||
-      cfg.url.indexOf("YOUR_PROJECT") !== -1 ||
-      cfg.anonKey.indexOf("YOUR_ANON_KEY") !== -1) {
+  if (!cfg || !cfg.url || !cfg.anonKey || cfg.url.indexOf("YOUR_PROJECT") !== -1 || cfg.anonKey.indexOf("YOUR_ANON_KEY") !== -1) {
     document.getElementById("config-error").style.display = "block";
     return;
   }
 
   var supabase = window.supabase.createClient(cfg.url, cfg.anonKey);
-  var LIVE_WINDOW_S = 360;
-
-  var els = {
-    login: document.getElementById("login-form"),
-    dashboard: document.getElementById("dashboard"),
-    loginError: document.getElementById("login-error"),
-    fetchError: document.getElementById("fetch-error"),
-    who: document.getElementById("who")
+  var PAGE = 25;
+  var state = {
+    route: "overview",
+    q: "",
+    page: 1,
+    sort: "last_seen",
+    asc: false,
+    phase: "all",
+    version: "all",
+    loading: false,
+    error: "",
+    cache: {}
   };
 
-  // ---------- tarih yardımcıları (Europe/Istanbul) ----------
-  function istanbulStartOfTodayISO() {
-    // Turkey is UTC+3 year-round. YYYY-MM-DD in Europe/Istanbul + "T00:00:00+03:00"
+  var titles = {
+    overview: ["Genel bakış", "Bugün ve şu an"],
+    live: ["Canlı", "Son 6 dakikada görülen kurulumlar"],
+    users: ["Kullanıcılar", "Overlay kullanan Riot hesapları"],
+    sessions: ["Oturumlar", "Uygulama açılışları"]
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function istanbulDay() {
     var parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit"
     }).formatToParts(new Date());
@@ -171,216 +469,440 @@
     });
     return y + "-" + m + "-" + d + "T00:00:00+03:00";
   }
-
+  function ago(iso) {
+    if (!iso) return "—";
+    var t = new Date(iso).getTime();
+    if (isNaN(t)) return "—";
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return s + " sn";
+    if (s < 3600) return Math.floor(s / 60) + " dk";
+    if (s < 86400) return Math.floor(s / 3600) + " sa";
+    return Math.floor(s / 86400) + " g";
+  }
   function fmt(iso) {
-    if (!iso) return "-";
+    if (!iso) return "—";
     var d = new Date(iso);
-    if (isNaN(d)) return "-";
+    if (isNaN(d)) return "—";
     return d.toLocaleString("tr-TR", {
       timeZone: "Europe/Istanbul",
-      day: "2-digit", month: "2-digit", year: "numeric",
-      hour: "2-digit", minute: "2-digit"
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
+    });
+  }
+  function phaseLabel(p) {
+    return { idle: "Menü", pregame: "Ajan seçimi", ingame: "Oyunda", paused: "Durduruldu", offline: "Kapalı" }[p] || (p || "—");
+  }
+  function pill(p) {
+    var k = p || "offline";
+    return '<span class="pill ' + esc(k) + '">' + esc(phaseLabel(k)) + "</span>";
+  }
+  function safeQ(q) {
+    return q.replace(/[%_,.()]/g, "").trim();
+  }
+
+  function setRoute(route, reset) {
+    state.route = route;
+    if (reset) {
+      state.page = 1;
+      state.phase = "all";
+      state.version = "all";
+      state.sort = route === "sessions" ? "started_at" : "last_seen";
+      state.asc = false;
+    }
+    location.hash = "#/" + route;
+    document.querySelectorAll("#nav button").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-route") === route);
+    });
+    var t = titles[route];
+    $("crumb").innerHTML = "<strong>" + esc(t[0]) + "</strong>";
+    $("rail").classList.remove("open");
+    renderPage();
+  }
+
+  function pager(total) {
+    var pages = Math.max(1, Math.ceil(total / PAGE));
+    if (state.page > pages) state.page = pages;
+    var from = total ? (state.page - 1) * PAGE + 1 : 0;
+    var to = Math.min(total, state.page * PAGE);
+    return '<div class="pager"><span>' + from + "–" + to + " / " + total + '</span><span class="spacer"></span>' +
+      '<button class="btn ghost small" data-page="prev" ' + (state.page <= 1 ? "disabled" : "") + '>Önceki</button>' +
+      '<span>' + state.page + " / " + pages + "</span>" +
+      '<button class="btn ghost small" data-page="next" ' + (state.page >= pages ? "disabled" : "") + '>Sonraki</button></div>';
+  }
+
+  function bindPager(total) {
+    document.querySelectorAll("[data-page]").forEach(function (b) {
+      b.onclick = function () {
+        var pages = Math.max(1, Math.ceil(total / PAGE));
+        if (b.getAttribute("data-page") === "prev") state.page = Math.max(1, state.page - 1);
+        else state.page = Math.min(pages, state.page + 1);
+        renderPage();
+      };
     });
   }
 
-  function esc(s) {
-    if (s == null) return "";
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+  function bindSort() {
+    document.querySelectorAll("th[data-sort]").forEach(function (th) {
+      th.onclick = function () {
+        var key = th.getAttribute("data-sort");
+        if (state.sort === key) state.asc = !state.asc;
+        else { state.sort = key; state.asc = false; }
+        state.page = 1;
+        renderPage();
+      };
     });
   }
 
-  // ---------- veri ----------
-  var fetchTimer = null;
-  function scheduleFetch() {
-    if (fetchTimer) clearTimeout(fetchTimer);
-    fetchTimer = setTimeout(fetchAll, 400);
-  }
-
-  function showFetchError(msg) {
-    els.fetchError.textContent = msg ? "Veri alınamadı: " + msg : "";
-  }
-
-  async function fetchAll() {
-    showFetchError("");
-    var now = new Date().toISOString();
-    var todayStart = istanbulStartOfTodayISO();
-    var thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-
-    var results = await Promise.all([
-      // Şu an açık
-      supabase.from("presence").select("*").gte("last_seen", isoSecondsAgo(LIVE_WINDOW_S)).order("last_seen", { ascending: false }),
-      // Bugün aktif: distinct install_id, bugün başlamış veya bitmiş oturumlar
-      supabase.from("sessions").select("install_id").or("started_at.gte." + todayStart + ",ended_at.gte." + todayStart),
-      // Toplam kullanıcı
+  async function counts() {
+    var today = istanbulDay();
+    var ago30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    var liveSince = new Date(Date.now() - 360000).toISOString();
+    var res = await Promise.all([
+      supabase.from("presence").select("install_id", { count: "exact", head: true }).gte("last_seen", liveSince),
+      supabase.from("sessions").select("install_id").or("started_at.gte." + today + ",ended_at.gte." + today),
       supabase.from("users").select("puuid", { count: "exact", head: true }),
-      // Son 30 gün aktif kullanıcılar (sürüm çubukları için)
-      supabase.from("users").select("app_version,puuid").gte("last_seen", thirtyDaysAgo),
-      // Tüm kullanıcılar
-      supabase.from("users").select("*").order("last_seen", { ascending: false })
+      supabase.from("sessions").select("id", { count: "exact", head: true })
     ]);
+    var todayIds = {};
+    (res[1].data || []).forEach(function (r) { if (r.install_id) todayIds[r.install_id] = 1; });
+    return {
+      online: res[0].count || 0,
+      today: Object.keys(todayIds).length,
+      users: res[2].count || 0,
+      sessions: res[3].count || 0,
+      error: [res[0], res[1], res[2], res[3]].filter(function (r) { return r.error; }).map(function (r) { return r.error.message; }).join(" · ")
+    };
+  }
 
-    var errs = results.filter(function (r) { return r.error; });
-    if (errs.length) {
-      showFetchError(errs.map(function (e) { return e.error.message; }).join("; "));
+  async function renderOverview() {
+    $("page").innerHTML = '<div class="stats">' + [0,1,2,3].map(function () { return '<div class="stat"><div class="skel"></div><div class="skel"></div></div>'; }).join("") + "</div>";
+    var c = await counts();
+    var today = istanbulDay();
+    var ago30 = new Date(Date.now() - 30 * 86400000).toISOString();
+    var liveSince = new Date(Date.now() - 360000).toISOString();
+    var packed = await Promise.all([
+      supabase.from("sessions").select("started_at").gte("started_at", today).limit(1000),
+      supabase.from("users").select("app_version").gte("last_seen", ago30).limit(1000),
+      supabase.from("presence").select("riot_name,phase,map_name,mode_name,last_seen,app_version").gte("last_seen", liveSince).order("last_seen", { ascending: false }).limit(8),
+      supabase.from("sessions").select("install_id,started_at,app_version").order("started_at", { ascending: false }).limit(8)
+    ]);
+    var hours = new Array(24).fill(0);
+    (packed[0].data || []).forEach(function (r) {
+      var h = new Date(r.started_at).toLocaleString("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", hourCycle: "h23" });
+      var n = parseInt(h, 10);
+      if (!isNaN(n)) hours[n] += 1;
+    });
+    var maxH = Math.max.apply(null, hours.concat([1]));
+    var versions = {};
+    (packed[1].data || []).forEach(function (r) {
+      var v = r.app_version || "?";
+      versions[v] = (versions[v] || 0) + 1;
+    });
+    var vers = Object.keys(versions).sort(function (a, b) { return versions[b] - versions[a]; });
+    var maxV = vers.reduce(function (m, v) { return Math.max(m, versions[v]); }, 1);
+    var live = packed[2].data || [];
+    var recent = packed[3].data || [];
+
+    $("page").innerHTML =
+      '<div class="page-head"><div><h1>Genel bakış</h1><p>İstanbul günü. Çevrimiçi = son 6 dakika.</p></div></div>' +
+      (c.error ? '<div class="err">' + esc(c.error) + "</div>" : "") +
+      '<div class="stats">' +
+        stat("Şu an açık", c.online, "presence") +
+        stat("Bugün aktif", c.today, "kurulum") +
+        stat("Kullanıcı", c.users, "Riot hesabı") +
+        stat("Oturum", c.sessions, "tüm zamanlar") +
+      "</div>" +
+      '<div class="grid-2">' +
+        '<section class="panel"><h2>Bugünkü açılışlar</h2><div class="body">' +
+          '<div class="hour">' + hours.map(function (n) {
+            return '<span style="height:' + Math.max(4, Math.round(n / maxH * 92)) + 'px" title="' + n + '"></span>';
+          }).join("") + "</div>" +
+          '<div class="hour-labels"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>' +
+        "</div></section>" +
+        '<section class="panel"><h2>Sürüm, son 30 gün</h2><div class="body">' +
+          (vers.length ? vers.map(function (v) {
+            return '<div class="ver-row"><b>' + esc(v) + '</b><div class="track"><i style="width:' + Math.round(versions[v] / maxV * 100) + '%"></i></div><span>' + versions[v] + "</span></div>";
+          }).join("") : '<div class="empty">Kayıt yok.</div>') +
+        "</div></section>" +
+      "</div>" +
+      '<div class="grid-2">' +
+        '<section class="panel"><h2>Şu an oyunda veya menüde</h2>' + tableLive(live, true) + "</section>" +
+        '<section class="panel"><h2>Son açılışlar</h2>' +
+          (recent.length ? '<table><tbody>' + recent.map(function (r) {
+            return "<tr><td class=\"mono\">" + esc(ago(r.started_at)) + "</td><td>" + esc(r.app_version || "—") + '</td><td class="muted mono">' + esc((r.install_id || "").slice(0, 8)) + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">Henüz oturum yok.</div>') +
+        "</section>" +
+      "</div>";
+  }
+
+  function stat(k, v, s) {
+    return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + "</div></div>";
+  }
+
+  function tableLive(rows, compact) {
+    if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
+    return '<table><thead><tr><th class="nosort">Oyuncu</th><th class="nosort">Durum</th>' +
+      (compact ? "" : '<th class="nosort">Harita</th><th class="nosort">Mod</th><th class="nosort">Sürüm</th>') +
+      '<th class="nosort">Görülme</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        return '<tr class="clickable" data-puuid="' + esc(r.puuid || "") + '" data-install="' + esc(r.install_id || "") + '"><td>' + esc(r.riot_name || "İsimsiz") + "</td><td>" + pill(r.phase) + "</td>" +
+          (compact ? "" : "<td>" + esc(r.map_name || "—") + "</td><td>" + esc(r.mode_name || "—") + "</td><td class=\"mono\">" + esc(r.app_version || "—") + "</td>") +
+          '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  async function renderLive() {
+    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    var since = new Date(Date.now() - 360000).toISOString();
+    var res = await supabase.from("presence").select("*").gte("last_seen", since).order(state.sort || "last_seen", { ascending: state.asc });
+    var rows = res.data || [];
+    var q = state.q.toLowerCase();
+    rows = rows.filter(function (r) {
+      if (state.phase !== "all" && r.phase !== state.phase) return false;
+      if (state.version !== "all" && r.app_version !== state.version) return false;
+      if (!q) return true;
+      return (r.riot_name || "").toLowerCase().indexOf(q) !== -1 || (r.puuid || "").toLowerCase().indexOf(q) !== -1;
+    });
+    var versions = {};
+    (res.data || []).forEach(function (r) { if (r.app_version) versions[r.app_version] = 1; });
+    var total = rows.length;
+    var slice = rows.slice((state.page - 1) * PAGE, state.page * PAGE);
+    $("page").innerHTML =
+      '<div class="page-head"><div><h1>Canlı</h1><p>' + total + " kurulum, son 6 dakika.</p></div></div>" +
+      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
+      '<div class="toolbar">' +
+        '<input class="grow" id="local-q" placeholder="İsim veya PUUID" value="' + esc(state.q) + '">' +
+        '<select id="phase">' + ["all","ingame","pregame","idle","paused","offline"].map(function (p) {
+          return '<option value="' + p + '"' + (state.phase === p ? " selected" : "") + ">" + (p === "all" ? "Tüm durumlar" : phaseLabel(p)) + "</option>";
+        }).join("") + "</select>" +
+        '<select id="version"><option value="all">Tüm sürümler</option>' + Object.keys(versions).map(function (v) {
+          return '<option' + (state.version === v ? " selected" : "") + ">" + esc(v) + "</option>";
+        }).join("") + "</select>" +
+      "</div>" +
+      '<section class="panel">' + tableLive(slice, false) + pager(total) + "</section>";
+    bindPager(total);
+    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; renderLive(); });
+    keepSearch();
+    $("phase").onchange = function (e) { state.phase = e.target.value; state.page = 1; renderLive(); };
+    $("version").onchange = function (e) { state.version = e.target.value; state.page = 1; renderLive(); };
+    bindRows();
+  }
+
+  async function renderUsers() {
+    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    var from = (state.page - 1) * PAGE;
+    var q = safeQ(state.q);
+    var query = supabase.from("users").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
+    if (q) query = query.or("riot_name.ilike.%" + q + "%,puuid.ilike.%" + q + "%");
+    if (state.version !== "all") query = query.eq("app_version", state.version);
+    var res = await query;
+    var rows = res.data || [];
+    var total = res.count || 0;
+    $("page").innerHTML =
+      '<div class="page-head"><div><h1>Kullanıcılar</h1><p>' + total + " hesap.</p></div></div>" +
+      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
+      '<div class="toolbar"><input class="grow" id="local-q" placeholder="İsim veya PUUID" value="' + esc(state.q) + '"></div>' +
+      '<section class="panel"><table><thead><tr>' +
+        th("Riot adı", "riot_name") + th("Sürüm", "app_version") + th("İlk", "first_seen") + th("Son", "last_seen") +
+        '<th class="nosort">PUUID</th></tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r) {
+          return '<tr class="clickable" data-puuid="' + esc(r.puuid) + '" data-install="' + esc(r.install_id || "") + '">' +
+            "<td>" + esc(r.riot_name || "İsimsiz") + "</td>" +
+            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
+            '<td class="muted" title="' + esc(fmt(r.first_seen)) + '">' + esc(ago(r.first_seen)) + "</td>" +
+            '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td>" +
+            '<td class="mono muted">' + esc((r.puuid || "").slice(0, 8)) + "…</td></tr>";
+        }).join("") : '<tr><td colspan="5"><div class="empty">Kayıt yok.</div></td></tr>') +
+      "</tbody></table>" + pager(total) + "</section>";
+    bindPager(total);
+    bindSort();
+    bindRows();
+    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; renderUsers(); });
+    keepSearch();
+  }
+
+  async function renderSessions() {
+    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    var from = (state.page - 1) * PAGE;
+    var query = supabase.from("sessions").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
+    if (state.version !== "all") query = query.eq("app_version", state.version);
+    var res = await query;
+    var rows = res.data || [];
+    var ids = rows.map(function (r) { return r.install_id; }).filter(Boolean);
+    var names = {};
+    if (ids.length) {
+      var users = await supabase.from("users").select("install_id,riot_name,puuid").in("install_id", ids);
+      (users.data || []).forEach(function (u) { names[u.install_id] = u; });
     }
-
-    var liveRows = results[0].data || [];
-    var todayRows = results[1].data || [];
-    var totalCount = results[2].count != null ? results[2].count : (results[2].error ? "-" : 0);
-    var recentRows = results[3].data || [];
-    var allUsers = results[4].data || [];
-
-    // Şu an açık sayısı: presence'dan zaten geldi
-    renderStats(liveRows.length, countDistinct(todayRows, "install_id"), totalCount);
-    renderVersions(recentRows, liveRows);
-    renderLive(liveRows);
-    renderUsers(allUsers);
+    var total = res.count || 0;
+    $("page").innerHTML =
+      '<div class="page-head"><div><h1>Oturumlar</h1><p>Her uygulama açılışı bir satır.</p></div></div>' +
+      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
+      '<section class="panel"><table><thead><tr>' +
+        th("Açılış", "started_at") + th("Sürüm", "app_version") + '<th class="nosort">Oyuncu</th><th class="nosort">Süre</th></tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r) {
+          var u = names[r.install_id] || {};
+          var dur = "—";
+          if (r.started_at && r.ended_at) {
+            var mins = Math.max(0, Math.round((new Date(r.ended_at) - new Date(r.started_at)) / 60000));
+            dur = mins < 60 ? mins + " dk" : Math.floor(mins / 60) + " sa " + (mins % 60) + " dk";
+          }
+          return '<tr class="clickable" data-puuid="' + esc(u.puuid || "") + '" data-install="' + esc(r.install_id || "") + '">' +
+            '<td title="' + esc(fmt(r.started_at)) + '">' + esc(fmt(r.started_at)) + "</td>" +
+            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
+            "<td>" + esc(u.riot_name || "—") + "</td>" +
+            '<td class="muted">' + dur + "</td></tr>";
+        }).join("") : '<tr><td colspan="4"><div class="empty">Oturum yok.</div></td></tr>') +
+      "</tbody></table>" + pager(total) + "</section>";
+    bindPager(total);
+    bindSort();
+    bindRows();
   }
 
-  function isoSecondsAgo(s) {
-    return new Date(Date.now() - s * 1000).toISOString();
+  function th(label, key) {
+    var mark = state.sort === key ? (state.asc ? " ↑" : " ↓") : "";
+    return '<th data-sort="' + key + '">' + label + mark + "</th>";
   }
 
-  function countDistinct(rows, key) {
-    var seen = {};
-    var n = 0;
-    rows.forEach(function (r) {
-      var v = r[key];
-      if (v == null || seen[v]) return;
-      seen[v] = true;
-      n++;
+  function keepSearch() {
+    var el = $("local-q");
+    if (!el || document.activeElement === el) return;
+    if (!state.q) return;
+    el.focus();
+    var n = el.value.length;
+    el.setSelectionRange(n, n);
+  }
+  function debounce(fn) {
+    var t;
+    return function (e) {
+      var v = e.target.value;
+      clearTimeout(t);
+      t = setTimeout(function () { fn({ target: { value: v } }); }, 220);
+    };
+  }
+
+  function bindRows() {
+    document.querySelectorAll("tr.clickable").forEach(function (tr) {
+      tr.onclick = function () { openDrawer(tr.getAttribute("data-puuid"), tr.getAttribute("data-install")); };
     });
-    return n;
   }
 
-  // ---------- render ----------
-  function renderStats(online, today, total) {
-    document.getElementById("st-online").textContent = online;
-    document.getElementById("st-today").textContent = today;
-    document.getElementById("st-total").textContent = total;
+  async function openDrawer(puuid, installId) {
+    $("drawer-back").classList.add("on");
+    $("drawer").classList.add("on");
+    $("drawer").innerHTML = '<header><h3>Yükleniyor</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>';
+    $("close-drawer").onclick = closeDrawer;
+    var userQ = puuid
+      ? supabase.from("users").select("*").eq("puuid", puuid).maybeSingle()
+      : supabase.from("users").select("*").eq("install_id", installId).maybeSingle();
+    var userRes = await userQ;
+    var user = userRes.data;
+    var inst = (user && user.install_id) || installId;
+    var presence = inst
+      ? await supabase.from("presence").select("*").eq("install_id", inst).maybeSingle()
+      : { data: null };
+    var sessions = inst
+      ? await supabase.from("sessions").select("*").eq("install_id", inst).order("started_at", { ascending: false }).limit(8)
+      : { data: [] };
+    var name = (user && user.riot_name) || (presence.data && presence.data.riot_name) || "İsimsiz";
+    var id = (user && user.puuid) || puuid || "";
+    $("drawer").innerHTML =
+      '<header><h3>' + esc(name) + '</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>' +
+      '<div class="kv">' +
+        row("Durum", presence.data ? pill(presence.data.phase) : "—") +
+        row("Harita", esc((presence.data && presence.data.map_name) || "—")) +
+        row("Mod", esc((presence.data && presence.data.mode_name) || "—")) +
+        row("Sürüm", esc((user && user.app_version) || "—")) +
+        row("Bölge", esc((presence.data && presence.data.region) || "—")) +
+        row("İlk", esc(fmt(user && user.first_seen))) +
+        row("Son", esc(fmt((user && user.last_seen) || (presence.data && presence.data.last_seen)))) +
+        '<span>PUUID</span><div><div class="mono">' + esc(id || "—") + '</div>' + (id ? '<button class="copy" id="copy-id" type="button">Kopyala</button>' : "") + "</div>" +
+      "</div>" +
+      '<section class="panel" style="margin:0 16px 16px"><h2>Son oturumlar</h2>' +
+        ((sessions.data || []).length ? "<table><tbody>" + sessions.data.map(function (s) {
+          return "<tr><td>" + esc(fmt(s.started_at)) + '</td><td class="mono">' + esc(s.app_version || "—") + "</td></tr>";
+        }).join("") + "</tbody></table>" : '<div class="empty">Oturum yok.</div>') +
+      "</section>";
+    $("close-drawer").onclick = closeDrawer;
+    var copy = $("copy-id");
+    if (copy) copy.onclick = function () { navigator.clipboard.writeText(id); copy.textContent = "Kopyalandı"; };
+  }
+  function row(k, v) { return "<span>" + k + "</span><div>" + v + "</div>"; }
+  function closeDrawer() {
+    $("drawer").classList.remove("on");
+    $("drawer-back").classList.remove("on");
   }
 
-  function renderVersions(recentRows, liveRows) {
-    var box = document.getElementById("versions");
-    var buckets = {};
-    recentRows.forEach(function (r) {
-      var v = r.app_version || "bilinmiyor";
-      buckets[v] = (buckets[v] || 0) + 1;
-    });
-    var onlineByVersion = {};
-    liveRows.forEach(function (r) {
-      var v = r.app_version || "bilinmiyor";
-      onlineByVersion[v] = (onlineByVersion[v] || 0) + 1;
-    });
+  var renderers = { overview: renderOverview, live: renderLive, users: renderUsers, sessions: renderSessions };
+  function renderPage() { renderers[state.route](); }
 
-    var versions = Object.keys(buckets).sort(function (a, b) { return buckets[b] - buckets[a]; });
-    if (!versions.length) {
-      box.innerHTML = '<div class="empty">Son 30 günde aktif kullanıcı yok.</div>';
-      return;
-    }
-    var max = versions.reduce(function (m, v) { return Math.max(m, buckets[v]); }, 0);
-    box.innerHTML = versions.map(function (v) {
-      var w = Math.round((buckets[v] / max) * 100);
-      var online = onlineByVersion[v] || 0;
-      return '<div class="bar-row">' +
-        '<span class="ver">' + esc(v) + '</span>' +
-        '<span class="bar-track"><span class="bar-fill" style="display:block;width:' + w + '%"></span></span>' +
-        '<span class="cnt">' + buckets[v] + '</span>' +
-        '<span class="online">' + (online ? online + ' çevrimiçi' : '') + '</span>' +
-      '</div>';
-    }).join('');
-  }
-
-  function renderLive(rows) {
-    var body = document.getElementById("live-body");
-    var empty = document.getElementById("live-empty");
-    empty.style.display = rows.length ? "none" : "block";
-    body.innerHTML = rows.map(function (r) {
-      return "<tr>" +
-        "<td>" + esc(r.riot_name || "-") + "</td>" +
-        "<td>" + esc(r.app_version || "-") + "</td>" +
-        "<td>" + esc(r.phase || "-") + "</td>" +
-        "<td>" + esc(r.map_name || "-") + "</td>" +
-        "<td>" + esc(r.mode_name || "-") + "</td>" +
-        "<td>" + esc(fmt(r.last_seen)) + "</td>" +
-      "</tr>";
-    }).join("");
-  }
-
-  function renderUsers(rows) {
-    var body = document.getElementById("users-body");
-    var empty = document.getElementById("users-empty");
-    empty.style.display = rows.length ? "none" : "block";
-    body.innerHTML = rows.map(function (r) {
-      return "<tr>" +
-        '<td class="puuid">' + esc(r.puuid) + "</td>" +
-        "<td>" + esc(r.riot_name || "-") + "</td>" +
-        "<td>" + esc(r.app_version || "-") + "</td>" +
-        "<td>" + esc(fmt(r.first_seen)) + "</td>" +
-        "<td>" + esc(fmt(r.last_seen)) + "</td>" +
-      "</tr>";
-    }).join("");
-  }
-
-  // ---------- realtime ----------
   var channel = null;
-  function subscribeRealtime() {
+  var fetchTimer = null;
+  function watch() {
     if (channel) return;
-    channel = supabase.channel("telemetry-admin")
-      .on("postgres_changes", { event: "*", schema: "public", table: "presence" }, scheduleFetch)
-      .on("postgres_changes", { event: "*", schema: "public", table: "users" }, scheduleFetch)
+    channel = supabase.channel("admin-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "presence" }, bump)
+      .on("postgres_changes", { event: "*", schema: "public", table: "users" }, bump)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, bump)
       .subscribe(function (status) {
-        // Başarısız olursa Yenile butonu hâlâ çalışır.
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          channel = null;
-        }
+        var on = status === "SUBSCRIBED";
+        $("live-pill").classList.toggle("on", on);
+        $("live-pill").querySelector("span").textContent = on ? "canlı" : "yenile ile";
       });
   }
-
-  // ---------- auth ----------
-  function showDashboard(user) {
-    els.login.style.display = "none";
-    els.dashboard.style.display = "block";
-    els.who.textContent = user && user.email ? user.email : "";
-    fetchAll();
-    subscribeRealtime();
+  function bump() {
+    clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(renderPage, 500);
   }
 
-  supabase.auth.onAuthStateChange(function (_event, session) {
-    if (session && session.user) {
-      showDashboard(session.user);
-    } else {
-      els.dashboard.style.display = "none";
-      els.login.style.display = "block";
+  function showApp(user) {
+    $("login-screen").style.display = "none";
+    $("app").classList.add("on");
+    $("who").textContent = user.email || "";
+    var route = (location.hash || "#/overview").replace("#/", "") || "overview";
+    if (!titles[route]) route = "overview";
+    setRoute(route, false);
+    watch();
+  }
+
+  $("nav").onclick = function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    setRoute(b.getAttribute("data-route"), true);
+  };
+  $("menu").onclick = function () { $("rail").classList.toggle("open"); };
+  $("refresh").onclick = renderPage;
+  $("drawer-back").onclick = closeDrawer;
+  $("global-search").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    state.q = e.target.value;
+    state.page = 1;
+    setRoute(state.q ? "users" : state.route, false);
+    if (!state.q) renderPage();
+    else renderUsers();
+  });
+  $("signout").onclick = function () { supabase.auth.signOut(); };
+  $("signin").onsubmit = async function (e) {
+    e.preventDefault();
+    $("login-error").textContent = "";
+    var res = await supabase.auth.signInWithPassword({
+      email: $("email").value.trim(),
+      password: $("password").value
+    });
+    if (res.error) $("login-error").textContent = res.error.message;
+  };
+
+  supabase.auth.onAuthStateChange(function (_e, session) {
+    if (session && session.user) showApp(session.user);
+    else {
+      $("app").classList.remove("on");
+      $("login-screen").style.display = "grid";
+      closeDrawer();
       if (channel) { supabase.removeChannel(channel); channel = null; }
     }
   });
-
-  document.getElementById("signin").addEventListener("submit", async function (e) {
-    e.preventDefault();
-    els.loginError.textContent = "";
-    var email = document.getElementById("email").value.trim();
-    var password = document.getElementById("password").value;
-    var res = await supabase.auth.signInWithPassword({ email: email, password: password });
-    if (res.error) {
-      els.loginError.textContent = "Giriş yapılamadı: " + res.error.message;
-    }
-  });
-
-  document.getElementById("signout").addEventListener("click", async function () {
-    await supabase.auth.signOut();
-  });
-
-  document.getElementById("refresh").addEventListener("click", fetchAll);
-
-  // İlk durum: oturum varsa dashboard'a geç
   supabase.auth.getSession().then(function (res) {
-    if (res.data && res.data.session) {
-      showDashboard(res.data.session.user);
-    } else {
-      els.login.style.display = "block";
-    }
+    if (res.data && res.data.session) showApp(res.data.session.user);
+    else $("login-screen").style.display = "grid";
   });
 })();
 </script>
