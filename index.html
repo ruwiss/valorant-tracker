@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kullanım Telemetrisi</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #ece8e1;
+    --accent: #ff4655;
+    --card: #161b22;
+    --muted: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: system-ui, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 32px 0 12px; color: var(--fg); }
+  .muted { color: var(--muted); }
+  .card {
+    background: var(--card);
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.secondary { background: #21262d; color: var(--fg); border: 1px solid #30363d; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input {
+    display: block;
+    width: 100%;
+    margin: 6px 0 12px;
+    padding: 8px 10px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: var(--fg);
+    font: inherit;
+  }
+  label { font-size: 0.9rem; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+  .stat .num { font-size: 1.8rem; font-weight: 600; }
+  .stat .lbl { font-size: 0.85rem; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.puuid { font-family: ui-monospace, monospace; font-size: 0.75rem; word-break: break-all; max-width: 260px; }
+  .empty { color: var(--muted); padding: 16px 0; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.85rem; }
+  .bar-row .ver { width: 110px; color: var(--muted); }
+  .bar-track { flex: 1; background: #0d1117; border-radius: 4px; height: 14px; overflow: hidden; }
+  .bar-fill { background: var(--accent); height: 100%; }
+  .bar-row .cnt { width: 90px; text-align: right; }
+  .bar-row .online { width: 70px; text-align: right; color: var(--muted); }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .err { color: var(--accent); margin-top: 12px; font-size: 0.9rem; }
+  #login-form { max-width: 360px; margin: 60px auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="config-error" class="card" style="display:none; max-width:520px; margin:60px auto;">
+    <strong>Yapılandırma eksik.</strong>
+    <p class="muted">admin/config.example.js dosyasını config.js yap, içine kendi Supabase url ve anon key değerlerini yaz ve sayfayı yenile.</p>
+  </div>
+
+  <div id="login-form" class="card" style="display:none;">
+    <h1>Yönetici girişi</h1>
+    <form id="signin">
+      <label for="email">E-posta</label>
+      <input id="email" type="email" required autocomplete="username">
+      <label for="password">Şifre</label>
+      <input id="password" type="password" required autocomplete="current-password">
+      <button type="submit">Giriş yap</button>
+      <div id="login-error" class="err"></div>
+    </form>
+  </div>
+
+  <div id="dashboard" style="display:none;">
+    <div class="topbar">
+      <h1>Kullanım Telemetrisi</h1>
+      <div>
+        <span id="who" class="muted" style="margin-right:12px;"></span>
+        <button id="refresh" class="secondary" type="button">Yenile</button>
+        <button id="signout" class="secondary" type="button">Çıkış yap</button>
+      </div>
+    </div>
+    <div id="fetch-error" class="err"></div>
+
+    <div class="stats">
+      <div class="card stat"><div class="num" id="st-online">-</div><div class="lbl">Şu an açık</div></div>
+      <div class="card stat"><div class="num" id="st-today">-</div><div class="lbl">Bugün aktif</div></div>
+      <div class="card stat"><div class="num" id="st-total">-</div><div class="lbl">Toplam kullanıcı</div></div>
+    </div>
+
+    <h2>Sürüm çubukları <span class="muted">(son 30 gün, çevrimiçi / toplam)</span></h2>
+    <div class="card" id="versions"><div class="empty">Veri yok.</div></div>
+
+    <h2>Canlı <span class="muted">(son 6 dakika)</span></h2>
+    <div class="card" style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Riot adı</th><th>Sürüm</th><th>Faz</th><th>Harita</th><th>Mod</th><th>Son görülme</th></tr></thead>
+        <tbody id="live-body"></tbody>
+      </table>
+      <div id="live-empty" class="empty" style="display:none;">Şu an çevrimiçi kullanıcı yok.</div>
+    </div>
+
+    <h2>Kullanıcılar</h2>
+    <div class="card" style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>PUUID</th><th>Riot adı</th><th>Sürüm</th><th>İlk görülme</th><th>Son görülme</th></tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+      <div id="users-empty" class="empty" style="display:none;">Henüz kullanıcı kaydı yok.</div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function () {
+  "use strict";
+
+  var cfg = window.TELEMETRY_CONFIG;
+  if (!cfg || !cfg.url || !cfg.anonKey ||
+      cfg.url.indexOf("YOUR_PROJECT") !== -1 ||
+      cfg.anonKey.indexOf("YOUR_ANON_KEY") !== -1) {
+    document.getElementById("config-error").style.display = "block";
+    return;
+  }
+
+  var supabase = window.supabase.createClient(cfg.url, cfg.anonKey);
+  var LIVE_WINDOW_S = 360;
+
+  var els = {
+    login: document.getElementById("login-form"),
+    dashboard: document.getElementById("dashboard"),
+    loginError: document.getElementById("login-error"),
+    fetchError: document.getElementById("fetch-error"),
+    who: document.getElementById("who")
+  };
+
+  // ---------- tarih yardımcıları (Europe/Istanbul) ----------
+  function istanbulStartOfTodayISO() {
+    // Turkey is UTC+3 year-round. YYYY-MM-DD in Europe/Istanbul + "T00:00:00+03:00"
+    var parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit"
+    }).formatToParts(new Date());
+    var y = "", m = "", d = "";
+    parts.forEach(function (p) {
+      if (p.type === "year") y = p.value;
+      else if (p.type === "month") m = p.value;
+      else if (p.type === "day") d = p.value;
+    });
+    return y + "-" + m + "-" + d + "T00:00:00+03:00";
+  }
+
+  function fmt(iso) {
+    if (!iso) return "-";
+    var d = new Date(iso);
+    if (isNaN(d)) return "-";
+    return d.toLocaleString("tr-TR", {
+      timeZone: "Europe/Istanbul",
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    });
+  }
+
+  function esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- veri ----------
+  var fetchTimer = null;
+  function scheduleFetch() {
+    if (fetchTimer) clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchAll, 400);
+  }
+
+  function showFetchError(msg) {
+    els.fetchError.textContent = msg ? "Veri alınamadı: " + msg : "";
+  }
+
+  async function fetchAll() {
+    showFetchError("");
+    var now = new Date().toISOString();
+    var todayStart = istanbulStartOfTodayISO();
+    var thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+
+    var results = await Promise.all([
+      // Şu an açık
+      supabase.from("presence").select("*").gte("last_seen", isoSecondsAgo(LIVE_WINDOW_S)).order("last_seen", { ascending: false }),
+      // Bugün aktif: distinct install_id, bugün başlamış veya bitmiş oturumlar
+      supabase.from("sessions").select("install_id").or("started_at.gte." + todayStart + ",ended_at.gte." + todayStart),
+      // Toplam kullanıcı
+      supabase.from("users").select("puuid", { count: "exact", head: true }),
+      // Son 30 gün aktif kullanıcılar (sürüm çubukları için)
+      supabase.from("users").select("app_version,puuid").gte("last_seen", thirtyDaysAgo),
+      // Tüm kullanıcılar
+      supabase.from("users").select("*").order("last_seen", { ascending: false })
+    ]);
+
+    var errs = results.filter(function (r) { return r.error; });
+    if (errs.length) {
+      showFetchError(errs.map(function (e) { return e.error.message; }).join("; "));
+    }
+
+    var liveRows = results[0].data || [];
+    var todayRows = results[1].data || [];
+    var totalCount = results[2].count != null ? results[2].count : (results[2].error ? "-" : 0);
+    var recentRows = results[3].data || [];
+    var allUsers = results[4].data || [];
+
+    // Şu an açık sayısı: presence'dan zaten geldi
+    renderStats(liveRows.length, countDistinct(todayRows, "install_id"), totalCount);
+    renderVersions(recentRows, liveRows);
+    renderLive(liveRows);
+    renderUsers(allUsers);
+  }
+
+  function isoSecondsAgo(s) {
+    return new Date(Date.now() - s * 1000).toISOString();
+  }
+
+  function countDistinct(rows, key) {
+    var seen = {};
+    var n = 0;
+    rows.forEach(function (r) {
+      var v = r[key];
+      if (v == null || seen[v]) return;
+      seen[v] = true;
+      n++;
+    });
+    return n;
+  }
+
+  // ---------- render ----------
+  function renderStats(online, today, total) {
+    document.getElementById("st-online").textContent = online;
+    document.getElementById("st-today").textContent = today;
+    document.getElementById("st-total").textContent = total;
+  }
+
+  function renderVersions(recentRows, liveRows) {
+    var box = document.getElementById("versions");
+    var buckets = {};
+    recentRows.forEach(function (r) {
+      var v = r.app_version || "bilinmiyor";
+      buckets[v] = (buckets[v] || 0) + 1;
+    });
+    var onlineByVersion = {};
+    liveRows.forEach(function (r) {
+      var v = r.app_version || "bilinmiyor";
+      onlineByVersion[v] = (onlineByVersion[v] || 0) + 1;
+    });
+
+    var versions = Object.keys(buckets).sort(function (a, b) { return buckets[b] - buckets[a]; });
+    if (!versions.length) {
+      box.innerHTML = '<div class="empty">Son 30 günde aktif kullanıcı yok.</div>';
+      return;
+    }
+    var max = versions.reduce(function (m, v) { return Math.max(m, buckets[v]); }, 0);
+    box.innerHTML = versions.map(function (v) {
+      var w = Math.round((buckets[v] / max) * 100);
+      var online = onlineByVersion[v] || 0;
+      return '<div class="bar-row">' +
+        '<span class="ver">' + esc(v) + '</span>' +
+        '<span class="bar-track"><span class="bar-fill" style="display:block;width:' + w + '%"></span></span>' +
+        '<span class="cnt">' + buckets[v] + '</span>' +
+        '<span class="online">' + (online ? online + ' çevrimiçi' : '') + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderLive(rows) {
+    var body = document.getElementById("live-body");
+    var empty = document.getElementById("live-empty");
+    empty.style.display = rows.length ? "none" : "block";
+    body.innerHTML = rows.map(function (r) {
+      return "<tr>" +
+        "<td>" + esc(r.riot_name || "-") + "</td>" +
+        "<td>" + esc(r.app_version || "-") + "</td>" +
+        "<td>" + esc(r.phase || "-") + "</td>" +
+        "<td>" + esc(r.map_name || "-") + "</td>" +
+        "<td>" + esc(r.mode_name || "-") + "</td>" +
+        "<td>" + esc(fmt(r.last_seen)) + "</td>" +
+      "</tr>";
+    }).join("");
+  }
+
+  function renderUsers(rows) {
+    var body = document.getElementById("users-body");
+    var empty = document.getElementById("users-empty");
+    empty.style.display = rows.length ? "none" : "block";
+    body.innerHTML = rows.map(function (r) {
+      return "<tr>" +
+        '<td class="puuid">' + esc(r.puuid) + "</td>" +
+        "<td>" + esc(r.riot_name || "-") + "</td>" +
+        "<td>" + esc(r.app_version || "-") + "</td>" +
+        "<td>" + esc(fmt(r.first_seen)) + "</td>" +
+        "<td>" + esc(fmt(r.last_seen)) + "</td>" +
+      "</tr>";
+    }).join("");
+  }
+
+  // ---------- realtime ----------
+  var channel = null;
+  function subscribeRealtime() {
+    if (channel) return;
+    channel = supabase.channel("telemetry-admin")
+      .on("postgres_changes", { event: "*", schema: "public", table: "presence" }, scheduleFetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "users" }, scheduleFetch)
+      .subscribe(function (status) {
+        // Başarısız olursa Yenile butonu hâlâ çalışır.
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          channel = null;
+        }
+      });
+  }
+
+  // ---------- auth ----------
+  function showDashboard(user) {
+    els.login.style.display = "none";
+    els.dashboard.style.display = "block";
+    els.who.textContent = user && user.email ? user.email : "";
+    fetchAll();
+    subscribeRealtime();
+  }
+
+  supabase.auth.onAuthStateChange(function (_event, session) {
+    if (session && session.user) {
+      showDashboard(session.user);
+    } else {
+      els.dashboard.style.display = "none";
+      els.login.style.display = "block";
+      if (channel) { supabase.removeChannel(channel); channel = null; }
+    }
+  });
+
+  document.getElementById("signin").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    els.loginError.textContent = "";
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+    var res = await supabase.auth.signInWithPassword({ email: email, password: password });
+    if (res.error) {
+      els.loginError.textContent = "Giriş yapılamadı: " + res.error.message;
+    }
+  });
+
+  document.getElementById("signout").addEventListener("click", async function () {
+    await supabase.auth.signOut();
+  });
+
+  document.getElementById("refresh").addEventListener("click", fetchAll);
+
+  // İlk durum: oturum varsa dashboard'a geç
+  supabase.auth.getSession().then(function (res) {
+    if (res.data && res.data.session) {
+      showDashboard(res.data.session.user);
+    } else {
+      els.login.style.display = "block";
+    }
+  });
+})();
+</script>
+</body>
+</html>
