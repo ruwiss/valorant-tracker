@@ -443,6 +443,9 @@
     error: "",
     cache: {}
   };
+  var views = {};
+  var viewsAt = {};
+  var binders = {};
 
   var titles = {
     overview: ["Genel bakış", "Bugün ve şu an"],
@@ -515,7 +518,25 @@
     var t = titles[route];
     $("crumb").innerHTML = "<strong>" + esc(t[0]) + "</strong>";
     $("rail").classList.remove("open");
+    if (views[route]) {
+      $("page").innerHTML = views[route];
+      $("page").setAttribute("data-route", route);
+      if (binders[route]) binders[route]();
+      if (!reset && Date.now() - viewsAt[route] < 20000) return;
+    }
     renderPage();
+  }
+
+  function beginLoad() {
+    if (views[state.route]) return;
+    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+  }
+
+  function saveView(bind) {
+    views[state.route] = $("page").innerHTML;
+    viewsAt[state.route] = Date.now();
+    binders[state.route] = bind || function () {};
+    binders[state.route]();
   }
 
   function pager(total) {
@@ -574,7 +595,9 @@
   }
 
   async function renderOverview() {
-    $("page").innerHTML = '<div class="stats">' + [0,1,2,3].map(function () { return '<div class="stat"><div class="skel"></div><div class="skel"></div></div>'; }).join("") + "</div>";
+    if (!views.overview) {
+      $("page").innerHTML = '<div class="stats">' + [0,1,2,3].map(function () { return '<div class="stat"><div class="skel"></div><div class="skel"></div></div>'; }).join("") + "</div>";
+    }
     var c = await counts();
     var today = istanbulDay();
     var ago30 = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -632,6 +655,7 @@
           }).join("") + "</tbody></table>" : '<div class="empty">Henüz oturum yok.</div>') +
         "</section>" +
       "</div>";
+    saveView(function () { bindRows(); });
   }
 
   function stat(k, v, s) {
@@ -651,7 +675,7 @@
   }
 
   async function renderLive() {
-    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    beginLoad();
     var since = new Date(Date.now() - 360000).toISOString();
     var res = await supabase.from("presence").select("*").gte("last_seen", since).order(state.sort || "last_seen", { ascending: state.asc });
     var rows = res.data || [];
@@ -679,16 +703,21 @@
         }).join("") + "</select>" +
       "</div>" +
       '<section class="panel">' + tableLive(slice, false) + pager(total) + "</section>";
-    bindPager(total);
-    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; renderLive(); });
+    saveView(function () {
+      bindPager(total);
+      bindRows();
+      var q = $("local-q");
+      if (q) q.oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.live = null; renderLive(); });
+      var phase = $("phase");
+      if (phase) phase.onchange = function (e) { state.phase = e.target.value; state.page = 1; views.live = null; renderLive(); };
+      var version = $("version");
+      if (version) version.onchange = function (e) { state.version = e.target.value; state.page = 1; views.live = null; renderLive(); };
+    });
     keepSearch();
-    $("phase").onchange = function (e) { state.phase = e.target.value; state.page = 1; renderLive(); };
-    $("version").onchange = function (e) { state.version = e.target.value; state.page = 1; renderLive(); };
-    bindRows();
   }
 
   async function renderUsers() {
-    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    beginLoad();
     var from = (state.page - 1) * PAGE;
     var q = safeQ(state.q);
     var query = supabase.from("users").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
@@ -716,12 +745,19 @@
     bindPager(total);
     bindSort();
     bindRows();
-    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; renderUsers(); });
+    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.users = null; renderUsers(); });
+    saveView(function () {
+      bindPager(total);
+      bindSort();
+      bindRows();
+      var q = $("local-q");
+      if (q) q.oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.users = null; renderUsers(); });
+    });
     keepSearch();
   }
 
   async function renderSessions() {
-    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+    beginLoad();
     var from = (state.page - 1) * PAGE;
     var query = supabase.from("sessions").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
     if (state.version !== "all") query = query.eq("app_version", state.version);
@@ -753,9 +789,11 @@
             '<td class="muted">' + dur + "</td></tr>";
         }).join("") : '<tr><td colspan="4"><div class="empty">Oturum yok.</div></td></tr>') +
       "</tbody></table>" + pager(total) + "</section>";
-    bindPager(total);
-    bindSort();
-    bindRows();
+    saveView(function () {
+      bindPager(total);
+      bindSort();
+      bindRows();
+    });
   }
 
   function th(label, key) {
@@ -867,7 +905,7 @@
   $("nav").onclick = function (e) {
     var b = e.target.closest("button");
     if (!b) return;
-    setRoute(b.getAttribute("data-route"), true);
+    setRoute(b.getAttribute("data-route"), false);
   };
   $("menu").onclick = function () { $("rail").classList.toggle("open"); };
   $("refresh").onclick = renderPage;
