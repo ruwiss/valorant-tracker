@@ -40,6 +40,13 @@ struct Live {
     game_state: String,
     map_name: Option<String>,
     mode_name: Option<String>,
+    queue_id: Option<String>,
+    activity: Option<String>,
+    party_state: Option<String>,
+    party_size: Option<i32>,
+    ally_score: Option<i32>,
+    enemy_score: Option<i32>,
+    agent: Option<String>,
     roster: Vec<String>,
     me_puuid: Option<String>,
     me_name: Option<String>,
@@ -64,6 +71,12 @@ struct TaskState {
     phase: Option<String>,
     map: Option<String>,
     mode: Option<String>,
+    queue_id: Option<String>,
+    party_state: Option<String>,
+    party_size: Option<i32>,
+    ally_score: Option<i32>,
+    enemy_score: Option<i32>,
+    agent: Option<String>,
     roster_fp: Option<String>,
     lobby_done: Option<String>,
     names: NameCache,
@@ -127,6 +140,12 @@ pub async fn run(app: AppHandle, bridge: Bridge) {
         phase: None,
         map: None,
         mode: None,
+        queue_id: None,
+        party_state: None,
+        party_size: None,
+        ally_score: None,
+        enemy_score: None,
+        agent: None,
         roster_fp: None,
         lobby_done: None,
         names: NameCache {
@@ -186,7 +205,13 @@ fn subscribe(app: &AppHandle, bridge: &Bridge) {
                 let mut slot = live.lock();
                 slot.game_state = gs.state;
                 slot.map_name = blank_to_none(gs.map_name);
-                slot.mode_name = blank_to_none(gs.mode_name);
+                slot.mode_name = blank_to_none(gs.report_mode).or_else(|| blank_to_none(gs.mode_name));
+                slot.queue_id = blank_to_none(gs.queue_id);
+                slot.activity = blank_to_none(gs.activity);
+                slot.party_state = blank_to_none(gs.party_state);
+                slot.party_size = gs.party_size.filter(|n| *n > 0);
+                slot.ally_score = gs.ally_score;
+                slot.enemy_score = gs.enemy_score;
                 slot.roster = roster;
                 if let Some(me) = me {
                     if normalize_puuid(&me.puuid).is_some() {
@@ -195,6 +220,9 @@ fn subscribe(app: &AppHandle, bridge: &Bridge) {
                     if let Some(name) = blank_to_none(Some(me.name.clone())) {
                         slot.me_name = Some(name);
                     }
+                    slot.agent = blank_to_none(Some(me.agent.clone()));
+                } else {
+                    slot.agent = None;
                 }
                 drop(slot);
                 notify.notify_one();
@@ -214,15 +242,27 @@ async fn flush(
     wake: Wake,
 ) {
     let snap = bridge.live.lock().clone();
-    let phase = phase_label(&snap.game_state, &snap.conn_status);
+    let phase = phase_label(&snap.game_state, &snap.conn_status, snap.activity.as_deref());
     let map = snap.map_name.clone();
     let mode = snap.mode_name.clone();
+    let queue_id = snap.queue_id.clone();
+    let party_state = snap.party_state.clone();
+    let party_size = snap.party_size;
+    let ally_score = snap.ally_score;
+    let enemy_score = snap.enemy_score;
+    let agent = snap.agent.clone();
     let compact = compact_ids(&snap.roster);
     let fp = roster_fingerprint(&compact);
     let launch_or_heartbeat = matches!(wake, Wake::Launch | Wake::Heartbeat);
     let phase_changed = state.phase.as_deref() != Some(phase)
         || state.map != map
-        || state.mode != mode;
+        || state.mode != mode
+        || state.queue_id != queue_id
+        || state.party_state != party_state
+        || state.party_size != party_size
+        || state.ally_score != ally_score
+        || state.enemy_score != enemy_score
+        || state.agent != agent;
     let roster_changed = state.roster_fp.as_deref() != Some(fp.as_str());
 
     if matches!(wake, Wake::Event) && !phase_changed && !roster_changed {
@@ -244,6 +284,12 @@ async fn flush(
         state.phase = Some(phase.to_string());
         state.map = map;
         state.mode = mode;
+        state.queue_id = queue_id;
+        state.party_state = party_state;
+        state.party_size = party_size;
+        state.ally_score = ally_score;
+        state.enemy_score = enemy_score;
+        state.agent = agent;
         state.roster_fp = Some(fp);
         return;
     }
@@ -256,6 +302,12 @@ async fn flush(
     state.phase = Some(phase.to_string());
     state.map = map.clone();
     state.mode = mode.clone();
+    state.queue_id = queue_id.clone();
+    state.party_state = party_state.clone();
+    state.party_size = party_size;
+    state.ally_score = ally_score;
+    state.enemy_score = enemy_score;
+    state.agent = agent.clone();
     state.roster_fp = Some(fp.clone());
 
     let now = rfc3339_now();
@@ -288,6 +340,12 @@ async fn flush(
             phase,
             map_name: map,
             mode_name: mode,
+            queue_id,
+            party_state,
+            party_size,
+            ally_score,
+            enemy_score,
+            agent,
             session_started_at: &state.started_at,
             last_seen: &now,
         };
@@ -506,6 +564,12 @@ struct PresenceBody<'a> {
     phase: &'a str,
     map_name: Option<String>,
     mode_name: Option<String>,
+    queue_id: Option<String>,
+    party_state: Option<String>,
+    party_size: Option<i32>,
+    ally_score: Option<i32>,
+    enemy_score: Option<i32>,
+    agent: Option<String>,
     session_started_at: &'a str,
     last_seen: &'a str,
 }
@@ -650,7 +714,7 @@ fn roster_fingerprint(ids: &[String]) -> String {
     compact.join(",")
 }
 
-fn phase_label(game_state: &str, conn_status: &str) -> &'static str {
+fn phase_label(game_state: &str, conn_status: &str, activity: Option<&str>) -> &'static str {
     if game_state == "pregame" {
         return "pregame";
     }
@@ -663,7 +727,11 @@ fn phase_label(game_state: &str, conn_status: &str) -> &'static str {
     if conn_status == "waiting_for_game" || conn_status == "connecting" {
         return "offline";
     }
-    "idle"
+    match activity {
+        Some("queue") => "queue",
+        Some("custom") => "custom",
+        _ => "idle",
+    }
 }
 
 fn rfc3339_now() -> String {
@@ -764,18 +832,20 @@ mod tests {
 
     #[test]
     fn phase_label_ingame_beats_connecting() {
-        assert_eq!(phase_label("ingame", "connecting"), "ingame");
-        assert_eq!(phase_label("pregame", "paused"), "pregame");
+        assert_eq!(phase_label("ingame", "connecting", None), "ingame");
+        assert_eq!(phase_label("pregame", "paused", Some("queue")), "pregame");
     }
 
     #[test]
     fn phase_label_paused_only_outside_match() {
-        assert_eq!(phase_label("idle", "paused"), "paused");
-        assert_eq!(phase_label("", "paused"), "paused");
-        assert_eq!(phase_label("ingame", "paused"), "ingame");
-        assert_eq!(phase_label("idle", "waiting_for_game"), "offline");
-        assert_eq!(phase_label("idle", "connecting"), "offline");
-        assert_eq!(phase_label("idle", "connected"), "idle");
+        assert_eq!(phase_label("idle", "paused", Some("queue")), "paused");
+        assert_eq!(phase_label("", "paused", None), "paused");
+        assert_eq!(phase_label("ingame", "paused", None), "ingame");
+        assert_eq!(phase_label("idle", "waiting_for_game", Some("queue")), "offline");
+        assert_eq!(phase_label("idle", "connecting", None), "offline");
+        assert_eq!(phase_label("idle", "connected", None), "idle");
+        assert_eq!(phase_label("idle", "connected", Some("queue")), "queue");
+        assert_eq!(phase_label("idle", "connected", Some("custom")), "custom");
     }
 
     #[test]

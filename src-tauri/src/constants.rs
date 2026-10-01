@@ -233,9 +233,10 @@ pub static MAP_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     m
 });
 
+/// Labels shown in the overlay. Panel telemetry uses `queue_label` instead.
 pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    m.insert("competitive", "RekabetÃ§i");
+    m.insert("competitive", "Rekabet\u{00c3}\u{00a7}i");
     m.insert("unrated", "Normal");
     m.insert("spikerush", "Spike Rush");
     m.insert("deathmatch", "Deathmatch");
@@ -245,9 +246,241 @@ pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(||
     m.insert("swiftplay", "Swiftplay");
     m.insert("hurm", "Team Deathmatch");
     m.insert("premier", "Premier");
-    m.insert("custom", "Ã–zel Oyun");
+    m.insert("custom", "\u{00c3}\u{2013}zel Oyun");
     m
 });
+
+fn normalize_queue_key(queue_id: &str) -> String {
+    queue_id
+        .trim()
+        .trim_matches('/')
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn queue_alias(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "ranked" => "competitive",
+        "escalation" => "ggteam",
+        "replication" => "onefa",
+        "teamdeathmatch" | "tdm" => "hurm",
+        "customgame" => "custom",
+        "snowballfight" => "snowball",
+        "premierteam" | "tournamentmode" => "premier",
+        "skirmish" => "newmap",
+        _ => return None,
+    })
+}
+
+fn panel_queue_label(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "competitive" | "ranked" => "Rekabetçi",
+        "unrated" => "Derecesiz",
+        "spikerush" => "Spike Hücumu",
+        "deathmatch" => "Ölüm Kalım",
+        "ggteam" | "escalation" => "Tırmanış",
+        "onefa" | "replication" => "Replikasyon",
+        "swiftplay" => "Tam Gaz",
+        "hurm" | "teamdeathmatch" | "tdm" => "Takım Ölüm Kalım",
+        "premier" | "premierteam" | "tournamentmode" => "Premier",
+        "custom" | "customgame" => "Özel Oyun",
+        "newmap" | "skirmish" => "Yeni Harita",
+        "snowball" | "snowballfight" => "Kartopu Savaşı",
+        _ => return None,
+    })
+}
+
+/// Turkish panel label for a Riot queue id. Unknown non-empty ids are returned
+/// as-is so a new mode still shows up instead of a blank cell.
+pub fn queue_label(queue_id: &str) -> Option<String> {
+    let key = normalize_queue_key(queue_id);
+    if key.is_empty() {
+        return None;
+    }
+    if let Some(name) = panel_queue_label(&key) {
+        return Some(name.to_string());
+    }
+    if let Some(alias) = queue_alias(&key) {
+        if let Some(name) = panel_queue_label(alias) {
+            return Some(name.to_string());
+        }
+    }
+    Some(queue_id.trim().to_string())
+}
+
+/// ModeID distinguishes deathmatch / swiftplay / spike rush, but not
+/// competitive vs unrated (both are Bomb). Returns None for ambiguous modes.
+pub fn mode_label_from_mode_id(mode_id: &str) -> Option<&'static str> {
+    let id = mode_id.to_ascii_lowercase();
+    if id.contains("swiftplay") {
+        return Some("Tam Gaz");
+    }
+    if id.contains("quickbomb") || id.contains("spikerush") {
+        return Some("Spike Hücumu");
+    }
+    if id.contains("hurm") {
+        return Some("Takım Ölüm Kalım");
+    }
+    if id.contains("deathmatch") {
+        return Some("Ölüm Kalım");
+    }
+    if id.contains("gungame") || id.contains("escalation") {
+        return Some("Tırmanış");
+    }
+    if id.contains("oneforall") || id.contains("replication") {
+        return Some("Replikasyon");
+    }
+    if id.contains("snowball") {
+        return Some("Kartopu Savaşı");
+    }
+    if id.contains("range") || id.contains("poveglia") {
+        return Some("Poligon");
+    }
+    if id.contains("skirmish") || id.contains("/duel") {
+        return Some("Çatışma");
+    }
+    None
+}
+
+/// Pick the best display name for the match the player is in.
+///
+/// `carried` is the label we already resolved earlier in the same match
+/// (agent select → loading often drops the queue id).
+pub fn resolve_match_mode(
+    queue_id: Option<&str>,
+    mode_id: Option<&str>,
+    provisioning: Option<&str>,
+    carried: Option<&str>,
+) -> Option<String> {
+    if let Some(queue_id) = queue_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(label) = queue_label(queue_id) {
+            return Some(label);
+        }
+    }
+    let custom = provisioning
+        .map(str::trim)
+        .is_some_and(|p| p.eq_ignore_ascii_case("CustomGame") || p.eq_ignore_ascii_case("Custom"));
+    if custom {
+        return Some("Özel Oyun".into());
+    }
+    if let Some(mode_id) = mode_id.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(label) = mode_label_from_mode_id(mode_id) {
+            return Some(label.to_string());
+        }
+    }
+    carried
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Display name for a Riot map path. Unknown maps keep the last path segment
+/// instead of collapsing to "Unknown".
+pub fn map_label(map_id: &str) -> String {
+    let trimmed = map_id.trim();
+    if trimmed.is_empty() {
+        return "Unknown".into();
+    }
+    if let Some(name) = MAP_NAMES.get(trimmed) {
+        return (*name).to_string();
+    }
+    let seg = trimmed
+        .rsplit(['/', '\\'])
+        .find(|s| !s.is_empty())
+        .unwrap_or("Unknown");
+    if seg.eq_ignore_ascii_case("unknown") {
+        "Unknown".into()
+    } else {
+        seg.to_string()
+    }
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    #[test]
+    fn swiftplay_is_tam_gaz() {
+        assert_eq!(queue_label("swiftplay").as_deref(), Some("Tam Gaz"));
+        assert_eq!(queue_label("Swiftplay").as_deref(), Some("Tam Gaz"));
+        assert_eq!(
+            queue_label("/Game/Queues/Swiftplay").as_deref(),
+            Some("Tam Gaz")
+        );
+    }
+
+    #[test]
+    fn known_queues_use_turkish_names() {
+        assert_eq!(queue_label("competitive").as_deref(), Some("Rekabetçi"));
+        assert_eq!(queue_label("unrated").as_deref(), Some("Derecesiz"));
+        assert_eq!(queue_label("hurm").as_deref(), Some("Takım Ölüm Kalım"));
+        assert_eq!(queue_label("ggteam").as_deref(), Some("Tırmanış"));
+        assert_eq!(queue_label("customgame").as_deref(), Some("Özel Oyun"));
+        assert_eq!(queue_label("snowball").as_deref(), Some("Kartopu Savaşı"));
+    }
+
+    #[test]
+    fn unknown_queue_is_not_blank() {
+        assert_eq!(queue_label("  ").as_deref(), None);
+        assert_eq!(queue_label("futuremode").as_deref(), Some("futuremode"));
+    }
+
+    #[test]
+    fn bomb_mode_does_not_guess_competitive() {
+        assert_eq!(
+            mode_label_from_mode_id("/Game/GameModes/Bomb/BombGameMode_C"),
+            None
+        );
+        assert_eq!(
+            mode_label_from_mode_id("/Game/GameModes/Swiftplay/SwiftplayGameMode_C"),
+            Some("Tam Gaz")
+        );
+        assert_eq!(
+            mode_label_from_mode_id("/Game/GameModes/Deathmatch/DeathmatchGameMode_C"),
+            Some("Ölüm Kalım")
+        );
+    }
+
+    #[test]
+    fn resolve_prefers_queue_then_mode_then_carry() {
+        assert_eq!(
+            resolve_match_mode(Some("swiftplay"), Some("/Game/GameModes/Bomb/BombGameMode_C"), None, Some("Derecesiz"))
+                .as_deref(),
+            Some("Tam Gaz")
+        );
+        assert_eq!(
+            resolve_match_mode(None, Some("/Game/GameModes/HURM/HURMGameMode_C"), None, None)
+                .as_deref(),
+            Some("Takım Ölüm Kalım")
+        );
+        assert_eq!(
+            resolve_match_mode(None, Some("/Game/GameModes/Bomb/BombGameMode_C"), Some("CustomGame"), None)
+                .as_deref(),
+            Some("Özel Oyun")
+        );
+        assert_eq!(
+            resolve_match_mode(None, Some("/Game/GameModes/Bomb/BombGameMode_C"), None, Some("Rekabetçi"))
+                .as_deref(),
+            Some("Rekabetçi")
+        );
+        assert_eq!(
+            resolve_match_mode(None, Some("/Game/GameModes/Bomb/BombGameMode_C"), None, None),
+            None
+        );
+    }
+
+    #[test]
+    fn unknown_map_keeps_path_segment() {
+        assert_eq!(map_label("/Game/Maps/Jam/Jam"), "Lotus");
+        assert_eq!(map_label("/Game/Maps/NewMap/Cascade"), "Cascade");
+        assert_eq!(map_label(""), "Unknown");
+    }
+}
 
 /// Seasons before Ascendant rank was added (Episode 4 Act 3 and earlier)
 /// These seasons need +3 tier offset for ranks above Diamond (tier > 20)

@@ -107,6 +107,16 @@ pub struct CoregamePlayer {
 pub struct CoregameMatch {
     #[serde(rename = "MapID")]
     pub map_id: String,
+    /// Not in the public schema, but present on some shards. Empty when absent.
+    #[serde(default, rename = "QueueID")]
+    pub queue_id: String,
+    /// `/Game/GameModes/...` — distinguishes deathmatch/swiftplay, not competitive vs unrated.
+    #[serde(default, rename = "ModeID", deserialize_with = "lenient_opt")]
+    pub mode_id: Option<String>,
+    #[serde(default, rename = "ProvisioningFlow", deserialize_with = "lenient_opt")]
+    pub provisioning_flow: Option<String>,
+    #[serde(default, rename = "MatchmakingData", deserialize_with = "lenient_opt")]
+    pub matchmaking_data: Option<CoregameMatchmaking>,
     pub players: Vec<CoregamePlayerInfo>,
     /// `"IN_PROGRESS"` while the round is live. Riot flips this (and/or fills
     /// `PostGameDetails`) when the match is over, often while the player
@@ -121,6 +131,13 @@ pub struct CoregameMatch {
     pub all_muc_name: Option<String>,
     #[serde(default, rename = "TeamMUCName")]
     pub team_muc_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct CoregameMatchmaking {
+    #[serde(default, rename = "QueueID")]
+    pub queue_id: String,
 }
 
 impl CoregameMatch {
@@ -185,6 +202,20 @@ pub struct GameState {
     // Round score while ingame (from our own Riot presence). None in pregame/idle.
     pub ally_score: Option<i32>,
     pub enemy_score: Option<i32>,
+    /// Raw Riot queue id (`swiftplay`, `competitive`, ...), when known.
+    #[serde(default)]
+    pub queue_id: Option<String>,
+    /// Turkish mode label for the admin panel. The overlay keeps `mode_name`.
+    #[serde(default)]
+    pub report_mode: Option<String>,
+    /// Outside a match: "queue" while matchmaking, "custom" in a custom lobby.
+    #[serde(default)]
+    pub activity: Option<String>,
+    /// Raw party state from our own presence (`MATCHMAKING`, `DEFAULT`, ...).
+    #[serde(default)]
+    pub party_state: Option<String>,
+    #[serde(default)]
+    pub party_size: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +265,20 @@ pub struct PresencePrivate {
     pub party_owner_match_score_ally_team: Option<i32>,
     #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_score_enemy_team: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub queue_id: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub party_state: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub party_size: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub provisioning_flow: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub party_owner_provisioning_flow: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub match_map: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    pub party_owner_match_map: Option<String>,
 }
 
 /// Parsed view of *our* Riot presence (session phase + live score).
@@ -243,6 +288,10 @@ pub struct MyPresence {
     pub session_loop_state: Option<String>,
     pub ally_score: Option<i32>,
     pub enemy_score: Option<i32>,
+    pub queue_id: Option<String>,
+    pub party_state: Option<String>,
+    pub party_size: Option<i32>,
+    pub provisioning_flow: Option<String>,
 }
 
 impl MyPresence {
@@ -1066,5 +1115,50 @@ mod tests {
     fn missing_state_is_not_ended() {
         let m = parse_coregame(r#"{"MapID":"/Game/Maps/Ascent/Ascent","Players":[]}"#);
         assert!(!m.has_ended());
+        assert!(m.queue_id.is_empty());
+        assert!(m.mode_id.is_none());
+    }
+
+    #[test]
+    fn coregame_keeps_queue_and_mode_when_present() {
+        let m = parse_coregame(
+            r#"{"MapID":"/Game/Maps/Jam/Jam","Players":[],"QueueID":"swiftplay","ModeID":"/Game/GameModes/Swiftplay/SwiftplayGameMode_C","ProvisioningFlow":"Matchmaking","MatchmakingData":{"QueueID":"swiftplay"}}"#,
+        );
+        assert_eq!(m.queue_id, "swiftplay");
+        assert_eq!(
+            m.mode_id.as_deref(),
+            Some("/Game/GameModes/Swiftplay/SwiftplayGameMode_C")
+        );
+        assert_eq!(
+            m.matchmaking_data.as_ref().map(|d| d.queue_id.as_str()),
+            Some("swiftplay")
+        );
+    }
+
+    #[test]
+    fn presence_private_keeps_queue_while_ingame() {
+        let raw = r#"{
+            "sessionLoopState":"INGAME",
+            "queueId":"swiftplay",
+            "partyState":"DEFAULT",
+            "partySize":2,
+            "provisioningFlow":"Matchmaking",
+            "partyOwnerMatchScoreAllyTeam":6,
+            "partyOwnerMatchScoreEnemyTeam":4,
+            "partyOwnerMatchMap":"/Game/Maps/Jam/Jam"
+        }"#;
+        let pd: PresencePrivate = serde_json::from_str(raw).expect("presence");
+        assert_eq!(pd.queue_id.as_deref(), Some("swiftplay"));
+        assert_eq!(pd.party_state.as_deref(), Some("DEFAULT"));
+        assert_eq!(pd.party_size, Some(2));
+        assert_eq!(pd.party_owner_match_map.as_deref(), Some("/Game/Maps/Jam/Jam"));
+    }
+
+    #[test]
+    fn presence_private_ignores_unexpected_score_type() {
+        let raw = r#"{"sessionLoopState":"MENUS","queueId":"competitive","partyOwnerMatchScoreAllyTeam":"nope"}"#;
+        let pd: PresencePrivate = serde_json::from_str(raw).expect("presence");
+        assert_eq!(pd.queue_id.as_deref(), Some("competitive"));
+        assert!(pd.party_owner_match_score_ally_team.is_none());
     }
 }

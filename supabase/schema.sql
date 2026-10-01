@@ -41,9 +41,22 @@ create table if not exists public.presence (
   phase text not null,
   map_name text,
   mode_name text,
+  queue_id text,
+  party_state text,
+  party_size integer,
+  ally_score integer,
+  enemy_score integer,
+  agent text,
   session_started_at timestamptz not null,
   last_seen timestamptz not null default now()
 );
+
+alter table public.presence add column if not exists queue_id text;
+alter table public.presence add column if not exists party_state text;
+alter table public.presence add column if not exists party_size integer;
+alter table public.presence add column if not exists ally_score integer;
+alter table public.presence add column if not exists enemy_score integer;
+alter table public.presence add column if not exists agent text;
 
 create table if not exists public.sessions (
   id uuid primary key,
@@ -181,6 +194,9 @@ $$;
 revoke all on function public.match_overlay_users(text[]) from public;
 grant execute on function public.match_overlay_users(text[]) to anon, authenticated;
 
+-- Eski imza (10 argüman) yeni istemcinin ek alanlarını kabul etmez.
+drop function if exists public.upsert_presence(uuid, text, text, text, text, text, text, text, timestamptz, timestamptz);
+
 create or replace function public.upsert_presence(
   install_id uuid,
   puuid text,
@@ -191,7 +207,13 @@ create or replace function public.upsert_presence(
   map_name text,
   mode_name text,
   session_started_at timestamptz,
-  last_seen timestamptz
+  last_seen timestamptz,
+  queue_id text default null,
+  party_state text default null,
+  party_size integer default null,
+  ally_score integer default null,
+  enemy_score integer default null,
+  agent text default null
 ) returns void
 language plpgsql
 security definer
@@ -200,11 +222,14 @@ as $$
 begin
   insert into public.presence (
     install_id, puuid, riot_name, app_version, region, phase,
-    map_name, mode_name, session_started_at, last_seen
+    map_name, mode_name, queue_id, party_state, party_size,
+    ally_score, enemy_score, agent, session_started_at, last_seen
   ) values (
     upsert_presence.install_id, upsert_presence.puuid, upsert_presence.riot_name,
     upsert_presence.app_version, upsert_presence.region, upsert_presence.phase,
     upsert_presence.map_name, upsert_presence.mode_name,
+    upsert_presence.queue_id, upsert_presence.party_state, upsert_presence.party_size,
+    upsert_presence.ally_score, upsert_presence.enemy_score, upsert_presence.agent,
     upsert_presence.session_started_at, upsert_presence.last_seen
   )
   on conflict on constraint presence_pkey do update set
@@ -213,8 +238,36 @@ begin
     app_version = excluded.app_version,
     region = excluded.region,
     phase = excluded.phase,
-    map_name = excluded.map_name,
-    mode_name = excluded.mode_name,
+    -- Eski istemci maça girince mode_name'i null yazar. Ajan seçiminde
+    -- öğrenilmiş modu, hâlâ maçtayken silme.
+    map_name = case
+      when excluded.map_name is not null then excluded.map_name
+      when excluded.phase in ('ingame', 'pregame')
+           and presence.phase in ('ingame', 'pregame')
+           and presence.map_name is not null
+        then presence.map_name
+      else excluded.map_name
+    end,
+    mode_name = case
+      when excluded.mode_name is not null then excluded.mode_name
+      when excluded.phase in ('ingame', 'pregame', 'queue', 'custom')
+           and presence.phase in ('ingame', 'pregame', 'queue', 'custom')
+           and presence.mode_name is not null
+        then presence.mode_name
+      else excluded.mode_name
+    end,
+    queue_id = case
+      when excluded.queue_id is not null then excluded.queue_id
+      when excluded.phase in ('ingame', 'pregame', 'queue', 'custom')
+           and presence.queue_id is not null
+        then presence.queue_id
+      else excluded.queue_id
+    end,
+    party_state = excluded.party_state,
+    party_size = excluded.party_size,
+    ally_score = excluded.ally_score,
+    enemy_score = excluded.enemy_score,
+    agent = excluded.agent,
     session_started_at = excluded.session_started_at,
     last_seen = excluded.last_seen;
 end;
@@ -267,10 +320,10 @@ begin
 end;
 $$;
 
-revoke all on function public.upsert_presence(uuid, text, text, text, text, text, text, text, timestamptz, timestamptz) from public;
+revoke all on function public.upsert_presence(uuid, text, text, text, text, text, text, text, timestamptz, timestamptz, text, text, integer, integer, integer, text) from public;
 revoke all on function public.upsert_user(text, text, text, uuid, timestamptz) from public;
 revoke all on function public.upsert_session(uuid, uuid, timestamptz, timestamptz, text) from public;
-grant execute on function public.upsert_presence(uuid, text, text, text, text, text, text, text, timestamptz, timestamptz) to anon, authenticated;
+grant execute on function public.upsert_presence(uuid, text, text, text, text, text, text, text, timestamptz, timestamptz, text, text, integer, integer, integer, text) to anon, authenticated;
 grant execute on function public.upsert_user(text, text, text, uuid, timestamptz) to anon, authenticated;
 grant execute on function public.upsert_session(uuid, uuid, timestamptz, timestamptz, text) to anon, authenticated;
 

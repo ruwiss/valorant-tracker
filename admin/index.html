@@ -274,6 +274,8 @@
   }
   .pill.ingame { border-color: rgba(61,214,140,0.45); color: var(--ok); }
   .pill.pregame { border-color: rgba(226,177,90,0.5); color: var(--warn); }
+  .pill.queue { border-color: rgba(120,170,255,0.5); color: #9ec1ff; }
+  .pill.custom { border-color: rgba(190,150,255,0.5); color: #d2b8ff; }
   .pill.idle, .pill.paused, .pill.offline { color: var(--muted); }
 
   .pager {
@@ -492,7 +494,62 @@
     });
   }
   function phaseLabel(p) {
-    return { idle: "Menü", pregame: "Ajan seçimi", ingame: "Oyunda", paused: "Durduruldu", offline: "Kapalı" }[p] || (p || "—");
+    return {
+      idle: "Menü",
+      pregame: "Ajan seçimi",
+      ingame: "Oyunda",
+      queue: "Kuyrukta",
+      custom: "Özel lobi",
+      paused: "Durduruldu",
+      offline: "Kapalı"
+    }[p] || (p || "—");
+  }
+  function modeLabel(raw) {
+    if (!raw) return "";
+    var k = String(raw).toLowerCase().replace(/[\s_-]+/g, "");
+    var map = {
+      swiftplay: "Tam Gaz",
+      tamgaz: "Tam Gaz",
+      competitive: "Rekabetçi",
+      rekabetci: "Rekabetçi",
+      unrated: "Derecesiz",
+      normal: "Derecesiz",
+      spikerush: "Spike Hücumu",
+      deathmatch: "Ölüm Kalım",
+      ggteam: "Tırmanış",
+      escalation: "Tırmanış",
+      hurm: "Takım Ölüm Kalım",
+      teamdeathmatch: "Takım Ölüm Kalım",
+      onefa: "Replikasyon",
+      replication: "Replikasyon",
+      premier: "Premier",
+      premierteam: "Premier",
+      custom: "Özel Oyun",
+      customgame: "Özel Oyun",
+      newmap: "Yeni Harita",
+      snowball: "Kartopu Savaşı",
+      snowballfight: "Kartopu Savaşı"
+    };
+    if (map[k]) return map[k];
+    if (k.indexOf("swiftplay") !== -1 || k.indexOf("tamgaz") !== -1) return "Tam Gaz";
+    if (k.indexOf("rekabet") !== -1) return "Rekabetçi";
+    return raw;
+  }
+  function scoreText(r) {
+    if (r.phase !== "ingame") return "";
+    if (r.ally_score == null || r.enemy_score == null) return "";
+    return r.ally_score + "–" + r.enemy_score;
+  }
+  function detail(r) {
+    var bits = [];
+    var mode = modeLabel(r.mode_name);
+    if (mode) bits.push(mode);
+    if (r.map_name) bits.push(r.map_name);
+    var score = scoreText(r);
+    if (score) bits.push(score);
+    if (r.agent) bits.push(r.agent);
+    if (r.party_size) bits.push(r.party_size + " kişi");
+    return bits.length ? bits.join(" · ") : "—";
   }
   function pill(p) {
     var k = p || "offline";
@@ -615,7 +672,7 @@
     var packed = await Promise.all([
       supabase.from("sessions").select("started_at").gte("started_at", today).limit(1000),
       supabase.from("users").select("app_version").gte("last_seen", ago30).limit(1000),
-      supabase.from("presence").select("riot_name,phase,map_name,mode_name,last_seen,app_version").gte("last_seen", liveSince).order("last_seen", { ascending: false }).limit(8),
+      supabase.from("presence").select("riot_name,phase,map_name,mode_name,queue_id,ally_score,enemy_score,agent,party_size,last_seen,app_version,puuid,install_id").gte("last_seen", liveSince).order("last_seen", { ascending: false }).limit(8),
       supabase.from("sessions").select("install_id,started_at,app_version").order("started_at", { ascending: false }).limit(8)
     ]);
     var hours = new Array(24).fill(0);
@@ -674,12 +731,12 @@
 
   function tableLive(rows, compact) {
     if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
-    return '<table><thead><tr><th class="nosort">Oyuncu</th><th class="nosort">Durum</th>' +
-      (compact ? "" : '<th class="nosort">Harita</th><th class="nosort">Mod</th><th class="nosort">Sürüm</th>') +
+    return '<table><thead><tr><th class="nosort">Oyuncu</th><th class="nosort">Durum</th><th class="nosort">Ne yapıyor</th>' +
+      (compact ? "" : '<th class="nosort">Sürüm</th>') +
       '<th class="nosort">Görülme</th></tr></thead><tbody>' +
       rows.map(function (r) {
-        return '<tr class="clickable" data-puuid="' + esc(r.puuid || "") + '" data-install="' + esc(r.install_id || "") + '"><td>' + esc(r.riot_name || "İsimsiz") + "</td><td>" + pill(r.phase) + "</td>" +
-          (compact ? "" : "<td>" + esc(r.map_name || "—") + "</td><td>" + esc(r.mode_name || "—") + "</td><td class=\"mono\">" + esc(r.app_version || "—") + "</td>") +
+        return '<tr class="clickable" data-puuid="' + esc(r.puuid || "") + '" data-install="' + esc(r.install_id || "") + '"><td>' + esc(r.riot_name || "İsimsiz") + "</td><td>" + pill(r.phase) + "</td><td>" + esc(detail(r)) + "</td>" +
+          (compact ? "" : '<td class="mono">' + esc(r.app_version || "—") + "</td>") +
           '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
       }).join("") + "</tbody></table>";
   }
@@ -705,7 +762,7 @@
       (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
       '<div class="toolbar">' +
         '<input class="grow" id="local-q" placeholder="İsim veya PUUID" value="' + esc(state.q) + '">' +
-        '<select id="phase">' + ["all","ingame","pregame","idle","paused","offline"].map(function (p) {
+        '<select id="phase">' + ["all","ingame","pregame","queue","custom","idle","paused","offline"].map(function (p) {
           return '<option value="' + p + '"' + (state.phase === p ? " selected" : "") + ">" + (p === "all" ? "Tüm durumlar" : phaseLabel(p)) + "</option>";
         }).join("") + "</select>" +
         '<select id="version"><option value="all">Tüm sürümler</option>' + Object.keys(versions).map(function (v) {
@@ -857,8 +914,13 @@
       '<header><h3>' + esc(name) + '</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>' +
       '<div class="kv">' +
         row("Durum", presence.data ? pill(presence.data.phase) : "—") +
+        row("Ne yapıyor", esc(presence.data ? detail(presence.data) : "—")) +
         row("Harita", esc((presence.data && presence.data.map_name) || "—")) +
-        row("Mod", esc((presence.data && presence.data.mode_name) || "—")) +
+        row("Mod", esc(modeLabel(presence.data && presence.data.mode_name) || "—")) +
+        row("Kuyruk", esc((presence.data && presence.data.queue_id) || "—")) +
+        row("Skor", esc(presence.data ? (scoreText(presence.data) || "—") : "—")) +
+        row("Ajan", esc((presence.data && presence.data.agent) || "—")) +
+        row("Parti", esc(presence.data && presence.data.party_size ? presence.data.party_size + " kişi" : "—")) +
         row("Sürüm", esc((user && user.app_version) || "—")) +
         row("Bölge", esc((presence.data && presence.data.region) || "—")) +
         row("İlk", esc(fmt(user && user.first_seen))) +

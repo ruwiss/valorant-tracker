@@ -1,6 +1,6 @@
 use crate::api::types::*;
 use crate::api::{MatchProbe, RemoteResult};
-use crate::constants::{AGENTS, MAP_NAMES, QUEUE_NAMES};
+use crate::constants::{resolve_match_mode, AGENTS, MAP_NAMES, QUEUE_NAMES};
 use crate::state::{AppState, EncounterPlayer};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -507,6 +507,87 @@ fn is_practice_range_map(map_id: &str) -> bool {
 
 const RANGE_MAP_NAME: &str = "Poligon";
 
+fn first_nonempty<'a>(vals: impl IntoIterator<Item = Option<&'a str>>) -> Option<&'a str> {
+    vals.into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+}
+
+fn menu_activity(party_state: Option<&str>) -> Option<&'static str> {
+    let state = party_state?.trim();
+    if state.eq_ignore_ascii_case("MATCHMAKING")
+        || state.eq_ignore_ascii_case("MATCHMADE_GAME_STARTING")
+    {
+        return Some("queue");
+    }
+    if state.to_ascii_uppercase().starts_with("CUSTOM_GAME") {
+        return Some("custom");
+    }
+    None
+}
+
+/// Mode we already showed for this same match. Agent select and the first
+/// ingame tick often disagree on match id, so a pregame label is kept until
+/// we actually leave the match.
+fn carried_mode(state: &AppState, match_id: &str) -> Option<String> {
+    let cached = state.last_full_game_state.read();
+    let gs = cached.as_ref()?;
+    let mode = gs
+        .report_mode
+        .clone()
+        .or_else(|| gs.mode_name.clone())
+        .filter(|m| !m.trim().is_empty())?;
+    let same_match = gs.match_id.as_deref() == Some(match_id);
+    if gs.state == "pregame" || (gs.state == "ingame" && same_match) {
+        Some(mode)
+    } else {
+        None
+    }
+}
+
+fn carried_queue(state: &AppState, match_id: &str) -> Option<String> {
+    let cached = state.last_full_game_state.read();
+    let gs = cached.as_ref()?;
+    let queue = gs.queue_id.clone().filter(|q| !q.trim().is_empty())?;
+    let same_match = gs.match_id.as_deref() == Some(match_id);
+    if gs.state == "pregame" || (gs.state == "ingame" && same_match) {
+        Some(queue)
+    } else {
+        None
+    }
+}
+
+fn resolve_live_mode(
+    state: &AppState,
+    match_id: &str,
+    presence: Option<&crate::api::types::MyPresence>,
+    match_queue: Option<&str>,
+    mode_id: Option<&str>,
+    provisioning: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let carried_q = carried_queue(state, match_id);
+    let queue = first_nonempty([
+        match_queue,
+        presence.and_then(|p| p.queue_id.as_deref()),
+        carried_q.as_deref(),
+    ]);
+    let flow = first_nonempty([
+        provisioning,
+        presence.and_then(|p| p.provisioning_flow.as_deref()),
+    ]);
+    let label = resolve_match_mode(
+        queue,
+        mode_id,
+        flow,
+        carried_mode(state, match_id).as_deref(),
+    );
+    let raw = queue
+        .filter(|q| crate::constants::queue_label(q).is_some())
+        .map(|q| q.to_string());
+    (label, raw)
+}
+
 fn is_range_like_state(gs: &GameState) -> bool {
     let map = gs.map_name.as_deref().unwrap_or("");
     let map_l = map.to_ascii_lowercase();
@@ -753,6 +834,14 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                     .get(match_data.map_id.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Unknown".into());
+                let (report_mode, queue_id) = resolve_live_mode(
+                    state,
+                    &match_id,
+                    my_presence.as_ref(),
+                    Some(match_data.queue_id.as_str()),
+                    None,
+                    None,
+                );
                 let mode_name = QUEUE_NAMES
                     .get(match_data.queue_id.as_str())
                     .map(|s| s.to_string())
@@ -852,6 +941,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         mode_name: Some(mode_name),
                         side: Some(side.into()),
                         allies,
+                        queue_id,
+                        report_mode,
+                        party_state: my_presence.as_ref().and_then(|p| p.party_state.clone()),
+                        party_size: my_presence.as_ref().and_then(|p| p.party_size),
                         ..Default::default()
                     };
                     *state.last_full_game_state.write() = Some(gs.clone());
@@ -944,6 +1037,30 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         .get(match_data.map_id.as_str())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "Unknown".into());
+                    let match_queue = first_nonempty([
+                        Some(match_data.queue_id.as_str()).filter(|s| !s.is_empty()),
+                        match_data
+                            .matchmaking_data
+                            .as_ref()
+                            .map(|d| d.queue_id.as_str())
+                            .filter(|s| !s.is_empty()),
+                    ]);
+                    let (report_mode, queue_id) = resolve_live_mode(
+                        state,
+                        &match_id,
+                        my_presence.as_ref(),
+                        match_queue,
+                        match_data.mode_id.as_deref(),
+                        match_data.provisioning_flow.as_deref(),
+                    );
+                    if report_mode.is_none() {
+                        tracing::info!(
+                            "[get_game_state] ingame mode unresolved queue={:?} mode_id={:?} flow={:?}",
+                            match_queue,
+                            match_data.mode_id,
+                            match_data.provisioning_flow
+                        );
+                    }
 
                     let my_puuid = api.puuid.read().clone();
                     let puuids: Vec<String> = match_data
@@ -1068,6 +1185,11 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         enemies,
                         ally_score,
                         enemy_score,
+                        queue_id,
+                        report_mode,
+                        activity: None,
+                        party_state: my_presence.as_ref().and_then(|p| p.party_state.clone()),
+                        party_size: my_presence.as_ref().and_then(|p| p.party_size),
                     };
                     if is_range_like_state(&gs) {
                         *state.current_match_seen_ingame.write() = false;
@@ -1228,8 +1350,29 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     *state.last_full_game_state.write() = None;
     crate::chat_text::clear_roster();
 
+    let activity = menu_activity(my_presence.as_ref().and_then(|p| p.party_state.as_deref()));
+    let queue_raw = my_presence.as_ref().and_then(|p| p.queue_id.clone());
+    let report_mode = match activity {
+        Some("custom") => Some(
+            resolve_match_mode(queue_raw.as_deref(), None, Some("CustomGame"), None)
+                .unwrap_or_else(|| "Özel Oyun".into()),
+        ),
+        Some("queue") => resolve_match_mode(
+            queue_raw.as_deref(),
+            None,
+            my_presence.as_ref().and_then(|p| p.provisioning_flow.as_deref()),
+            None,
+        ),
+        _ => None,
+    };
+
     Ok(GameState {
         state: "idle".into(),
+        report_mode,
+        queue_id: queue_raw.filter(|_| activity.is_some()),
+        activity: activity.map(|s| s.to_string()),
+        party_state: my_presence.as_ref().and_then(|p| p.party_state.clone()),
+        party_size: my_presence.as_ref().and_then(|p| p.party_size),
         ..Default::default()
     })
 }
@@ -1418,6 +1561,7 @@ async fn build_range_game_state(
         enemies: vec![],
         ally_score: None,
         enemy_score: None,
+        ..Default::default()
     }
 }
 

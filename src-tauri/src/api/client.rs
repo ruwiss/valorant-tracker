@@ -76,6 +76,17 @@ pub enum MatchProbe {
     Uncertain,
 }
 
+fn nonempty_text(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 impl ValorantAPI {
     pub fn new() -> Self {
         // 1. Standard client for Local API
@@ -1525,6 +1536,8 @@ impl ValorantAPI {
                                     .session_loop_state
                                     .as_deref()
                                     .is_some_and(|s| s.eq_ignore_ascii_case("INGAME"));
+                                let flow = nonempty_text(pd.provisioning_flow)
+                                    .or_else(|| nonempty_text(pd.party_owner_provisioning_flow));
                                 return Some(MyPresence {
                                     session_loop_state: pd.session_loop_state,
                                     ally_score: if ingame {
@@ -1537,6 +1550,10 @@ impl ValorantAPI {
                                     } else {
                                         None
                                     },
+                                    queue_id: nonempty_text(pd.queue_id),
+                                    party_state: nonempty_text(pd.party_state),
+                                    party_size: pd.party_size.filter(|n| *n > 0),
+                                    provisioning_flow: flow,
                                 });
                             }
                         }
