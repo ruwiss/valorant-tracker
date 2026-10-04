@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
-import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
+import { register, unregister, type ShortcutEvent } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { availableMonitors } from "@tauri-apps/api/window";
 import { invokeCommand } from "../utils/ipc";
@@ -219,6 +219,16 @@ async function revealWindow(
   }
 }
 
+/**
+ * The plugin fires the handler on both key-down and key-up. Toggling on both
+ * re-shows the window right after a fast hide (floating + tray), so react to
+ * key-down only.
+ */
+function onHotkey(event: ShortcutEvent) {
+  if (event.state !== "Pressed") return;
+  void useSettingsStore.getState().toggleWindow();
+}
+
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
@@ -295,16 +305,14 @@ export const useSettingsStore = create<SettingsStore>()(
           } catch {}
 
           // Register new hotkey
-          const { toggleWindow } = get();
-          await register(newKey, toggleWindow);
+          await register(newKey, onHotkey);
           set({ hotkey: newKey, isHotkeyPaused: false });
           return true;
         } catch (error) {
           console.error("Failed to register hotkey:", error);
           // Restore old hotkey
           try {
-            const { toggleWindow } = get();
-            await register(currentKey, toggleWindow);
+            await register(currentKey, onHotkey);
           } catch {}
           set({ isHotkeyPaused: false });
           return false;
@@ -322,10 +330,10 @@ export const useSettingsStore = create<SettingsStore>()(
         if (isRegisteringHotkey) return;
         isRegisteringHotkey = true;
         try {
-          const { hotkey, toggleWindow } = get();
+          const { hotkey } = get();
           // Always try to unregister first to clear any stale state
           await unregister(hotkey).catch(() => {});
-          await register(hotkey, toggleWindow);
+          await register(hotkey, onHotkey);
         } catch (error) {
           console.error("Failed to register hotkey:", error);
         } finally {
@@ -353,8 +361,7 @@ export const useSettingsStore = create<SettingsStore>()(
           // Always try to unregister first
           await unregister(hotkey).catch(() => {});
 
-          const { toggleWindow } = get();
-          await register(hotkey, toggleWindow);
+          await register(hotkey, onHotkey);
           set({ isHotkeyPaused: false });
         } catch (error) {
           console.error("Failed to resume hotkey:", error);
@@ -395,6 +402,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
         try {
           const win = getCurrentWindow();
+          if (!(await win.isVisible())) return;
           const isMaximized = await win.isMaximized();
           const isMinimized = await win.isMinimized();
 
@@ -416,6 +424,7 @@ export const useSettingsStore = create<SettingsStore>()(
         isToggling = true;
         try {
           const win = getCurrentWindow();
+          await get().saveCurrentPosition();
           await concealWindow(win, get());
           set({ isWindowVisible: false });
           // Keep a real player/settings/shop pane; only drop a hollow expanded frame.
@@ -437,6 +446,7 @@ export const useSettingsStore = create<SettingsStore>()(
           const shown = await isOverlayShown(win);
 
           if (shown) {
+            await get().saveCurrentPosition();
             await concealWindow(win, get());
             set({ isWindowVisible: false });
             await usePanelStore.getState().syncWindowToState();
@@ -444,6 +454,11 @@ export const useSettingsStore = create<SettingsStore>()(
             // Heal width/state before sliding in — empty expanded chrome is a hide/show bug.
             await usePanelStore.getState().syncWindowToState();
             const minimized = await win.isMinimized();
+            // Free mode reopens where the user last dragged it.
+            const { windowPosition } = get();
+            if (windowStyle === "free" && !minimized && windowPosition) {
+              await win.setPosition(new PhysicalPosition(windowPosition.x, windowPosition.y));
+            }
             await revealWindow(win, windowStyle, minimized);
             set({ isWindowVisible: true });
           }
@@ -523,3 +538,14 @@ export const useSettingsStore = create<SettingsStore>()(
     }
   )
 );
+
+// Dev HMR re-creates this store, but the native hotkey stays bound to the old
+// module's handler (stale settings, e.g. still "docked"). Rebind it here.
+if (import.meta.hot) {
+  if (import.meta.hot.data.hotkeyBound) {
+    void useSettingsStore.getState().registerHotkey();
+  }
+  import.meta.hot.dispose((data) => {
+    data.hotkeyBound = true;
+  });
+}

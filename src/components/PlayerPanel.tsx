@@ -1377,14 +1377,14 @@ export function PlayerPanel() {
 								{/* Translate Button */}
 								<button
 									onClick={handleTranslate}
-									className={`p-1 rounded-full transition-colors ${
+									className={`p-1 rounded-full border transition-colors ${
 										isTranslating
-											? "text-accent-cyan cursor-wait"
+											? "text-accent-cyan border-accent-cyan/30 bg-accent-cyan/10 cursor-wait"
 											: translatedName === "Hata"
-												? "text-accent-red hover:bg-card-hover/60"
+												? "text-accent-red border-accent-red/30 bg-accent-red/10 hover:bg-accent-red/20"
 												: translateDone
-													? "text-success cursor-default"
-													: "text-dim hover:text-accent-cyan hover:bg-card-hover/60"
+													? "text-success border-success/30 bg-success/10 cursor-default"
+													: "text-accent-cyan/90 border-accent-cyan/30 bg-accent-cyan/10 hover:text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/60"
 									}`}
 									title={
 										translatedName === "Hata"
@@ -1491,7 +1491,7 @@ export function PlayerPanel() {
 											className="flex items-center gap-1"
 											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier, locale)}`}
 										>
-											<span className="text-[8px] font-bold text-dim uppercase tracking-wider">
+											<span className="text-[9px] font-extrabold text-primary/85 uppercase tracking-wider">
 												{t("player.peak")}
 											</span>
 											<span
@@ -1541,7 +1541,8 @@ export function PlayerPanel() {
 											{t("weapons.primary")}
 										</span>
 									</div>
-									<div className="grid grid-cols-2 gap-1.5">
+									{/* An odd last card sits in the right column. */}
+									<div className="grid grid-cols-2 gap-1.5 [&>*:last-child:nth-child(odd)]:col-start-2">
 										{WEAPON_CATEGORIES.primary.map((id) =>
 											renderWeaponCard(id, true),
 										)}

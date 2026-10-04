@@ -81,9 +81,19 @@ export function useGameLoop() {
         await sync();
       });
       const unlistenResize = await win.onResized(sync);
+      // Remember free-mode drags (debounced; saveCurrentPosition skips docked).
+      let moveTimer: number | undefined;
+      const unlistenMove = await win.onMoved(() => {
+        window.clearTimeout(moveTimer);
+        moveTimer = window.setTimeout(() => {
+          void useSettingsStore.getState().saveCurrentPosition();
+        }, 400);
+      });
       return () => {
+        window.clearTimeout(moveTimer);
         unlistenFocus();
         unlistenResize();
+        unlistenMove();
       };
     };
 
