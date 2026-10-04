@@ -927,6 +927,21 @@ alter table public.presence replica identity default;
 alter table public.users replica identity default;
 alter table public.sessions replica identity default;
 
+-- Sabit search_path (Supabase güvenlik denetimi: function_search_path_mutable).
+alter function public.keep_first_seen() set search_path = public;
+alter function public.tl_fix(text) set search_path = public;
+alter function public.tl_text(text, integer) set search_path = public;
+alter function public.tl_int(integer, integer, integer) set search_path = public;
+alter function public.tl_json_int(jsonb, integer, integer) set search_path = public;
+alter function public.tl_puuid(text) set search_path = public;
+alter function public.tl_phase(text) set search_path = public;
+alter function public.tl_uuid(text) set search_path = public;
+alter function public.tl_like(text) set search_path = public;
+alter function public.tl_write_presence(uuid, uuid, text, text, text, text, text, text, text, text, text, integer, integer, integer, text) set search_path = public;
+alter function public.tl_write_user(text, text, text, uuid) set search_path = public;
+alter function public.tl_write_session(uuid, uuid, text) set search_path = public;
+alter function public.tl_prune() set search_path = public;
+
 -- ------------------------------------------------------------
 -- Veri onarımı (tekrar çalıştırmak zararsız)
 -- ------------------------------------------------------------
