@@ -11,6 +11,7 @@ import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { Check, ChevronDown, Clock, UserPlus } from "lucide-react";
 
 function parseRiotId(name: string): { gameName: string; gameTag: string } | null {
   const hash = name.lastIndexOf("#");
@@ -226,22 +227,13 @@ function LastMatchPlayerRow({
               style={{ width: 18, height: 18 }}
             >
               {isFriend ? (
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                <Check className="w-3 h-3" strokeWidth={2.4} />
               ) : isPending ? (
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="8" />
-                  <path d="M12 8v4l2.5 1.5" strokeLinecap="round" />
-                </svg>
+                <Clock className="w-3 h-3" />
               ) : adding ? (
                 <span className="block w-2.5 h-2.5 rounded-full border border-current border-t-transparent animate-spin" />
               ) : (
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
-                  <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" strokeLinecap="round" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M19 8v6M16 11h6" strokeLinecap="round" />
-                </svg>
+                <UserPlus className="w-3 h-3" />
               )}
             </button>
           ) : null}
@@ -316,7 +308,7 @@ export function LastMatchCard() {
           onClick={() => void fetchLastMatch(true)}
           className="shrink-0 rounded-lg border border-white/[0.04] bg-black/20 px-2.5 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
         >
-          <span className="text-[9px] font-black uppercase tracking-[0.14em] text-dim mr-2">
+          <span className="section-title text-secondary mr-2">
             {t("lastMatch.title")}
           </span>
           <span className="text-[10px] text-secondary">{t("lastMatch.error")}</span>
@@ -393,7 +385,7 @@ export function LastMatchCard() {
               </span>
               <span className="text-[9px] font-medium text-dim truncate">{mode}</span>
               {surrendered && (
-                <span className="text-[8px] font-bold uppercase tracking-wider text-warning/70">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-warning/70">
                   {t("lastMatch.surrender")}
                 </span>
               )}
@@ -413,7 +405,7 @@ export function LastMatchCard() {
           <div className="shrink-0 text-right leading-none">
             {match.is_ffa ? (
               <>
-                <div className={`text-[8px] font-bold uppercase tracking-wider ${resultColor}`}>
+                <div className={`text-[9px] font-bold uppercase tracking-wider ${resultColor}`}>
                   {match.placement ? `#${match.placement}` : t(resultKey)}
                 </div>
                 <div className="mt-0.5 text-[13px] font-bold tabular-nums text-primary/70">
@@ -422,7 +414,7 @@ export function LastMatchCard() {
               </>
             ) : (
               <>
-                <div className={`text-[8px] font-bold uppercase tracking-[0.12em] ${resultColor}`}>
+                <div className={`text-[9px] font-bold uppercase tracking-[0.12em] ${resultColor}`}>
                   {t(resultKey)}
                 </div>
                 <div className="mt-0.5 text-[13px] font-bold tabular-nums tracking-tight text-primary/70">
@@ -434,15 +426,7 @@ export function LastMatchCard() {
             )}
           </div>
 
-          <svg
-            className={`w-3 h-3 shrink-0 text-dim/50 transition-transform ${expanded ? "rotate-180" : ""}`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <ChevronDown className={`w-3 h-3 shrink-0 text-dim/50 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2.5} />
         </div>
       </button>
 

@@ -6,6 +6,34 @@ import { usePanelStore } from "../../stores/panelStore";
 import { useI18n } from "../../lib/i18n";
 import type { Friend } from "../../lib/types";
 import clsx from "clsx";
+import { ArrowDown, ChevronDown, IdCard, MessageSquare, MessagesSquare, Minus, Search, SendHorizontal, Users } from "lucide-react";
+
+/** Stable per-name hue so each friend keeps the same avatar colour. */
+function avatarHue(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return h;
+}
+
+function FriendAvatar({ name, online }: { name: string; online: boolean }) {
+  const hue = avatarHue(name || "?");
+  return (
+    <div className="relative shrink-0">
+      <div
+        className={clsx("w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold uppercase", !online && "grayscale-[0.6] opacity-70")}
+        style={{ background: `hsl(${hue} 45% 22%)`, color: `hsl(${hue} 80% 78%)` }}
+      >
+        {(name || "?").charAt(0)}
+      </div>
+      <span
+        className={clsx(
+          "absolute -bottom-px -right-px w-2.5 h-2.5 rounded-full ring-2 ring-[#0f1923]",
+          online ? "bg-success" : "bg-[#55606d]",
+        )}
+      />
+    </div>
+  );
+}
 
 export function ChatPanel() {
   const {
@@ -279,6 +307,26 @@ export function ChatPanel() {
     return friends.filter((f) => f.game_name.toLowerCase().includes(lower) || f.game_tag.toLowerCase().includes(lower));
   }, [friends, friendSearch]);
 
+  // Online first, then alphabetical inside each group.
+  const friendGroups = useMemo(() => {
+    const byName = (a: Friend, b: Friend) => a.game_name.localeCompare(b.game_name, undefined, { sensitivity: "base" });
+    return [
+      { key: "online", label: t("chat.online"), items: filteredFriends.filter((f) => f.activePlatform).sort(byName) },
+      { key: "offline", label: t("chat.offline"), items: filteredFriends.filter((f) => !f.activePlatform).sort(byName) },
+    ].filter((g) => g.items.length > 0);
+  }, [filteredFriends, t]);
+
+  const lastSeen = (ts: number | null): string => {
+    if (!ts) return "";
+    const ms = ts < 1e12 ? ts * 1000 : ts;
+    const mins = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+    if (mins < 1) return t("lastMatch.justNow");
+    if (mins < 60) return t("lastMatch.minutesAgo", { n: mins });
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return t("lastMatch.hoursAgo", { n: hours });
+    return t("lastMatch.daysAgo", { n: Math.floor(hours / 24) });
+  };
+
   const filteredOutgoing = useMemo(() => {
     if (!friendSearch) return outgoingRequests;
     const lower = friendSearch.toLowerCase();
@@ -344,16 +392,12 @@ export function ChatPanel() {
           <div className="flex items-center gap-1">
             {/* Minimize Button */}
             {/* Minimize Button */}
-            <button onClick={hideWindow} className="text-dim hover:text-white transition-colors p-2 hover:bg-white/5 rounded-lg group cursor-pointer" title="Minimize & Hide">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-              </svg>
+            <button onClick={hideWindow} className="text-dim hover:text-white transition-colors p-2 hover:bg-white/5 rounded-lg group cursor-pointer" title={t("chat.hide")}>
+              <Minus className="w-4 h-4" />
             </button>
             {/* Close Button */}
             <button onClick={() => setIsOpen(false)} className="text-dim hover:text-accent-red transition-colors p-2 hover:bg-accent-red/10 rounded-lg group cursor-pointer" title={t("chat.close")}>
-              <svg className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+              <ChevronDown className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
             </button>
           </div>
         </div>
@@ -381,17 +425,15 @@ export function ChatPanel() {
             <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
               {/* Search Bar */}
               <div className="relative shrink-0 group">
-                <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-dim group-focus-within:text-accent-red transition-colors">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
+                <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-secondary group-focus-within:text-accent-red transition-colors">
+                  <Search className="w-4 h-4" />
                 </div>
                 <input
                   type="text"
                   value={friendSearch}
                   onChange={(e) => setFriendSearch(e.target.value)}
                   placeholder={t("chat.search_placeholder")}
-                  className="w-full bg-black/40 border border-white/10 rounded-sm py-2.5 pl-10 pr-4 text-xs font-bold text-white placeholder-dim/50 focus:outline-none focus:border-accent-red/50 transition-all uppercase tracking-wider"
+                  className="w-full bg-black/30 border border-white/[0.08] rounded-md py-2 pl-9 pr-3 text-xs font-medium text-white placeholder:text-secondary/60 focus:outline-none focus:border-accent-red/50 transition-colors"
                 />
               </div>
 
@@ -400,7 +442,7 @@ export function ChatPanel() {
                 {filteredOutgoing.length > 0 && (
                   <div className="mb-3">
                     <div className="flex items-center justify-between px-1 mb-2">
-                      <span className="text-[9px] font-bold tracking-widest text-dim uppercase">
+                      <span className="section-title text-secondary">
                         {t("chat.outgoing_requests")}
                       </span>
                       <span className="text-[9px] font-mono text-dim/70">{filteredOutgoing.length}</span>
@@ -411,15 +453,12 @@ export function ChatPanel() {
                         return (
                           <div
                             key={req.puuid}
-                            className="relative w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-white/5 bg-white/[0.02] overflow-hidden"
+                            className="w-full h-12 flex items-center gap-3 px-2 rounded-md"
                           >
-                            <div className="w-1 h-full absolute left-0 top-0 bg-accent-gold/60" />
-                            <div className="w-8 h-8 rounded-sm bg-white/10 flex items-center justify-center text-[10px] font-bold text-dim shrink-0">
-                              {(req.game_name || "?").charAt(0)}
-                            </div>
+                            <FriendAvatar name={req.game_name} online={false} />
                             <div className="flex flex-col items-start gap-0.5 overflow-hidden flex-1 min-w-0">
                               <div className="flex items-baseline gap-1.5 w-full">
-                                <span className="text-sm font-bold text-white truncate max-w-[160px]">
+                                <span className="text-[13px] font-semibold text-white truncate max-w-[160px]">
                                   {req.game_name}
                                 </span>
                                 <span className="text-[10px] text-dim font-mono">#{req.game_tag}</span>
@@ -432,7 +471,7 @@ export function ChatPanel() {
                               type="button"
                               disabled={busy}
                               onClick={(e) => handleCancelRequest(e, req.puuid)}
-                              className="shrink-0 px-2.5 py-1.5 rounded-sm border border-accent-red/40 bg-accent-red/15 text-[9px] font-bold uppercase tracking-wider text-white hover:bg-accent-red/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              className="shrink-0 px-2.5 h-7 rounded-md border border-accent-red/40 bg-accent-red/10 text-[10px] font-semibold text-accent-red hover:text-white hover:bg-accent-red/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                               {t("chat.cancel_request")}
                             </button>
@@ -443,63 +482,67 @@ export function ChatPanel() {
                     {filteredFriends.length > 0 && <div className="mt-3 mb-1 h-px bg-white/5" />}
                   </div>
                 )}
-                {filteredFriends.map((friend) => (
-                  <div
-                    key={friend.puuid}
-                    role="button"
-                    tabIndex={0}
-                    title={t("chat.sendMessage")}
-                    onClick={() => void handleFriendClick(friend.puuid)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        void handleFriendClick(friend.puuid);
-                      }
-                    }}
-                    className="w-full h-14 flex items-center gap-3 px-3 rounded-sm border border-transparent hover:border-white/10 hover:bg-white/5 transition-all group relative overflow-hidden cursor-pointer"
-                  >
-                    {/* Status Line */}
-                    <div className={clsx("w-1 h-full absolute left-0 top-0 transition-colors", !friend.activePlatform ? "bg-dim/20" : "bg-accent-cyan shadow-[0_0_8px_cyan]")} />
-
-                    {/* Avatar Placeholder */}
-                    <div className="w-8 h-8 rounded-sm bg-white/10 flex items-center justify-center text-[10px] font-bold text-dim group-hover:text-white transition-colors relative z-10 shrink-0">{friend.game_name.charAt(0)}</div>
-
-                    {/* Info */}
-                    <div className="flex flex-col items-start gap-0.5 relative z-10 overflow-hidden">
-                      <div className="flex items-baseline gap-1.5 w-full">
-                        <span className="text-sm font-bold text-white truncate max-w-[180px] group-hover:text-accent-red transition-colors">{friend.game_name}</span>
-                        <span className="text-[10px] text-dim font-mono">#{friend.game_tag}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[9px] uppercase tracking-wider font-medium">
-                        <span className={clsx(!friend.activePlatform ? "text-dim" : "text-accent-cyan")}>{!friend.activePlatform ? "OFFLINE" : "ONLINE"}</span>
-                        {friend.note && <span className="text-dim/50 truncate">• {friend.note}</span>}
-                      </div>
+                {friendGroups.map((group) => (
+                  <div key={group.key} className="mb-2">
+                    <div className="flex items-center gap-1.5 px-2 pt-2 pb-1">
+                      <span className="section-title text-secondary">{group.label}</span>
+                      <span className="text-[10px] font-semibold text-dim">{group.items.length}</span>
                     </div>
+                    {group.items.map((friend) => {
+                      const online = !!friend.activePlatform;
+                      const seen = online ? "" : lastSeen(friend.last_online_ts);
+                      return (
+                        <div
+                          key={friend.puuid}
+                          role="button"
+                          tabIndex={0}
+                          title={t("chat.sendMessage")}
+                          onClick={() => void handleFriendClick(friend.puuid)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              void handleFriendClick(friend.puuid);
+                            }
+                          }}
+                          className="w-full h-12 flex items-center gap-3 px-2 rounded-md hover:bg-white/[0.05] transition-colors group cursor-pointer"
+                        >
+                          <FriendAvatar name={friend.game_name} online={online} />
 
-                    <button
-                      type="button"
-                      title={t("chat.viewProfile")}
-                      onClick={(e) => openFriendProfile(e, friend)}
-                      className="ml-auto relative z-10 p-2 rounded-sm border border-white/10 bg-white/5 text-dim hover:text-accent-cyan hover:border-accent-cyan/40 hover:bg-accent-cyan/10 transition-all"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="9" />
-                        <path strokeLinecap="round" d="M12 11v5M12 8h.01" />
-                      </svg>
-                    </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline gap-1 min-w-0">
+                              <span className={clsx("text-[13px] font-semibold truncate", online ? "text-white" : "text-primary/70")}>{friend.game_name}</span>
+                              <span className="text-[10px] text-dim shrink-0">#{friend.game_tag}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] min-w-0">
+                              <span className={clsx("shrink-0", online ? "text-success" : "text-secondary/70")}>
+                                {online ? t("chat.online") : seen || t("chat.offline")}
+                              </span>
+                              {friend.note && <span className="text-secondary/60 truncate">· {friend.note}</span>}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
+                            <span className="icon-btn" aria-hidden>
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </span>
+                            <button
+                              type="button"
+                              title={t("chat.viewProfile")}
+                              onClick={(e) => openFriendProfile(e, friend)}
+                              className="icon-btn hover:text-accent-cyan!"
+                            >
+                              <IdCard className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
                 {filteredFriends.length === 0 && filteredOutgoing.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 opacity-80 animate-fade-in px-8">
                     <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/10 shadow-[0_0_20px_rgba(255,255,255,0.05)]">
-                      <svg className="w-8 h-8 text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1.5}
-                          d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-                        />
-                      </svg>
+                      <Users className="w-8 h-8 text-dim" strokeWidth={1.5} />
                     </div>
 
                     <h3 className="text-sm font-bold text-white tracking-widest uppercase mb-2">{t("chat.no_agents")}</h3>
@@ -581,9 +624,7 @@ export function ChatPanel() {
 
                 {messages.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center opacity-20">
-                    <svg className="w-16 h-16 mb-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                    </svg>
+                    <MessagesSquare className="w-16 h-16 mb-4 text-white" strokeWidth={1} />
                     <span className="font-display tracking-[0.2em] text-xs">{t("chat.no_messages")}</span>
                   </div>
                 ) : (
@@ -652,9 +693,7 @@ export function ChatPanel() {
                   className="absolute bottom-24 right-6 z-20 w-8 h-8 rounded-full bg-accent-red text-white shadow-lg flex items-center justify-center animate-bounce-in hover:bg-accent-red/90 transition-all active:scale-95"
                   title={t("chat.scroll_down")}
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                  </svg>
+                  <ArrowDown className="w-5 h-5" />
                 </button>
               )}
 
@@ -679,9 +718,7 @@ export function ChatPanel() {
                   disabled={!inputValue.trim()}
                   className={clsx("w-13 rounded-sm flex items-center justify-center transition-all border", inputValue.trim() ? "bg-accent-red/20 border-accent-red/50 text-accent-red shadow-[0_0_15px_rgba(255,70,85,0.2)] hover:bg-accent-red hover:text-white" : "bg-white/5 border-white/10 text-dim")}
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                  </svg>
+                  <SendHorizontal className="w-5 h-5" />
                 </button>
               </form>
             </>

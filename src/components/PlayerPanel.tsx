@@ -10,6 +10,7 @@ import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users } from "lucide-react";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
 let regularsCooldownUntil = 0;
@@ -743,9 +744,7 @@ export function PlayerPanel() {
 						onClick={() => setPlayerSubView("skins")}
 						className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-dim hover:bg-card/60 hover:text-primary transition-colors"
 					>
-						<svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-							<path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-						</svg>
+						<ChevronLeft className="h-3 w-3 shrink-0" />
 						<span className="text-[10px] font-semibold uppercase tracking-wider">
 							{t("player.regularsBack")}
 						</span>
@@ -771,14 +770,14 @@ export function PlayerPanel() {
 				{!regularsLoading && !regularsError && (regulars.length > 0 || regularsScanned > 0) && (
 					<>
 						<div className="flex items-center justify-between px-1">
-							<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
+							<span className="section-title text-accent-cyan/80">
 								{t("player.regularsScanned", { n: regularsScanned || REGULARS_LOOKBACK })}
 							</span>
 							{namedCount > 1 && (
 								<button
 									type="button"
 									onClick={copyAllRegulars}
-									className="text-[8px] font-semibold uppercase tracking-wide text-dim hover:text-accent-cyan transition-colors"
+									className="text-[9px] font-semibold uppercase tracking-wide text-dim hover:text-accent-cyan transition-colors"
 								>
 									{regularsCopied === "__all__" ? t("player.copied") : t("player.regularsCopyAll")}
 								</button>
@@ -787,7 +786,7 @@ export function PlayerPanel() {
 
 						{regularsAgents.length > 0 && (
 							<div className="rounded-md bg-card/40 px-1.5 py-1.5">
-								<div className="mb-1 px-0.5 text-[8px] font-bold uppercase tracking-wider text-dim">
+								<div className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-wider text-secondary">
 									{t("player.regularsAgents")}
 								</div>
 								<div className="flex items-center gap-1.5">
@@ -817,7 +816,7 @@ export function PlayerPanel() {
 													<div className="truncate text-[9px] font-semibold text-primary">
 														{label}
 													</div>
-													<div className="text-[8px] text-dim">
+													<div className="text-[9px] text-dim">
 														{t("player.regularsGames", { n: pick.games })}
 													</div>
 												</div>
@@ -897,23 +896,14 @@ export function PlayerPanel() {
 														<OverlayUserMark title={t("player.overlayUserHint")} />
 													)}
 												</div>
-												<div className="text-[8px] uppercase tracking-wide text-dim">
+												<div className="text-[9px] uppercase tracking-wide text-dim">
 													{isCopied
 														? t("player.copied")
 														: t("player.regularsGames", { n: mate.games_together })}
 												</div>
 											</div>
 											{canCopy && (
-												<svg
-													className="h-3 w-3 shrink-0 text-dim"
-													viewBox="0 0 24 24"
-													fill="none"
-													stroke="currentColor"
-													strokeWidth="2"
-												>
-													<rect x="9" y="9" width="13" height="13" rx="2" />
-													<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-												</svg>
+												<Copy className="h-3 w-3 shrink-0 text-dim" />
 											)}
 										</button>
 									);
@@ -947,24 +937,10 @@ export function PlayerPanel() {
 						: "hover:bg-card/60 cursor-pointer"
 				}`}
 			>
-				<svg
-					className="h-3.5 w-3.5 shrink-0 text-accent-cyan/80"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-				>
-					<path
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"
-					/>
-					<circle cx="9" cy="7" r="4" />
-					<path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
-				</svg>
+				<Users className="h-3.5 w-3.5 shrink-0 text-accent-cyan/80" />
 				<div className="min-w-0 flex-1">
 					<div className="text-[10px] font-semibold text-primary">{t("player.regulars")}</div>
-					<div className="text-[8px] text-dim truncate">
+					<div className="text-[9px] text-dim truncate">
 						{coolingDown
 							? t("player.regularsCooldown", { s: cooldownLeft })
 							: t("player.regularsHint")}
@@ -977,9 +953,7 @@ export function PlayerPanel() {
 						{cooldownLeft}s
 					</span>
 				) : (
-					<svg className="h-3 w-3 shrink-0 text-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-						<path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-					</svg>
+					<ChevronRight className="h-3 w-3 shrink-0 text-dim" />
 				)}
 			</button>
 		);
@@ -1103,7 +1077,7 @@ export function PlayerPanel() {
 				>
 					{/* Weapon type badge */}
 					<div className="absolute top-1.5 left-2 z-10">
-						<span className="text-[8px] font-bold uppercase tracking-wider text-accent-cyan/70">
+						<span className="section-title text-accent-cyan/70">
 							{weaponName}
 						</span>
 					</div>
@@ -1153,7 +1127,7 @@ export function PlayerPanel() {
 					)}
 				</div>
 				<div className="flex-1 min-w-0">
-					<div className="text-[8px] text-dim uppercase tracking-wide">
+					<div className="text-[9px] text-dim uppercase tracking-wide">
 						{weaponName}
 					</div>
 					<div className="text-[9px] text-primary/80 truncate">
@@ -1175,7 +1149,7 @@ export function PlayerPanel() {
 			<section>
 				<div className="flex items-center gap-1.5 mb-1.5 px-1">
 					<div className="w-1 h-3 bg-accent-gold/80 rounded-full" />
-					<span className="text-[9px] font-bold uppercase tracking-wider text-accent-gold/80">
+					<span className="section-title text-accent-gold/80">
 						{t("player.expressions")}
 					</span>
 				</div>
@@ -1341,7 +1315,7 @@ export function PlayerPanel() {
 												? t("player.rememberedNameHint", { name: selectedPlayer.name })
 												: selectedPlayer.name
 									}
-									className={`text-xs truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors ${
+									className={`text-[13px] truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors ${
 										isAuthor
 											? "font-bold text-accent-gold hover:text-accent-gold/80"
 											: selectedPlayer.name_from_history
@@ -1368,7 +1342,7 @@ export function PlayerPanel() {
 										title={`${t(`player.recentEncounter${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
 									>
 										<div className="w-1 h-1 rounded-full bg-accent-cyan" />
-										<span className="text-[7px] font-bold text-accent-cyan uppercase tracking-tighter">
+										<span className="text-[8px] font-bold text-accent-cyan uppercase tracking-tighter">
 											{`${t(`player.recentEncounterShort${selectedPlayer.previous_encounter}`)}${selectedPlayer.previous_encounter_was_enemy ? t("player.encounterEnemySuffix") : ""}`}
 										</span>
 									</div>
@@ -1388,46 +1362,16 @@ export function PlayerPanel() {
 									}`}
 									title={
 										translatedName === "Hata"
-											? "Çeviri başarısız — tekrar dene"
+											? t("player.translateFailed")
 											: translateDone
-												? "Translated"
-												: "Translate Name"
+												? t("player.translated")
+												: t("player.translate")
 									}
 								>
 									{isTranslating ? (
-										<svg
-											className="w-3 h-3 animate-spin"
-											viewBox="0 0 24 24"
-											fill="none"
-										>
-											<circle
-												className="opacity-25"
-												cx="12"
-												cy="12"
-												r="10"
-												stroke="currentColor"
-												strokeWidth="4"
-											></circle>
-											<path
-												className="opacity-75"
-												fill="currentColor"
-												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-											></path>
-										</svg>
+										<LoaderCircle className="w-3 h-3 animate-spin" />
 									) : (
-										<svg
-											className="w-3 h-3"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-											strokeWidth="2"
-										>
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"
-											/>
-										</svg>
+										<Languages className="w-3 h-3" strokeWidth={2.2} />
 									)}
 								</button>
 							</div>
@@ -1444,20 +1388,20 @@ export function PlayerPanel() {
 							) : null}
 
 							{copied && (
-								<span className="text-[8px] text-success block -mt-0.5">
+								<span className="text-[9px] text-success block -mt-0.5">
 									{t("player.copied")}
 								</span>
 							)}
 							{isAuthor && (
 								<div className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded px-1 py-px bg-accent-gold/12 border border-accent-gold/25">
-									<span className="text-[8px] font-semibold tracking-wide text-accent-gold uppercase truncate leading-tight">
+									<span className="text-[9px] font-semibold tracking-wide text-accent-gold uppercase truncate leading-tight">
 										{t("player.authorBadge")}
 									</span>
 								</div>
 							)}
 							{isOverlayUser && (
 								<div className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded px-1 py-px border border-white/15">
-									<span className="text-[8px] font-semibold tracking-wide text-secondary uppercase truncate leading-tight">
+									<span className="text-[9px] font-semibold tracking-wide text-secondary uppercase truncate leading-tight">
 										{t("player.overlayUserBadge")}
 									</span>
 								</div>
@@ -1467,7 +1411,7 @@ export function PlayerPanel() {
 							<div className="flex items-center gap-1.5 mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
 								{selectedPlayer.agent && (
 									<span
-										className="text-[9px] font-semibold"
+										className="font-display text-[11px] font-semibold"
 										style={{ color: agentColor }}
 									>
 										{selectedPlayer.agent.charAt(0).toUpperCase() +
@@ -1476,7 +1420,7 @@ export function PlayerPanel() {
 								)}
 								{selectedPlayer.rank_tier > 0 && (
 									<span
-										className="text-[9px] font-medium"
+										className="font-display text-[11px] font-semibold"
 										style={{ color: rankColor }}
 									>
 										{rankName}
@@ -1486,7 +1430,7 @@ export function PlayerPanel() {
 								{/* Peak Rank Compact Display */}
 								{peakRank && peakRank.tier > selectedPlayer.rank_tier && (
 									<>
-										<span className="text-[8px] text-dim/50">•</span>
+										<span className="text-[9px] text-secondary/50">•</span>
 										<div
 											className="flex items-center gap-1"
 											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier, locale)}`}
@@ -1495,7 +1439,7 @@ export function PlayerPanel() {
 												{t("player.peak")}
 											</span>
 											<span
-												className="text-[9px] font-bold"
+												className="font-display text-[11px] font-semibold"
 												style={{ color: peakRank.rank_color }}
 											>
 												{getLocalizedRank(peakRank.tier, locale)}
@@ -1537,7 +1481,7 @@ export function PlayerPanel() {
 								<section>
 									<div className="flex items-center gap-1.5 mb-1.5 px-1">
 										<div className="w-1 h-3 bg-accent-cyan rounded-full" />
-										<span className="text-[9px] font-bold uppercase tracking-wider text-accent-cyan/80">
+										<span className="section-title text-accent-cyan/80">
 											{t("weapons.primary")}
 										</span>
 									</div>
@@ -1555,7 +1499,7 @@ export function PlayerPanel() {
 								<section>
 									<div className="flex items-center gap-1.5 mb-1 px-1">
 										<div className="w-1 h-3 bg-accent-gold/70 rounded-full" />
-										<span className="text-[9px] font-bold uppercase tracking-wider text-accent-gold/70">
+										<span className="section-title text-accent-gold/70">
 											{t("weapons.secondary")}
 										</span>
 									</div>
@@ -1570,7 +1514,7 @@ export function PlayerPanel() {
 								<section>
 									<div className="flex items-center gap-1.5 mb-1 px-1">
 										<div className="w-1 h-3 bg-dim/50 rounded-full" />
-										<span className="text-[9px] font-bold uppercase tracking-wider text-dim/70">
+										<span className="section-title text-secondary">
 											{t("weapons.other")}
 										</span>
 									</div>

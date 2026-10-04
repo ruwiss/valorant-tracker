@@ -171,7 +171,7 @@ export function WeaponOverlay() {
           <div className="mt-4 flex items-center gap-2 px-3 py-2 bg-card/50 rounded-lg border border-border/30">
             <img src={hoveredWeapon.buddy.icon} alt="" className="w-8 h-8 object-contain drop-shadow-[0_0_8px_rgba(236,178,46,0.4)]" />
             <div className="text-left">
-              <div className="text-[8px] uppercase tracking-wider text-accent-gold/60">{t("weapons.buddy")}</div>
+              <div className="text-[9px] uppercase tracking-wider text-accent-gold/60">{t("weapons.buddy")}</div>
               <div className="text-[10px] text-primary font-medium">{hoveredWeapon.buddy.name}</div>
             </div>
           </div>

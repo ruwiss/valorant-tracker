@@ -11,6 +11,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
 import { PresetsTab } from "./PresetsTab";
 import { invokeCommand } from "../utils/ipc";
+import {
+  AppWindow,
+  ArrowDownToLine,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  FileText,
+  Info,
+  Keyboard,
+  Languages,
+  Settings2,
+  SlidersHorizontal,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
+import type { ReactNode } from "react";
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
 const BLOCKED_KEYS = ["Escape", "Tab", "CapsLock", "Enter", "Backspace", "Space"];
@@ -36,6 +53,115 @@ function buildHotkeyString(e: KeyboardEvent): string | null {
 }
 
 type Tab = "autolock" | "general";
+
+function DiscordIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M20.32 4.37A19.8 19.8 0 0 0 15.4 2.84a13.8 13.8 0 0 0-.63 1.29 18.4 18.4 0 0 0-5.53 0 13.6 13.6 0 0 0-.64-1.29 19.7 19.7 0 0 0-4.93 1.53C.53 9.05-.32 13.6.1 18.1a19.9 19.9 0 0 0 6.03 3.05c.49-.66.92-1.36 1.29-2.1a12.9 12.9 0 0 1-2.03-.98l.5-.38a14.2 14.2 0 0 0 12.22 0l.5.38c-.65.39-1.33.71-2.04.98.37.74.8 1.44 1.29 2.1a19.8 19.8 0 0 0 6.03-3.05c.5-5.2-.84-9.72-3.57-13.73ZM8.02 15.33c-1.18 0-2.16-1.09-2.16-2.42s.95-2.42 2.16-2.42 2.18 1.1 2.16 2.42c0 1.33-.95 2.42-2.16 2.42Zm7.97 0c-1.18 0-2.15-1.09-2.15-2.42s.95-2.42 2.15-2.42 2.18 1.1 2.16 2.42c0 1.33-.94 2.42-2.16 2.42Z" />
+    </svg>
+  );
+}
+
+/** Section heading followed by flat rows split by hairlines (no boxed card). */
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <div className="section-title text-accent-cyan/80 px-3 pt-4 pb-1">{title}</div>
+      <div className="divide-y divide-white/[0.05]">{children}</div>
+    </section>
+  );
+}
+
+/** One setting: inline icon, label + description, control on the right. */
+function SettingsRow({
+  icon: Icon,
+  iconNode,
+  label,
+  desc,
+  control,
+  below,
+  onClick,
+}: {
+  icon?: LucideIcon;
+  iconNode?: ReactNode;
+  label: string;
+  desc?: string;
+  control?: ReactNode;
+  below?: ReactNode;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <div className="flex items-start gap-2.5">
+        <span className="mt-px shrink-0 text-secondary">
+          {Icon ? <Icon className="w-3.5 h-3.5" strokeWidth={2} /> : iconNode}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] font-semibold text-primary leading-tight">{label}</div>
+          {desc && <div className="text-[9px] text-secondary/85 leading-snug mt-0.5">{desc}</div>}
+        </div>
+        {control && <div className="shrink-0 self-center">{control}</div>}
+      </div>
+      {below && <div className="mt-2 pl-6">{below}</div>}
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="w-full text-left px-3 py-2.5 hover:bg-white/[0.03] transition-colors cursor-pointer">
+        {body}
+      </button>
+    );
+  }
+  return <div className="px-3 py-2.5">{body}</div>;
+}
+
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative w-8 h-[18px] shrink-0 rounded-full border transition-colors cursor-pointer ${
+        checked ? "bg-accent-cyan/25 border-accent-cyan/60" : "bg-dark/80 border-white/15 hover:border-white/25"
+      }`}
+    >
+      <span
+        className={`absolute top-[2px] w-3 h-3 rounded-full transition-all duration-200 ${
+          checked ? "left-[15px] bg-accent-cyan shadow-[0_0_8px_rgba(0,212,170,0.5)]" : "left-[2px] bg-secondary"
+        }`}
+      />
+    </button>
+  );
+}
+
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex p-0.5 rounded-md bg-black/30 border border-white/[0.06]">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={`px-2 h-5 rounded-[4px] text-[10px] font-semibold transition-colors cursor-pointer ${
+            value === o.value ? "bg-accent-cyan/20 text-accent-cyan" : "text-secondary hover:text-primary"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
@@ -179,7 +305,7 @@ export function SettingsPanel() {
       }
       const hotkeyString = buildHotkeyString(e);
       if (!hotkeyString) {
-        setHotkeyError(locale === "tr" ? "Geçersiz tuş" : "Invalid key");
+        setHotkeyError(t("settings.invalidKey"));
         setTimeout(() => setHotkeyError(null), 2000);
         return;
       }
@@ -187,11 +313,11 @@ export function SettingsPanel() {
       setRecordingDisplay("");
       const success = await setHotkey(hotkeyString);
       if (!success) {
-        setHotkeyError(locale === "tr" ? "Kayıt başarısız" : "Failed");
+        setHotkeyError(t("settings.hotkeyFailed"));
         setTimeout(() => setHotkeyError(null), 2000);
       }
     },
-    [setHotkey, locale, cancelRecording],
+    [setHotkey, t, cancelRecording],
   );
 
   useEffect(() => {
@@ -208,20 +334,23 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col h-full bg-dark/40 backdrop-blur-md">
-      {/* Tabs: Agent | Options only */}
-      <div className="flex p-2 gap-1 border-b border-white/5 bg-white/2">
-        <button
-          onClick={() => setActiveTab("autolock")}
-          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "autolock" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
-        >
-          {locale === "tr" ? "Ajan" : "Agent"}
-        </button>
-        <button
-          onClick={() => setActiveTab("general")}
-          className={`flex-1 py-2 px-1 text-[9px] font-black uppercase tracking-tight whitespace-nowrap rounded-lg transition-all duration-300 ${activeTab === "general" ? "bg-accent-cyan text-dark shadow-lg shadow-accent-cyan/20 scale-[1.02]" : "text-dim hover:text-primary hover:bg-white/5"}`}
-        >
-          {t("settings.title")}
-        </button>
+      {/* Tabs: Agent | Options */}
+      <div className="flex px-2 border-b border-white/[0.06]">
+        {([
+          ["autolock", UserRound, t("settings.tabAgent")],
+          ["general", Settings2, t("settings.title")],
+        ] as const).map(([tab, Icon, label]) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`relative flex-1 h-9 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap transition-colors cursor-pointer after:absolute after:inset-x-3 after:-bottom-px after:h-0.5 after:rounded-full after:transition-colors ${
+              activeTab === tab ? "text-accent-cyan after:bg-accent-cyan" : "text-secondary hover:text-primary after:bg-transparent"
+            }`}
+          >
+            <Icon className="w-3.5 h-3.5" strokeWidth={2.4} />
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 selection:bg-accent-cyan/30">
@@ -232,18 +361,18 @@ export function SettingsPanel() {
             <div className="p-4 bg-linear-to-b from-white/5 to-transparent border-b border-white/5">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex flex-col">
-                  <label className="text-[10px] text-accent-cyan font-black uppercase tracking-[0.2em]">{locale === "tr" ? "Varsayılan Ajan" : "Global Default"}</label>
+                  <label className="section-title text-accent-cyan">{t("settings.defaultAgent")}</label>
                   <div className="h-3 flex items-center">
                     {hoveredAgents["global"] ? (
                       <span className="text-[9px] text-accent-cyan font-black animate-in fade-in slide-in-from-left-1 duration-200">➔ {hoveredAgents["global"].toUpperCase()}</span>
                     ) : (
-                      <span className="text-[8px] text-dim">{locale === "tr" ? "Tüm haritalar için geçerli seçim" : "Fallback for all maps"}</span>
+                      <span className="text-[9px] text-secondary">{t("settings.defaultAgentDesc")}</span>
                     )}
                   </div>
                 </div>
                 {autoLockAgent && (
                   <button onClick={() => setAutoLock(null)} className="p-1 px-2 text-[9px] font-bold text-accent-red hover:bg-accent-red/10 rounded-md transition-all uppercase tracking-tighter">
-                    {locale === "tr" ? "Sıfırla" : "Reset"}
+                    {t("settings.reset")}
                   </button>
                 )}
               </div>
@@ -281,7 +410,7 @@ export function SettingsPanel() {
 
             <div className="px-4 py-3 bg-dark/40 border-b border-white/5">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-[10px] text-dim font-black uppercase tracking-[0.2em]">{locale === "tr" ? "Kilitleme Süresi" : "Lock Delay"}</label>
+                <label className="section-title text-secondary">{t("settings.lockDelay")}</label>
                 <span className="text-[10px] font-black text-accent-green tabular-nums">{autoLockDelaySeconds}s</span>
               </div>
               <input
@@ -293,16 +422,16 @@ export function SettingsPanel() {
                 onChange={(event) => setAutoLockDelaySeconds(Number(event.target.value))}
                 className="w-full accent-[#3fffbd] cursor-pointer"
               />
-              <div className="flex justify-between text-[8px] text-dim/70 font-bold mt-1">
+              <div className="flex justify-between text-[9px] text-secondary/80 font-bold mt-1">
                 <span>1s</span>
-                <span>{locale === "tr" ? "Varsayılan: 5s" : "Default: 5s"}</span>
+                <span>{t("settings.lockDelayDefault")}</span>
                 <span>10s</span>
               </div>
             </div>
 
             {/* Map-Specific Section */}
             <div className="p-4 space-y-3">
-              <label className="text-[10px] text-dim font-black uppercase tracking-[0.2em] block mb-1">{locale === "tr" ? "Harita Bazlı Tercihler" : "Map-Specific Preferences"}</label>
+              <label className="section-title text-secondary block mb-1">{t("settings.mapPrefs")}</label>
 
               <div className="space-y-2.5">
                 {COMPETITIVE_MAPS.map((map) => {
@@ -360,14 +489,10 @@ export function SettingsPanel() {
                         </div>
 
                         {/* Expand chevron — top-right */}
-                        <svg
-                          className={`absolute top-3 right-3 z-10 w-4 h-4 transition-all duration-500 ${isExpanded ? "rotate-180 text-accent-cyan" : "text-dim/80 group-hover:text-primary"}`}
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                        </svg>
+                        <ChevronDown
+                          className={`absolute top-3 right-3 z-10 w-4 h-4 transition-all duration-500 ${isExpanded ? "rotate-180 text-accent-cyan" : "text-secondary group-hover:text-primary"}`}
+                          strokeWidth={2.5}
+                        />
 
                         {/* Soft agent chip — bottom-right.
                             Map override: icon + name (clear).
@@ -382,18 +507,18 @@ export function SettingsPanel() {
                                   className="w-5 h-5 rounded-full object-cover ring-1 ring-accent-cyan/45"
                                 />
                               ) : (
-                                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black bg-accent-cyan/20 text-accent-cyan">
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black bg-accent-cyan/20 text-accent-cyan">
                                   {displayAgent.name[0]?.toUpperCase()}
                                 </div>
                               )}
-                              <span className="text-[8px] font-bold uppercase tracking-wide leading-none text-accent-cyan">
+                              <span className="text-[9px] font-bold uppercase tracking-wide leading-none text-accent-cyan">
                                 {displayAgent.name}
                               </span>
                             </div>
                           ) : (
                             <div
                               className="absolute bottom-1.5 right-2.5 z-10 pointer-events-none animate-in fade-in duration-300"
-                              title={locale === "tr" ? `Varsayılan: ${displayAgent.name}` : `Default: ${displayAgent.name}`}
+                              title={t("settings.defaultOf", { agent: displayAgent.name })}
                             >
                               {displayIcon ? (
                                 <CachedImage
@@ -402,7 +527,7 @@ export function SettingsPanel() {
                                   className="w-6 h-6 rounded-full object-cover opacity-55 ring-1 ring-white/15 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
                                 />
                               ) : (
-                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black bg-black/40 text-white/40 ring-1 ring-white/10">
+                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black bg-black/40 text-white/40 ring-1 ring-white/10">
                                   {displayAgent.name[0]?.toUpperCase()}
                                 </div>
                               )}
@@ -444,7 +569,7 @@ export function SettingsPanel() {
                                   }`}
                                   title={
                                     isDefaultPreview
-                                      ? `${agentData.name.toUpperCase()} (${locale === "tr" ? "Varsayılan" : "Default"})`
+                                      ? `${agentData.name.toUpperCase()} (${t("settings.defaultTag")})`
                                       : agentData.name.toUpperCase()
                                   }
                                 >
@@ -457,8 +582,8 @@ export function SettingsPanel() {
                                   )}
                                   {isSelected && <div className="absolute inset-0 bg-accent-cyan/10 pointer-events-none" />}
                                   {isDefaultPreview && !isSelected && (
-                                    <div className="absolute inset-x-0 bottom-0 py-0.5 bg-black/55 text-[7px] font-bold text-white/70 uppercase tracking-tighter text-center pointer-events-none">
-                                      {locale === "tr" ? "Var." : "Def."}
+                                    <div className="absolute inset-x-0 bottom-0 py-0.5 bg-black/55 text-[8px] font-bold text-white/70 uppercase tracking-tighter text-center pointer-events-none">
+                                      {t("settings.defaultTagShort")}
                                     </div>
                                   )}
                                 </button>
@@ -474,168 +599,132 @@ export function SettingsPanel() {
             </div>
           </div>
         ) : (
-          /* General Settings Tab — flat grouped sections */
-          <div className="p-3 space-y-5">
-            {/* Appearance */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionAppearance")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <div>
-                <label className="text-[10px] text-dim block mb-1">{t("settings.language")}</label>
-                <div className="flex gap-1.5">
-                  <button onClick={() => setLocale("en")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "en" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    EN
-                  </button>
-                  <button onClick={() => setLocale("tr")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${locale === "tr" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    TR
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-dim block mb-1">{t("settings.windowStyle")}</label>
-                <div className="flex gap-1.5">
-                  <button onClick={() => setWindowStyle("free")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "free" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    {t("settings.windowStyleFree")}
-                  </button>
-                  <button onClick={() => setWindowStyle("docked")} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${windowStyle === "docked" ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    {t("settings.windowStyleDocked")}
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-dim block mb-1">{t("settings.minimizeToTray")}</label>
-                <div className="flex gap-1.5">
-                  <button onClick={() => setMinimizeToTray(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${minimizeToTray ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    {t("settings.on")}
-                  </button>
-                  <button onClick={() => setMinimizeToTray(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!minimizeToTray ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                    {t("settings.off")}
-                  </button>
-                </div>
-                <p className="text-[9px] text-dim/70 leading-relaxed mt-1">{t("settings.minimizeToTrayDesc")}</p>
-              </div>
-            </section>
+          /* General Settings Tab — grouped rows */
+          <div className="pb-3">
+            <SettingsGroup title={t("settings.sectionAppearance")}>
+              <SettingsRow
+                icon={Languages}
+                label={t("settings.language")}
+                desc={t("settings.languageDesc")}
+                control={
+                  <Segmented
+                    value={locale}
+                    onChange={setLocale}
+                    options={[
+                      { value: "tr", label: "TR" },
+                      { value: "en", label: "EN" },
+                    ]}
+                  />
+                }
+              />
+              <SettingsRow
+                icon={AppWindow}
+                label={t("settings.windowStyle")}
+                desc={t("settings.windowStyleDesc")}
+                control={
+                  <Segmented
+                    value={windowStyle}
+                    onChange={setWindowStyle}
+                    options={[
+                      { value: "free", label: t("settings.windowStyleFreeShort") },
+                      { value: "docked", label: t("settings.windowStyleDockedShort") },
+                    ]}
+                  />
+                }
+              />
+              <SettingsRow
+                icon={ArrowDownToLine}
+                label={t("settings.minimizeToTray")}
+                desc={t("settings.minimizeToTrayDesc")}
+                control={<Toggle checked={minimizeToTray} onChange={setMinimizeToTray} label={t("settings.minimizeToTray")} />}
+              />
+            </SettingsGroup>
 
-            {/* Integrations */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionIntegrations")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <label className="text-[10px] text-dim block mb-1">{t("settings.discordRpc")}</label>
-              <div className="flex gap-1.5">
-                <button onClick={() => setDiscordRpcEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${discordRpcEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.on")}
-                </button>
-                <button onClick={() => setDiscordRpcEnabled(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!discordRpcEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.off")}
-                </button>
-              </div>
-              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.discordRpcDesc")}</p>
-            </section>
+            <SettingsGroup title={t("settings.sectionControls")}>
+              <SettingsRow
+                icon={Keyboard}
+                label={t("settings.hotkey")}
+                desc={t("settings.hotkeyNote")}
+                control={
+                  recording ? (
+                    <div className="min-w-12 h-7 px-2 rounded-md text-[11px] font-bold border bg-accent-cyan/20 border-accent-cyan text-accent-cyan animate-pulse flex items-center justify-center">
+                      {recordingDisplay || "..."}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startRecording}
+                      title={t("settings.hotkeyChange")}
+                      className="min-w-12 h-7 px-2 rounded-md text-[11px] font-bold font-mono border border-white/15 border-b-2 bg-dark/70 text-primary hover:border-accent-cyan/60 hover:text-accent-cyan transition-colors cursor-pointer"
+                    >
+                      {hotkey}
+                    </button>
+                  )
+                }
+                below={
+                  recording || hotkeyError ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-[9px] ${hotkeyError ? "text-error" : "text-accent-cyan"}`}>
+                        {hotkeyError ?? t("settings.hotkeyRecording")}
+                      </span>
+                      {recording && (
+                        <button onClick={cancelRecording} className="px-2 h-6 rounded-md text-[10px] font-semibold border border-error/50 text-error hover:bg-error/10 transition-colors cursor-pointer">
+                          {t("settings.cancel")}
+                        </button>
+                      )}
+                    </div>
+                  ) : undefined
+                }
+              />
+            </SettingsGroup>
 
-            {/* Presets */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionPresets")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.sectionPresetsDesc")}</p>
-              <button
-                type="button"
+            <SettingsGroup title={t("settings.sectionIntegrations")}>
+              <SettingsRow
+                iconNode={<DiscordIcon className="w-3.5 h-3.5" />}
+                label={t("settings.discordRpc")}
+                desc={t("settings.discordRpcDesc")}
+                control={<Toggle checked={discordRpcEnabled} onChange={setDiscordRpcEnabled} label={t("settings.discordRpc")} />}
+              />
+              <SettingsRow
+                icon={SlidersHorizontal}
+                label={t("settings.sectionPresetsOpen")}
+                desc={t("settings.sectionPresetsDesc")}
                 onClick={() => setSettingsSubView("presets")}
-                className="w-full h-8 rounded text-[10px] font-bold border border-accent-cyan/40 bg-accent-cyan/10 text-accent-cyan hover:bg-accent-cyan/20 transition-all"
-              >
-                {t("settings.sectionPresetsOpen")}
-              </button>
-            </section>
+                control={<ChevronRight className="w-4 h-4 text-secondary shrink-0" />}
+              />
+            </SettingsGroup>
 
-            {/* Controls */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionControls")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <label className="text-[10px] text-dim block mb-1">{t("settings.hotkey")}</label>
-              {recording ? (
-                <div className="flex gap-1.5">
-                  <div className="flex-1 h-8 rounded text-[11px] font-bold border bg-accent-cyan/20 border-accent-cyan text-accent-cyan animate-pulse flex items-center justify-center">{recordingDisplay || "..."}</div>
-                  <button onClick={cancelRecording} className="px-3 h-8 rounded text-[10px] font-semibold border border-error/50 text-error hover:bg-error/10 transition-all">
-                    {locale === "tr" ? "İptal" : "Cancel"}
-                  </button>
-                </div>
-              ) : (
-                <button onClick={startRecording} className="w-full h-8 rounded text-[11px] font-bold border border-border text-primary hover:bg-white/5 transition-all">
-                  {hotkey}
-                </button>
-              )}
-              {hotkeyError && <p className="text-[9px] text-error mt-1">{hotkeyError}</p>}
-              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.hotkeyNote")}</p>
-            </section>
-
-            {/* Advanced */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionAdvanced")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <button
+            <SettingsGroup title={t("settings.sectionAbout")}>
+              <SettingsRow
+                icon={FileText}
+                label={t("settings.openLogs")}
+                desc={t("settings.logsNote")}
                 onClick={() => invoke("open_log_file").catch((e) => console.error("Failed to open log file:", e))}
-                className="w-full h-8 flex items-center justify-center gap-2 rounded text-[10px] font-semibold border border-border/60 text-secondary hover:bg-white/5 hover:text-primary transition-all"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                  <polyline points="10 9 9 9 8 9" />
-                </svg>
-                {t("settings.openLogs")}
-              </button>
-              <p className="text-[8px] text-dim/60 text-center">{t("settings.logsNote")}</p>
-            </section>
-
-            {/* About */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionAbout")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <div className="flex justify-between text-[10px] px-0.5">
-                <span className="text-dim">{t("settings.version")}</span>
-                <span className="text-primary font-mono">{appVersion}</span>
-              </div>
+                control={<ExternalLink className="w-3.5 h-3.5 text-secondary shrink-0" />}
+              />
+              <SettingsRow
+                icon={Info}
+                label={t("settings.version")}
+                control={<span className="text-[11px] font-mono text-primary">{appVersion}</span>}
+              />
               {installs !== null && (
-                <div
-                  className="flex justify-between text-[9px] px-0.5"
-                  title={t("settings.installsHint", { n: formattedInstalls })}
-                >
-                  <span className="text-dim/50">{t("settings.installs")}</span>
-                  <span className="text-dim/60 font-mono tabular-nums">{formattedInstalls}</span>
-                </div>
+                <SettingsRow
+                  icon={Download}
+                  label={t("settings.installs")}
+                  control={
+                    <span className="text-[11px] font-mono text-secondary" title={t("settings.installsHint", { n: formattedInstalls })}>
+                      {formattedInstalls}
+                    </span>
+                  }
+                />
               )}
-            </section>
+            </SettingsGroup>
           </div>
         )}
       </div>
 
       {/* Footer / Attribution - Always visible */}
       <div className="p-2 border-t border-border">
-        <p className="text-[9px] text-dim text-center">
+        <p className="text-[9px] text-secondary text-center">
           {t("settings.madeBy")}{" "}
           <a
             href="https://github.com/ruwiss/"
@@ -648,14 +737,6 @@ export function SettingsPanel() {
             @ruwiss
           </a>
         </p>
-        {installs !== null && (
-          <p
-            className="text-[8px] text-dim/40 text-center mt-0.5 tabular-nums tracking-wide"
-            title={t("settings.installsHint", { n: formattedInstalls })}
-          >
-            {t("settings.installsLine", { n: formattedInstalls })}
-          </p>
-        )}
       </div>
     </div>
   );

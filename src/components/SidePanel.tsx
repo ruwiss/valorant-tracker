@@ -6,6 +6,7 @@ import { PlayerPanel } from "./PlayerPanel";
 import { PlayerStatsPanel } from "./PlayerStatsPanel";
 import { ShopPanel } from "./ShopPanel";
 import { useI18n } from "../lib/i18n";
+import { X } from "lucide-react";
 
 export function SidePanel() {
   const { isOpen, panelType, settingsSubView, playerSubView, playerSource, selectedPlayer, close } = usePanelStore();
@@ -91,16 +92,14 @@ export function SidePanel() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-gradient-to-r from-white/5 to-transparent">
         <div className="flex items-center gap-2">
           <div className="w-0.5 h-3 bg-accent-cyan shadow-[0_0_8px_rgba(0,212,170,0.5)]" />
-          <span className="text-[11px] font-bold text-gray-200 uppercase tracking-widest">{getTitle()}</span>
+          <span className="font-display text-[13px] font-bold text-primary uppercase tracking-[0.12em]">{getTitle()}</span>
         </div>
         <button
           onClick={close}
           className="w-6 h-6 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded transition-all duration-200 group"
-          title="Close"
+          title={t("common.close")}
         >
-          <svg className="w-3.5 h-3.5 transition-transform duration-300 group-hover:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+          <X className="w-3.5 h-3.5 transition-transform duration-300 group-hover:rotate-90" />
         </button>
       </div>
 

@@ -8,8 +8,9 @@
     --color-accent-cyan: #00d4aa;
     --color-accent-gold: #ecb22e;
     --color-primary: #ece8e1;
-    --color-secondary: #768079;
-    --color-dim: #4a5568;
+    /* Muted text tones, tuned to stay readable on the dark panels. */
+    --color-secondary: #929c95;
+    --color-dim: #697585;
     --color-border: #2d3a47;
     --color-success: #00d4aa;
     --color-warning: #ecb22e;
@@ -19,9 +20,37 @@
     --color-party-3: #ecb22e;
     --color-accent-purple: #bd3fff;
     --color-accent-green: #3fffbd;
+    /* Squared tech display face for titles, ranks and section labels. */
+    --font-display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
     --animate-slide-in: slide-in 0.2s ease-out;
     --animate-smooth-appear: smooth-appear 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     --animate-breathe-red-green: breathe-red-green 4s ease-in-out infinite;
+}
+
+/* Uppercase section heading used across panels (team lists, weapon groups…). */
+@utility section-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* Square ghost icon button shared by the header / panel chrome. */
+@utility icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 0.5rem;
+    color: var(--color-secondary);
+    transition: color 150ms, background-color 150ms;
+    &:hover:not(:disabled) {
+        color: #fff;
+        background-color: rgb(255 255 255 / 0.1);
+    }
 }
 
 @keyframes breathe-red-green {
@@ -57,9 +86,17 @@
         height: 100%;
         background: transparent;
         font-family: 'Segoe UI', system-ui, sans-serif;
+        /* Fixed-width digits keep scores, levels and stats aligned. */
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
         color: var(--color-primary);
         overflow: hidden;
         user-select: none;
+    }
+
+    :focus-visible {
+        outline: 1.5px solid color-mix(in srgb, var(--color-accent-cyan) 70%, transparent);
+        outline-offset: 1px;
     }
 
     ::-webkit-scrollbar {

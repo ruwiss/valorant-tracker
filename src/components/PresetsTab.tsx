@@ -7,6 +7,7 @@ import { invokeCommand } from "../utils/ipc";
 import type { CrosshairProfileData, PresetMeta } from "../lib/types";
 import { previewLayer } from "../utils/crosshair";
 import { MiniCrosshair } from "./MiniCrosshair";
+import { ChevronLeft, ChevronRight, EllipsisVertical } from "lucide-react";
 
 type Filter = "all" | "mine" | "backups";
 
@@ -201,9 +202,7 @@ export function PresetsTab() {
           onClick={() => setSettingsSubView("main")}
           className="flex items-center gap-1 text-[10px] font-semibold text-accent-cyan hover:text-accent-cyan/80 transition-colors"
         >
-          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <ChevronLeft className="w-3 h-3" strokeWidth={2.5} />
           {t("settings.back")}
         </button>
       </div>
@@ -212,7 +211,7 @@ export function PresetsTab() {
         {/* Compact status + desc */}
         <div className="space-y-1">
           <p className="text-[9px] text-dim/80 leading-relaxed">{t("presets.desc")}</p>
-          <p className="text-[8px] text-dim/60">
+          <p className="text-[9px] text-dim/60">
             <span className={connected ? "text-accent-cyan" : "text-dim"}>
               ● {connected ? t("presets.statusConnected") : t("presets.statusDisconnected")}
             </span>
@@ -225,7 +224,7 @@ export function PresetsTab() {
 
         {/* Save */}
         <div className="space-y-1.5">
-          <span className="text-[9px] font-bold uppercase tracking-wider text-dim">
+          <span className="section-title text-secondary">
             {t("presets.sectionCapture")}
           </span>
           <div className="flex gap-1.5">
@@ -259,7 +258,7 @@ export function PresetsTab() {
             </span>
             <button
               onClick={disarm}
-              className="text-[8px] font-bold uppercase text-accent-red hover:underline"
+              className="text-[9px] font-bold uppercase text-accent-red hover:underline"
             >
               {t("presets.cancelArm")}
             </button>
@@ -269,10 +268,10 @@ export function PresetsTab() {
         {/* List header + filter */}
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-dim">
+            <span className="section-title text-secondary">
               {t("presets.sectionList")}
             </span>
-            <span className="text-[8px] text-dim/60 tabular-nums">
+            <span className="text-[9px] text-dim/60 tabular-nums">
               {t("presets.count", { n: filtered.length })}
             </span>
           </div>
@@ -336,27 +335,19 @@ export function PresetsTab() {
                           onClick={() => toggleExpand(p.id)}
                           className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
                         >
-                          <svg
-                            className={`w-3 h-3 shrink-0 text-dim/70 transition-transform ${
+                          <ChevronRight className={`w-3 h-3 shrink-0 text-dim/70 transition-transform ${
                               expanded ? "rotate-90 text-accent-cyan" : ""
-                            }`}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                          >
-                            <polyline points="9 18 15 12 9 6" />
-                          </svg>
+                            }`} strokeWidth={2.5} />
                           <span className="text-[11px] font-semibold text-primary truncate">
                             {p.name}
                           </span>
                           {p.auto_backup && (
-                            <span className="text-[8px] text-accent-green/80 shrink-0">
+                            <span className="text-[9px] text-accent-green/80 shrink-0">
                               · {t("presets.autoBackupBadge")}
                             </span>
                           )}
                           {isArmed && (
-                            <span className="text-[8px] text-accent-cyan shrink-0">
+                            <span className="text-[9px] text-accent-cyan shrink-0">
                               · {t("presets.armedBadge")}
                             </span>
                           )}
@@ -392,11 +383,7 @@ export function PresetsTab() {
                               onClick={() => setMenuId((m) => (m === p.id ? null : p.id))}
                               className="w-6 h-6 flex items-center justify-center text-dim hover:text-primary rounded"
                             >
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                                <circle cx="12" cy="5" r="1.4" />
-                                <circle cx="12" cy="12" r="1.4" />
-                                <circle cx="12" cy="19" r="1.4" />
-                              </svg>
+                              <EllipsisVertical className="w-3.5 h-3.5" />
                             </button>
                             {menuId === p.id && (
                               <div className="absolute right-0 top-7 z-30 min-w-[110px] rounded-md border border-white/10 bg-[#0e141b] shadow-xl py-1">
@@ -433,12 +420,12 @@ export function PresetsTab() {
 
                     {expanded && (
                       <div className="mt-2 ml-4 space-y-2.5 pl-1 border-l border-white/5">
-                        <p className="text-[8px] text-dim/60 tabular-nums">
+                        <p className="text-[9px] text-dim/60 tabular-nums">
                           {formatDate(p.created_at, locale)}
                         </p>
 
                         <div>
-                          <span className="text-[8px] font-bold uppercase tracking-wider text-dim">
+                          <span className="section-title text-secondary">
                             {t("presets.sensitivity")}
                           </span>
                           {!hasSens ? (
@@ -468,7 +455,7 @@ export function PresetsTab() {
                         </div>
 
                         <div>
-                          <span className="text-[8px] font-bold uppercase tracking-wider text-dim">
+                          <span className="section-title text-secondary">
                             {t("presets.crosshairs")}
                           </span>
                           {xh === "loading" || xh === undefined ? (
@@ -492,7 +479,7 @@ export function PresetsTab() {
                                     title={label}
                                   >
                                     <MiniCrosshair layer={layer} size={28} />
-                                    <span className="text-[7px] text-dim max-w-[36px] truncate">
+                                    <span className="text-[8px] text-dim max-w-[36px] truncate">
                                       {label}
                                     </span>
                                   </button>

@@ -53,7 +53,7 @@ export function CrosshairOverlay() {
       />
 
       <div className="absolute inset-0 flex flex-col items-center justify-center p-5">
-        <span className="text-[8px] font-black uppercase tracking-[0.25em] text-accent-cyan/70 mb-3">
+        <span className="text-[9px] font-black uppercase tracking-[0.25em] text-accent-cyan/70 mb-3">
           {t("presets.crosshairPreview")}
         </span>
 

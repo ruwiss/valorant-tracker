@@ -279,7 +279,7 @@ function SectionHeader({ title }: { title: string }) {
   return (
     <div className="flex items-center gap-2 mb-1.5">
       <div className="w-1 h-3 bg-[#ff4655]" />
-      <span className="text-[10px] font-black uppercase tracking-widest text-white/30">{title}</span>
+      <span className="section-title text-white/50">{title}</span>
       <div className="h-px bg-white/5 flex-1" />
     </div>
   );
@@ -305,7 +305,7 @@ function BigStatCard({ label, value, sublabel, color }: { label: string; value: 
 function CompactStat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className="bg-[#1c252e] p-2 border border-white/5 flex flex-col items-center justify-center text-center h-full">
-      <div className="text-[8px] font-bold text-white/30 uppercase tracking-widest mb-0.5">{label}</div>
+      <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest mb-0.5">{label}</div>
       <div className={`text-sm font-black ${highlight ? "text-primary" : "text-white/60"}`}>{value}</div>
     </div>
   );

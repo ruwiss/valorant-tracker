@@ -4,6 +4,7 @@ import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n, SKIN_API_LOCALES } from "../lib/i18n";
 import { CachedImage } from "./CachedImage";
+import { Clock, ShoppingBag } from "lucide-react";
 
 // Real in-game currency icons (CachedImage allows the media.valorant-api.com host)
 const VP_ICON = "https://media.valorant-api.com/currencies/85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741/displayicon.png";
@@ -135,10 +136,7 @@ function Countdown({ seconds, t }: { seconds: number; t: (k: string) => string }
   const urgent = remaining > 0 && remaining < 3600;
   return (
     <span className={`flex items-center gap-1 text-[9px] font-bold tabular-nums tracking-wide ${urgent ? "text-accent-red" : "text-secondary"}`}>
-      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" strokeLinecap="round" />
-      </svg>
+      <Clock className="w-2.5 h-2.5" strokeWidth={2.4} />
       {formatDuration(remaining, t)}
     </span>
   );
@@ -327,7 +325,7 @@ export function ShopPanel() {
 
           {store.daily_offers.length > 0 && (
             <div className="mt-2.5 flex items-center justify-between border-t border-white/[0.06] pt-2 pl-1">
-              <span className="text-[8px] font-bold uppercase tracking-[0.25em] text-dim">{t("shop.total")}</span>
+              <span className="text-[9px] font-bold uppercase tracking-[0.25em] text-dim">{t("shop.total")}</span>
               <span className="flex items-center gap-1 text-[13px] font-black tabular-nums text-primary">
                 <CurrencyIcon src={VP_ICON} className="w-3 h-3" />
                 {dailyTotal.toLocaleString()}
@@ -389,19 +387,7 @@ export function ShopPanel() {
 function StatusMessage({ text, tone = "dim" }: { text: string; tone?: "dim" | "error" }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
-      <svg
-        className={`w-8 h-8 ${tone === "error" ? "text-error/60" : "text-dim/50"}`}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-        <path d="M3 6h18" />
-        <path d="M16 10a4 4 0 0 1-8 0" />
-      </svg>
+      <ShoppingBag className={`w-8 h-8 ${tone === "error" ? "text-error/60" : "text-dim/50"}`} strokeWidth={1.5} />
       <span className="text-[10px] leading-relaxed text-dim max-w-44">{text}</span>
     </div>
   );
@@ -466,7 +452,7 @@ function SkinCard({
 
         {/* Discount tab (night market) */}
         {discountTab && (
-          <span className="clip-tab absolute top-0 right-0 z-10 px-1.5 py-0.5 text-[8px] font-black tabular-nums text-dark bg-accent-gold">
+          <span className="clip-tab absolute top-0 right-0 z-10 px-1.5 py-0.5 text-[9px] font-black tabular-nums text-dark bg-accent-gold">
             {discountTab}
           </span>
         )}
@@ -475,7 +461,7 @@ function SkinCard({
         {isNew && (
           <span className="absolute top-1.5 left-2.5 z-10 flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-accent-red animate-pulse shadow-[0_0_6px_rgba(255,70,85,0.7)]" />
-            <span className="text-[7px] font-black uppercase tracking-[0.15em] text-accent-red">{newLabel}</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.15em] text-accent-red">{newLabel}</span>
           </span>
         )}
 
@@ -494,7 +480,7 @@ function SkinCard({
 
         {/* Caption block */}
         <div className="relative px-2.5 pb-2 pt-1">
-          <div className="text-[7px] font-bold uppercase tracking-[0.18em] text-secondary truncate">{weaponName}</div>
+          <div className="text-[8px] font-bold uppercase tracking-[0.18em] text-secondary truncate">{weaponName}</div>
           <div className="text-[10px] font-semibold text-primary/90 leading-tight truncate">{meta?.name || skinLabel}</div>
           <div className="mt-1.5">{price}</div>
         </div>

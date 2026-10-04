@@ -14,6 +14,7 @@ import { useGameLoop } from "./hooks/useGameLoop";
 import { useI18n } from "./lib/i18n";
 import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
+import { RefreshCw, X } from "lucide-react";
 
 /** How long the first-launch tip stays under the header (ms). */
 const WELCOME_TIP_DURATION_MS = 6_500;
@@ -79,9 +80,7 @@ function WelcomeTipBanner({
           className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-dim/70 hover:text-primary hover:bg-white/10 transition-colors"
           aria-label="Dismiss"
         >
-          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
-          </svg>
+          <X className="w-3 h-3" strokeWidth={2.5} />
         </button>
       </div>
     </div>
@@ -195,10 +194,7 @@ function App() {
             className="mb-2 shrink-0 flex items-center gap-2 rounded-lg border border-accent-gold/25 bg-accent-gold/[0.08] px-2.5 py-1.5 animate-smooth-appear"
             role="status"
           >
-            <svg className="w-3.5 h-3.5 animate-spin text-accent-gold shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M23 4v6h-6M1 20v-6h6" />
-              <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-            </svg>
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-accent-gold shrink-0" strokeWidth={2.5} />
             <span className="text-[10px] font-bold tracking-wider text-accent-gold uppercase">
               {t("waiting.reconnecting")}
             </span>

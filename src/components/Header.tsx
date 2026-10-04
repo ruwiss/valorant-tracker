@@ -8,6 +8,7 @@ import { useUpdateStore } from "../stores/updateStore";
 import { useChatStore } from "../stores/chatStore";
 import { usePanelStore } from "../stores/panelStore"; 
 import { useI18n } from "../lib/i18n";
+import { MessageSquare, Minus, PanelLeftClose, RefreshCw, X } from "lucide-react";
 
 export function Header() {
   const region = useGameStore((s) => s.region);
@@ -95,55 +96,42 @@ export function Header() {
              status === 'CONNECTED' ? t("status.connected") || 'LINKED' :
              status === 'CONNECTING' ? t("status.connecting") || 'LINKING' :
              status === 'RECONNECTING' ? t("status.reconnecting") || 'RETRYING' :
-             status === 'WAITING_FOR_GAME' ? 'Oyunun açılması bekleniyor...' :
+             status === 'WAITING_FOR_GAME' ? t("waiting.forGame") :
              t("status.offline") || 'OFFLINE'
             }`}
           />
-          <h1 className="text-[15px] font-black text-white tracking-widest leading-none drop-shadow-md truncate">VALORANT</h1>
-          {region && <span className="text-[8px] font-bold text-accent-cyan uppercase bg-accent-cyan/10 border border-accent-cyan/20 px-1 py-0.5 rounded-md tracking-widest leading-none shadow-[0_0_5px_rgba(0,212,170,0.2)] shrink-0">{region}</span>}
+          <h1 className="font-display text-[17px] font-bold text-white tracking-[0.14em] leading-none drop-shadow-md truncate">VALORANT</h1>
+          {region && <span className="text-[9px] font-bold text-accent-cyan uppercase bg-accent-cyan/10 border border-accent-cyan/20 px-1 py-0.5 rounded-md tracking-widest leading-none shadow-[0_0_5px_rgba(0,212,170,0.2)] shrink-0">{region}</span>}
         </div>
-        <span className={`text-[8px] uppercase tracking-[0.2em] font-semibold mt-1.5 ml-4 truncate ${isReconnecting ? "text-accent-gold" : isBusy ? "text-accent-gold/80" : "text-dim/80"}`}>
+        <span className={`text-[9px] uppercase tracking-[0.2em] font-semibold mt-1.5 ml-4 truncate ${isReconnecting ? "text-accent-gold" : isBusy ? "text-accent-gold/80" : "text-secondary"}`}>
           {isReconnecting ? t("waiting.reconnecting") : isBusy ? t("header.connecting") : `${hotkey} Overlay`}
         </span>
       </div>
 
       {/* Right: Actions */}
       <div className="relative z-10 flex items-center gap-1 bg-dark/40 p-1 rounded-xl border border-white/[0.03] shrink-0">
-        <button onClick={handleOpenChat} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded-lg transition-all" title={t("header.chat")}>
-          <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+        <button onClick={handleOpenChat} className="icon-btn" title={t("header.chat")}>
+          <MessageSquare className="w-[15px] h-[15px]" />
         </button>
 
         <button
           type="button"
           onClick={() => reconnect()}
           disabled={isBusy}
-          className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all ${
-            isBusy
-              ? "text-accent-gold bg-accent-gold/15 cursor-wait"
-              : "text-dim hover:text-white hover:bg-white/10"
-          }`}
+          className={`icon-btn ${isBusy ? "text-accent-gold! bg-accent-gold/15 cursor-wait" : ""}`}
           title={isReconnecting ? t("waiting.reconnecting") : t("header.reconnect")}
         >
-          <svg className={`w-[15px] h-[15px] ${isBusy ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M23 4v6h-6M1 20v-6h6" />
-            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-          </svg>
+          <RefreshCw className={`w-[15px] h-[15px] ${isBusy ? "animate-spin" : ""}`} />
         </button>
 
-        <button onClick={hideWindow} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-white/10 rounded-lg transition-all" title={`${t("header.hide")} (${hotkey})`}>
-          <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            {windowStyle === "docked" ? <path d="M15 18l-6-6 6-6" /> : <path d="M5 12h14" />}
-          </svg>
+        <button onClick={hideWindow} className="icon-btn" title={`${t("header.hide")} (${hotkey})`}>
+          {windowStyle === "docked" ? <PanelLeftClose className="w-[15px] h-[15px]" /> : <Minus className="w-[15px] h-[15px]" />}
         </button>
 
         <div className="w-[1px] h-3.5 bg-white/10 mx-0.5 shrink-0" />
 
-        <button onClick={closeApp} className="w-7 h-7 flex items-center justify-center text-dim hover:text-white hover:bg-accent-red/80 rounded-lg transition-all" title={t("header.close")}>
-          <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+        <button onClick={closeApp} className="icon-btn hover:bg-accent-red/80!" title={t("header.close")}>
+          <X className="w-[15px] h-[15px]" />
         </button>
       </div>
     </header>

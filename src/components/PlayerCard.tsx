@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { ChartColumn, History, LoaderCircle } from "lucide-react";
 
 interface Props {
   player: PlayerData;
@@ -35,6 +36,10 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const previousAgentIcon = player.previous_encounter_agent ? getAgentIcon(player.previous_encounter_agent) : null;
   const previousAgentName = player.previous_encounter_agent
     ? player.previous_encounter_agent.charAt(0).toUpperCase() + player.previous_encounter_agent.slice(1)
+    : null;
+
+  const agentLabel = player.agent
+    ? player.agent.charAt(0).toUpperCase() + player.agent.slice(1)
     : null;
 
   const statusColor = player.locked ? "bg-success" : player.agent ? "bg-warning" : "bg-dim";
@@ -168,7 +173,11 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
       )}
 
       {/* Agent icon or status dot */}
-      <div className="relative z-10 w-7 h-7 flex items-center justify-center ml-1">
+      {/* Agent name lives in the tooltip; the icon carries it visually. */}
+      <div
+        className="relative z-10 w-7 h-7 flex items-center justify-center ml-1 mr-1.5"
+        title={agentLabel ?? undefined}
+      >
         {agentIcon ? (
           <CachedImage
             src={agentIcon}
@@ -183,14 +192,6 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
           <div className={`w-2 h-2 rounded-full ${statusColor}`} />
         )}
       </div>
-
-      {/* Agent name */}
-      <span
-        className="relative z-10 w-14 ml-1 text-[10px] font-semibold truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
-        style={{ color: player.agent ? agentColor : "#4a5568" }}
-      >
-        {player.agent ? player.agent.charAt(0).toUpperCase() + player.agent.slice(1) : "—"}
-      </span>
 
       {/* Name — recalled ids stay visually distinct from a live Riot ID */}
       <span
@@ -219,25 +220,15 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
         {isAuthor && <AuthorCrown className="w-2.5 h-2.5 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]" title={t("player.authorHint")} />}
         {isOverlayUser && <OverlayUserMark title={t("player.overlayUserHint")} />}
         {fromHistory && (
-          <svg
-            className={`shrink-0 w-2.5 h-2.5 opacity-55 ${
+          <History className={`shrink-0 w-2.5 h-2.5 opacity-55 ${
               player.is_me ? "text-accent-gold/70" : "text-secondary"
-            }`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            aria-hidden
-          >
-            <circle cx="12" cy="12" r="8" />
-            <path d="M12 8v4l2.4 1.4" strokeLinecap="round" />
-          </svg>
+            }`} strokeWidth={2.4} aria-hidden />
         )}
       </span>
 
       {/* Level - left of stats button, tries initial data then stats data */}
       {(player.level > 0 || (stats?.account_level ?? 0) > 0) && (
-        <span className="relative z-10 text-[10px] text-dim mr-2 group-hover/row:text-primary transition-colors drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+        <span className="relative z-10 text-[10px] text-secondary/80 mr-2 group-hover/row:text-primary transition-colors drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
           {t("player.level")} {player.level > 0 ? player.level : (stats?.account_level ?? 0)}
         </span>
       )}
@@ -278,43 +269,24 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
         }
       >
         {loading ? (
-          <svg className="w-3.5 h-3.5 animate-spin text-dim" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
+          <LoaderCircle className="w-3.5 h-3.5 animate-spin text-dim" />
         ) : isRateLimited && !hasStats ? (
           <span className="text-[9px] font-bold text-warning">{rateLimitRemaining}</span>
         ) : (
-          <svg
-            className={`w-3.5 h-3.5 transition-colors ${
+          <ChartColumn className={`w-3.5 h-3.5 transition-colors ${
               fetchError
                 ? "text-red-500"
                 : hasStats
                     ? "text-accent-cyan group-hover:text-accent-cyan/80"
                     : "text-dim group-hover:text-accent-cyan/80"
-            }`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-            />
-          </svg>
+            }`} strokeWidth={2.4} />
         )}
       </button>
 
       {/* Rank */}
       {player.rank_tier > 0 && (
         <span
-          className="relative z-10 text-[11px] font-medium drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+          className="relative z-10 font-display text-[12px] font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
           style={{ color: rankColor }}
         >
           {rankName}
