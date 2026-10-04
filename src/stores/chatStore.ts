@@ -350,8 +350,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const { activeCid } = get();
     if (!activeCid) return false;
 
-    // Shortcuts (sa/as/<3) are applied in the Rust send path so they hit
-    // in-game Valorant chat (groupchat) the same way as DMs.
     try {
       const success = await invokeCommand<boolean>("send_message", {
         cid: activeCid,

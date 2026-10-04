@@ -46,7 +46,7 @@ export function SidePanel() {
       if (e.key === "Escape") {
         if (
           panelType === "settings" &&
-          (settingsSubView === "chat_shortcuts" || settingsSubView === "presets")
+          settingsSubView === "presets"
         ) {
           setSettingsSubView("main");
         } else if (panelType === "player" && playerSubView === "regulars" && playerSource !== "friends") {
@@ -72,9 +72,6 @@ export function SidePanel() {
   const getTitle = () => {
     switch (panelType) {
       case "settings":
-        if (settingsSubView === "chat_shortcuts") {
-          return t("settings.chatShortcutsEditorTitle");
-        }
         if (settingsSubView === "presets") {
           return t("presets.title");
         }

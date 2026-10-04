@@ -204,7 +204,7 @@ export function PresetsTab() {
           <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          {t("settings.chatShortcutsBack")}
+          {t("settings.back")}
         </button>
       </div>
 

@@ -3,7 +3,7 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import type { PlayerData, CrosshairLayer } from "../lib/types";
 
 type PanelType = "settings" | "player" | "stats" | "shop" | null;
-export type SettingsSubView = "main" | "chat_shortcuts" | "presets";
+export type SettingsSubView = "main" | "presets";
 export type PlayerSubView = "skins" | "regulars";
 export type PlayerSource = "roster" | "friends";
 

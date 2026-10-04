@@ -23,7 +23,7 @@ let bootstrapped = false;
  */
 export function useGameLoop() {
   const { setGameState, applyConnectionEvent, pushSettingsToBackend } = useGameStore();
-  const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc, syncChatShortcuts } = useSettingsStore();
+  const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
 
@@ -39,7 +39,6 @@ export function useGameLoop() {
       registerHotkey();
       syncAutoLockDelay();
       syncDiscordRpc();
-      syncChatShortcuts();
 
       // 2. Push persisted settings (autolock + pause intent) to the backend,
       //    which starts with an empty AppState on each launch.

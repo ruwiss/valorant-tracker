@@ -65,7 +65,6 @@ interface SettingsState {
   windowStyle: WindowStyle;
   autoLockDelaySeconds: number;
   discordRpcEnabled: boolean;
-  chatShortcutsEnabled: boolean;
   /** Hide to tray (true, default) vs normal taskbar minimize (false). */
   minimizeToTray: boolean;
   /** First-launch tip toast; shown once then persisted as seen. */
@@ -92,8 +91,6 @@ interface SettingsStore extends SettingsState {
   syncAutoLockDelay: () => void;
   setDiscordRpcEnabled: (enabled: boolean) => void;
   syncDiscordRpc: () => void;
-  setChatShortcutsEnabled: (enabled: boolean) => void;
-  syncChatShortcuts: () => void;
   setMinimizeToTray: (enabled: boolean) => void;
   markWelcomeSeen: () => void;
 }
@@ -233,7 +230,6 @@ export const useSettingsStore = create<SettingsStore>()(
       windowStyle: "docked" as WindowStyle, // Default docked
       autoLockDelaySeconds: DEFAULT_AUTO_LOCK_DELAY_SECONDS,
       discordRpcEnabled: true,
-      chatShortcutsEnabled: true,
       minimizeToTray: true,
       hasSeenWelcome: false,
 
@@ -264,18 +260,6 @@ export const useSettingsStore = create<SettingsStore>()(
       syncDiscordRpc: () => {
         afterSettingsHydrated(() => {
           invokeCommand("set_discord_rpc", { enabled: get().discordRpcEnabled }).catch(console.error);
-        });
-      },
-
-      setChatShortcutsEnabled: (enabled: boolean) => {
-        set({ chatShortcutsEnabled: enabled });
-        invokeCommand("set_chat_shortcuts", { enabled }).catch(console.error);
-      },
-
-      // Push the persisted chat-shortcut preference to the (fresh) backend.
-      syncChatShortcuts: () => {
-        afterSettingsHydrated(() => {
-          invokeCommand("set_chat_shortcuts", { enabled: get().chatShortcutsEnabled }).catch(console.error);
         });
       },
 
@@ -512,7 +496,6 @@ export const useSettingsStore = create<SettingsStore>()(
         windowStyle: state.windowStyle,
         autoLockDelaySeconds: state.autoLockDelaySeconds,
         discordRpcEnabled: state.discordRpcEnabled,
-        chatShortcutsEnabled: state.chatShortcutsEnabled,
         minimizeToTray: state.minimizeToTray,
         hasSeenWelcome: state.hasSeenWelcome,
       }),

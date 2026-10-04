@@ -183,8 +183,6 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
                     poll_interval_ms = POLL_WAITING_MS;
                     consecutive_connect_failures = WAITING_AFTER_FAILURES;
-                    #[cfg(windows)]
-                    crate::chat_expander::on_match_phase("idle");
                     last_phase = "idle".into();
                     tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
                     backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
@@ -287,12 +285,6 @@ pub fn start_supervisor(app: tauri::AppHandle) {
 
                 // Live match just ended → refresh last-match recap (details lag).
                 let phase = current_state.state.as_str();
-                if last_phase != phase {
-                    // Valorant tears down the chat widget between matches;
-                    // stale expander state made sa/as die after a few games.
-                    #[cfg(windows)]
-                    crate::chat_expander::on_match_phase(phase);
-                }
                 if (last_phase == "pregame" || last_phase == "ingame") && phase == "idle" {
                     crate::last_match::spawn_refresh(
                         app.clone(),
@@ -948,7 +940,6 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         ..Default::default()
                     };
                     *state.last_full_game_state.write() = Some(gs.clone());
-                    crate::chat_text::update_roster_from_game(&gs);
                     return Ok(gs);
                 }
                 // ally_team missing — fall through to hold/idle below
@@ -1030,7 +1021,6 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         *state.last_known_state.write() = "ingame".to_string();
                         *state.current_match_seen_ingame.write() = false;
                         *state.last_full_game_state.write() = Some(gs.clone());
-                        crate::chat_text::update_roster_from_game(&gs);
                         return Ok(gs);
                     } else {
                     let map_name = MAP_NAMES
@@ -1199,12 +1189,10 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             range_gs.map_name = Some(RANGE_MAP_NAME.into());
                             range_gs.mode_name = Some(RANGE_MAP_NAME.into());
                             *state.last_full_game_state.write() = Some(range_gs.clone());
-                            crate::chat_text::update_roster_from_game(&range_gs);
                             return Ok(range_gs);
                         }
                     }
                     *state.last_full_game_state.write() = Some(gs.clone());
-                    crate::chat_text::update_roster_from_game(&gs);
                     return Ok(gs);
                     }
                 }
@@ -1348,7 +1336,6 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     *state.last_known_state.write() = "idle".to_string();
     *state.consecutive_menus_count.write() = 0;
     *state.last_full_game_state.write() = None;
-    crate::chat_text::clear_roster();
 
     let activity = menu_activity(my_presence.as_ref().and_then(|p| p.party_state.as_deref()));
     let queue_raw = my_presence.as_ref().and_then(|p| p.queue_id.clone());
@@ -1764,43 +1751,6 @@ pub fn set_discord_rpc(state: State<'_, AppState>, enabled: bool) {
 #[tauri::command]
 pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
     state.discord.is_enabled()
-}
-
-/// Enable/disable outgoing chat shortcuts (`sa`, `as`, `<3`, agent tags).
-/// Covers both paths: the in-game keyboard expander and messages sent from the
-/// overlay's own chat panel.
-#[tauri::command]
-pub fn set_chat_shortcuts(enabled: bool) {
-    crate::chat_text::set_shortcuts_enabled(enabled);
-    #[cfg(windows)]
-    crate::chat_expander::on_enabled_changed(enabled);
-    tracing::info!("[Command] set_chat_shortcuts enabled={}", enabled);
-}
-
-/// Returns whether outgoing chat shortcuts are currently enabled.
-#[tauri::command]
-pub fn get_chat_shortcuts() -> bool {
-    crate::chat_text::shortcuts_enabled()
-}
-
-/// List editable chat shortcut rules (system defaults + user rules).
-#[tauri::command]
-pub fn get_chat_shortcut_rules() -> Vec<crate::chat_rules::ChatRule> {
-    crate::chat_rules::get_rules()
-}
-
-/// Replace the full rules list and persist to disk.
-#[tauri::command]
-pub fn save_chat_shortcut_rules(
-    rules: Vec<crate::chat_rules::ChatRule>,
-) -> Result<Vec<crate::chat_rules::ChatRule>, String> {
-    crate::chat_rules::set_rules(rules)
-}
-
-/// Restore factory default shortcuts (`sa`/`as`/symbols) and persist.
-#[tauri::command]
-pub fn reset_chat_shortcut_rules() -> Result<Vec<crate::chat_rules::ChatRule>, String> {
-    crate::chat_rules::reset_to_defaults()
 }
 
 /// Initial-sync helper: returns the current connection status so the frontend

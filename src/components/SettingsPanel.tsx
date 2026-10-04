@@ -10,7 +10,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { CachedImage } from "./CachedImage";
 import { PresetsTab } from "./PresetsTab";
-import { ChatShortcutsEditor } from "./ChatShortcutsEditor";
 import { invokeCommand } from "../utils/ipc";
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
@@ -40,7 +39,7 @@ type Tab = "autolock" | "general";
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, chatShortcutsEnabled, setChatShortcutsEnabled, minimizeToTray, setMinimizeToTray } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, minimizeToTray, setMinimizeToTray } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { constants } = useConstantsStore();
@@ -203,9 +202,6 @@ export function SettingsPanel() {
   }, [recording, handleHotkeyRecord]);
 
   // Nested editor views (after all hooks — rules of hooks).
-  if (settingsSubView === "chat_shortcuts") {
-    return <ChatShortcutsEditor />;
-  }
   if (settingsSubView === "presets") {
     return <PresetsTab />;
   }
@@ -542,33 +538,6 @@ export function SettingsPanel() {
                 </button>
               </div>
               <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.discordRpcDesc")}</p>
-            </section>
-
-            {/* Chat */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-black uppercase tracking-[0.14em] text-accent-cyan/90">
-                  {t("settings.sectionChat")}
-                </span>
-                <div className="flex-1 h-px bg-border/40" />
-              </div>
-              <label className="text-[10px] text-dim block mb-1">{t("settings.chatShortcuts")}</label>
-              <div className="flex gap-1.5">
-                <button onClick={() => setChatShortcutsEnabled(true)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${chatShortcutsEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.on")}
-                </button>
-                <button onClick={() => setChatShortcutsEnabled(false)} className={`flex-1 h-7 rounded text-[10px] font-semibold border transition-all ${!chatShortcutsEnabled ? "bg-accent-cyan/15 border-accent-cyan text-accent-cyan" : "border-border text-secondary hover:bg-card-hover"}`}>
-                  {t("settings.off")}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSettingsSubView("chat_shortcuts")}
-                className="w-full h-7 rounded text-[10px] font-semibold border border-border/60 text-secondary hover:bg-white/5 hover:text-primary transition-all"
-              >
-                {t("settings.chatShortcutsEdit")}
-              </button>
-              <p className="text-[9px] text-dim/70 leading-relaxed">{t("settings.chatShortcutsDesc")}</p>
             </section>
 
             {/* Presets */}

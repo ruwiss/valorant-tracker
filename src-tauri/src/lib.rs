@@ -1,8 +1,4 @@
 mod api;
-#[cfg(windows)]
-mod chat_expander;
-mod chat_rules;
-mod chat_text;
 mod commands;
 mod translate;
 mod constants;
@@ -106,11 +102,6 @@ pub fn run() -> RunResult {
             commands::reconnect,
             commands::set_discord_rpc,
             commands::get_discord_rpc,
-            commands::set_chat_shortcuts,
-            commands::get_chat_shortcuts,
-            commands::get_chat_shortcut_rules,
-            commands::save_chat_shortcut_rules,
-            commands::reset_chat_shortcut_rules,
             commands::get_connection_status,
             commands::get_player_loadout,
             commands::get_chat_messages,
@@ -168,13 +159,9 @@ pub fn run() -> RunResult {
             if let Ok(data_dir) = app.path().app_data_dir() {
                 let store = presets::PresetStore::load(presets::presets_path(&data_dir));
                 *app.state::<AppState>().presets.write() = Some(Arc::new(store));
-                // Editable chat shortcuts (sa/as/symbols + user rules)
-                chat_rules::init(chat_rules::rules_path(&data_dir));
                 crate::seen_names::init(&data_dir);
             } else {
                 tracing::error!("[Presets] Could not resolve app_data_dir; presets disabled");
-                // Still seed in-memory defaults so shortcuts work without persistence.
-                chat_rules::init(std::env::temp_dir().join("valorant-tracker-chat_shortcuts.json"));
                 crate::seen_names::init(&std::env::temp_dir());
             }
 
@@ -213,11 +200,6 @@ pub fn run() -> RunResult {
                     disable_browser_accelerator_keys(&webview);
                 });
             }
-
-            // In-game chat shortcuts (sa / as / <3) — native game chat box only
-            // works via keyboard expansion; the HTTP API never sees those keys.
-            #[cfg(windows)]
-            chat_expander::start();
 
             #[cfg(debug_assertions)]
             {

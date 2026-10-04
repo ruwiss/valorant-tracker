@@ -2388,12 +2388,9 @@ impl ValorantAPI {
         let auth = self.local_auth.read().clone();
         let url = format!("https://127.0.0.1:{}/chat/v6/messages", port);
 
-        // Shortcuts (sa/as/<3, agent tags) — shared with the in-game keyboard expander.
-        let message = crate::chat_text::transform_outgoing_chat(message);
-
         let body = SendChatRequest {
             cid: cid.to_string(),
-            message,
+            message: message.to_string(),
             message_type: message_type.to_string(),
         };
 
