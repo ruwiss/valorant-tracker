@@ -231,6 +231,7 @@ pub fn run() -> RunResult {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                telemetry::report_closed(app);
                 auto_update::install_on_exit(app);
             }
         });

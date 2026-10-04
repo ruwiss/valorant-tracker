@@ -236,7 +236,7 @@ pub static MAP_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
 /// Labels shown in the overlay. Panel telemetry uses `queue_label` instead.
 pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    m.insert("competitive", "Rekabet\u{00c3}\u{00a7}i");
+    m.insert("competitive", "Rekabetçi");
     m.insert("unrated", "Normal");
     m.insert("spikerush", "Spike Rush");
     m.insert("deathmatch", "Deathmatch");
@@ -246,7 +246,7 @@ pub static QUEUE_NAMES: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(||
     m.insert("swiftplay", "Swiftplay");
     m.insert("hurm", "Team Deathmatch");
     m.insert("premier", "Premier");
-    m.insert("custom", "\u{00c3}\u{2013}zel Oyun");
+    m.insert("custom", "Özel Oyun");
     m
 });
 
@@ -472,6 +472,15 @@ mod queue_tests {
             resolve_match_mode(None, Some("/Game/GameModes/Bomb/BombGameMode_C"), None, None),
             None
         );
+    }
+
+    #[test]
+    fn overlay_queue_names_are_valid_turkish() {
+        // These used to be mojibake ("RekabetÃ§i") and reached the overlay,
+        // Discord and the admin panel.
+        assert_eq!(QUEUE_NAMES.get("competitive"), Some(&"Rekabetçi"));
+        assert_eq!(QUEUE_NAMES.get("custom"), Some(&"Özel Oyun"));
+        assert!(QUEUE_NAMES.values().all(|v| !v.contains('Ã')));
     }
 
     #[test]

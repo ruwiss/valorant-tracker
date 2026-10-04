@@ -4,17 +4,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tokio::sync::Notify;
 
 const HEARTBEAT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(4);
 const NAME_RETRY: Duration = Duration::from_secs(300);
+/// Round score changes every ~100 s. Reporting each one doubled request
+/// volume for a field nobody needs to the second; batch score-only changes.
+const SCORE_THROTTLE: Duration = Duration::from_secs(120);
+/// Exit must not hold the app open: best effort, then give up.
+const EXIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PREFER: &str = "return=minimal";
 const ID_CAP: usize = 20;
+const REPORT_PATH: &str = "/rest/v1/rpc/report_telemetry";
 
+#[derive(Clone)]
 struct Config {
     url: String,
     anon_key: String,
@@ -64,10 +71,18 @@ struct NameCache {
     retry_at: Option<Instant>,
 }
 
+/// What the exit hook needs to mark this install closed.
+struct ExitCtx {
+    cfg: Config,
+    install_id: String,
+    session_id: String,
+}
+
+static EXIT_CTX: parking_lot::Mutex<Option<ExitCtx>> = parking_lot::Mutex::new(None);
+
 struct TaskState {
     session_id: String,
-    started_at: String,
-    session_inserted: bool,
+    last_report: Option<Instant>,
     phase: Option<String>,
     map: Option<String>,
     mode: Option<String>,
@@ -133,10 +148,15 @@ pub async fn run(app: AppHandle, bridge: Bridge) {
     };
     let client = app.state::<AppState>().http_client.clone();
     let gate = AtomicBool::new(false);
+    let session_id = uuid::Uuid::new_v4().to_string();
+    *EXIT_CTX.lock() = Some(ExitCtx {
+        cfg: bridge.cfg.clone(),
+        install_id: install_id.clone(),
+        session_id: session_id.clone(),
+    });
     let mut state = TaskState {
-        session_id: uuid::Uuid::new_v4().to_string(),
-        started_at: rfc3339_now(),
-        session_inserted: false,
+        session_id,
+        last_report: None,
         phase: None,
         map: None,
         mode: None,
@@ -232,6 +252,34 @@ fn subscribe(app: &AppHandle, bridge: &Bridge) {
     });
 }
 
+/// Fields that make the admin row stale when they change. Scores are kept
+/// apart so they can be throttled.
+#[derive(Clone, PartialEq)]
+struct Core {
+    phase: &'static str,
+    map: Option<String>,
+    mode: Option<String>,
+    queue_id: Option<String>,
+    party_state: Option<String>,
+    party_size: Option<i32>,
+    agent: Option<String>,
+}
+
+fn remember(state: &mut TaskState, core: &Core, scores: Option<(Option<i32>, Option<i32>)>, fp: &str) {
+    state.phase = Some(core.phase.to_string());
+    state.map = core.map.clone();
+    state.mode = core.mode.clone();
+    state.queue_id = core.queue_id.clone();
+    state.party_state = core.party_state.clone();
+    state.party_size = core.party_size;
+    state.agent = core.agent.clone();
+    if let Some((ally, enemy)) = scores {
+        state.ally_score = ally;
+        state.enemy_score = enemy;
+    }
+    state.roster_fp = Some(fp.to_string());
+}
+
 async fn flush(
     app: &AppHandle,
     bridge: &Bridge,
@@ -242,55 +290,52 @@ async fn flush(
     wake: Wake,
 ) {
     let snap = bridge.live.lock().clone();
-    let phase = phase_label(&snap.game_state, &snap.conn_status, snap.activity.as_deref());
-    let map = snap.map_name.clone();
-    let mode = snap.mode_name.clone();
-    let queue_id = snap.queue_id.clone();
-    let party_state = snap.party_state.clone();
-    let party_size = snap.party_size;
-    let ally_score = snap.ally_score;
-    let enemy_score = snap.enemy_score;
-    let agent = snap.agent.clone();
+    let core = Core {
+        phase: phase_label(&snap.game_state, &snap.conn_status, snap.activity.as_deref()),
+        map: snap.map_name.clone(),
+        mode: snap.mode_name.clone(),
+        queue_id: snap.queue_id.clone(),
+        party_state: snap.party_state.clone(),
+        party_size: snap.party_size,
+        agent: snap.agent.clone(),
+    };
+    let (ally_score, enemy_score) = (snap.ally_score, snap.enemy_score);
     let compact = compact_ids(&snap.roster);
     let fp = roster_fingerprint(&compact);
     let launch_or_heartbeat = matches!(wake, Wake::Launch | Wake::Heartbeat);
-    let phase_changed = state.phase.as_deref() != Some(phase)
-        || state.map != map
-        || state.mode != mode
-        || state.queue_id != queue_id
-        || state.party_state != party_state
-        || state.party_size != party_size
-        || state.ally_score != ally_score
-        || state.enemy_score != enemy_score
-        || state.agent != agent;
+    let core_changed = state.phase.as_deref() != Some(core.phase)
+        || state.map != core.map
+        || state.mode != core.mode
+        || state.queue_id != core.queue_id
+        || state.party_state != core.party_state
+        || state.party_size != core.party_size
+        || state.agent != core.agent;
+    let score_changed = state.ally_score != ally_score || state.enemy_score != enemy_score;
     let roster_changed = state.roster_fp.as_deref() != Some(fp.as_str());
 
-    if matches!(wake, Wake::Event) && !phase_changed && !roster_changed {
+    if matches!(wake, Wake::Event) && !core_changed && !score_changed && !roster_changed {
         return;
     }
 
-    let want_presence = should_upsert_presence(launch_or_heartbeat, phase_changed);
+    let score_throttled = score_throttled(
+        launch_or_heartbeat,
+        core_changed,
+        score_changed,
+        state.last_report.map(|t| t.elapsed()),
+    );
+    let want_report = launch_or_heartbeat || core_changed || (score_changed && !score_throttled);
     let fingerprint_done = state.lobby_done.as_deref() == Some(fp.as_str());
     let want_lobby = should_lookup_lobby(
         !compact.is_empty(),
         fingerprint_done,
         roster_changed,
-        phase_changed,
+        core_changed,
         launch_or_heartbeat,
     );
-    let want_session = launch_or_heartbeat;
 
-    if !want_presence && !want_lobby && !want_session {
-        state.phase = Some(phase.to_string());
-        state.map = map;
-        state.mode = mode;
-        state.queue_id = queue_id;
-        state.party_state = party_state;
-        state.party_size = party_size;
-        state.ally_score = ally_score;
-        state.enemy_score = enemy_score;
-        state.agent = agent;
-        state.roster_fp = Some(fp);
+    if !want_report && !want_lobby {
+        // Leave throttled scores unrecorded so a later flush still sees them.
+        remember(state, &core, None, &fp);
         return;
     }
 
@@ -299,21 +344,18 @@ async fn flush(
         return;
     };
 
-    state.phase = Some(phase.to_string());
-    state.map = map.clone();
-    state.mode = mode.clone();
-    state.queue_id = queue_id.clone();
-    state.party_state = party_state.clone();
-    state.party_size = party_size;
-    state.ally_score = ally_score;
-    state.enemy_score = enemy_score;
-    state.agent = agent.clone();
-    state.roster_fp = Some(fp.clone());
+    let scores = want_report.then_some((ally_score, enemy_score));
+    remember(state, &core, scores, &fp);
 
-    let now = rfc3339_now();
-    if want_presence {
+    if want_report {
         let (mut raw_puuid, mut roster_name) = current_identity(app, &snap);
-        if raw_puuid.is_none() || roster_name.is_none() {
+        // The local Riot ID lookup is only needed when the roster did not
+        // carry our identity and the name cache has nothing for it either.
+        let cached_name = raw_puuid
+            .as_deref()
+            .and_then(normalize_puuid)
+            .is_some_and(|n| state.names.puuid.as_deref() == Some(n.as_str()) && state.names.name.is_some());
+        if raw_puuid.is_none() || (roster_name.is_none() && !cached_name) {
             if let Some((id, name)) = app.state::<AppState>().api.get_my_riot_id().await {
                 if raw_puuid.is_none() && normalize_puuid(&id).is_some() {
                     raw_puuid = Some(id);
@@ -330,74 +372,30 @@ async fn flush(
             }
             _ => None,
         };
-        let region = current_region(app, &snap);
-        let body = PresenceBody {
+        let body = ReportBody {
             install_id,
-            puuid: norm.clone(),
-            riot_name: riot_name.clone(),
+            session_id: &state.session_id,
+            puuid: norm,
+            riot_name,
             app_version: APP_VERSION,
-            region,
-            phase,
-            map_name: map,
-            mode_name: mode,
-            queue_id,
-            party_state,
-            party_size,
+            region: current_region(app, &snap),
+            phase: core.phase,
+            map_name: core.map,
+            mode_name: core.mode,
+            queue_id: core.queue_id,
+            party_state: core.party_state,
+            party_size: core.party_size,
             ally_score,
             enemy_score,
-            agent,
-            session_started_at: &state.started_at,
-            last_seen: &now,
+            agent: core.agent,
         };
-        match write_json(client, &bridge.cfg, Method::Post, "/rest/v1/rpc/upsert_presence", &body).await {
+        // Stamp before sending so a failing endpoint is not hammered by
+        // every score change.
+        state.last_report = Some(Instant::now());
+        match write_json(client, &bridge.cfg, REPORT_PATH, &ReportRequest { payload: body }).await {
             Ok(status) if status.is_success() => {}
-            Ok(status) => tracing::warn!("[Telemetry] presence upsert HTTP {status}"),
-            Err(err) => tracing::warn!("[Telemetry] presence upsert failed: {err}"),
-        }
-        if let Some(puuid) = norm.as_deref() {
-            let user = UserBody {
-                puuid,
-                riot_name,
-                app_version: APP_VERSION,
-                install_id,
-                last_seen: &now,
-            };
-            match write_json(client, &bridge.cfg, Method::Post, "/rest/v1/rpc/upsert_user", &user).await {
-                Ok(status) if status.is_success() => {}
-                Ok(status) => tracing::warn!("[Telemetry] users upsert HTTP {status}"),
-                Err(err) => tracing::warn!("[Telemetry] users upsert failed: {err}"),
-            }
-        }
-    }
-
-    if want_session && !state.session_inserted {
-        let body = SessionInsert {
-            id: &state.session_id,
-            install_id,
-            started_at: &state.started_at,
-            ended_at: &state.started_at,
-            app_version: APP_VERSION,
-        };
-        match write_json(client, &bridge.cfg, Method::Post, "/rest/v1/rpc/upsert_session", &body).await {
-            Ok(status) if status.is_success() || status == reqwest::StatusCode::CONFLICT => {
-                state.session_inserted = true;
-            }
-            Ok(status) => tracing::warn!("[Telemetry] session insert HTTP {status}"),
-            Err(err) => tracing::warn!("[Telemetry] session insert failed: {err}"),
-        }
-    }
-    if want_session && state.session_inserted && matches!(wake, Wake::Heartbeat) {
-        let body = SessionInsert {
-            id: &state.session_id,
-            install_id,
-            started_at: &state.started_at,
-            ended_at: &now,
-            app_version: APP_VERSION,
-        };
-        match write_json(client, &bridge.cfg, Method::Post, "/rest/v1/rpc/upsert_session", &body).await {
-            Ok(status) if status.is_success() => {}
-            Ok(status) => tracing::warn!("[Telemetry] session patch HTTP {status}"),
-            Err(err) => tracing::warn!("[Telemetry] session patch failed: {err}"),
+            Ok(status) => tracing::warn!("[Telemetry] report HTTP {status}"),
+            Err(err) => tracing::warn!("[Telemetry] report failed: {err}"),
         }
     }
 
@@ -414,6 +412,43 @@ async fn flush(
             }
             Err(err) => tracing::warn!("[Telemetry] lobby lookup failed: {err}"),
         }
+    }
+}
+
+/// Exit hook: mark this install closed so the admin panel does not show it
+/// online for another six minutes. Blocks at most `EXIT_TIMEOUT`.
+pub fn report_closed(app: &AppHandle) {
+    let Some(ctx) = EXIT_CTX.lock().take() else {
+        return;
+    };
+    let client = app.state::<AppState>().http_client.clone();
+    let body = ReportRequest {
+        payload: ReportBody {
+            install_id: &ctx.install_id,
+            session_id: &ctx.session_id,
+            puuid: None,
+            riot_name: None,
+            app_version: APP_VERSION,
+            region: None,
+            phase: "closed",
+            map_name: None,
+            mode_name: None,
+            queue_id: None,
+            party_state: None,
+            party_size: None,
+            ally_score: None,
+            enemy_score: None,
+            agent: None,
+        },
+    };
+    let result = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(EXIT_TIMEOUT, write_json(&client, &ctx.cfg, REPORT_PATH, &body)).await
+    });
+    match result {
+        Ok(Ok(status)) if status.is_success() => tracing::info!("[Telemetry] marked closed"),
+        Ok(Ok(status)) => tracing::debug!("[Telemetry] close report HTTP {status}"),
+        Ok(Err(err)) => tracing::debug!("[Telemetry] close report failed: {err}"),
+        Err(_) => tracing::debug!("[Telemetry] close report timed out"),
     }
 }
 
@@ -499,7 +534,6 @@ async fn lookup_overlay_users(
     let resp = send(
         client,
         cfg,
-        Method::Post,
         "/rest/v1/rpc/match_overlay_users",
         &serde_json::json!({ "ids": ids }),
         false,
@@ -519,27 +553,23 @@ async fn lookup_overlay_users(
 async fn write_json(
     client: &reqwest::Client,
     cfg: &Config,
-    method: Method,
     path: &str,
     body: &impl Serialize,
 ) -> Result<reqwest::StatusCode, String> {
-    let resp = send(client, cfg, method, path, body, true).await?;
+    let resp = send(client, cfg, path, body, true).await?;
     Ok(resp.status())
 }
 
 async fn send(
     client: &reqwest::Client,
     cfg: &Config,
-    method: Method,
     path: &str,
     body: &impl Serialize,
     prefer: bool,
 ) -> Result<reqwest::Response, String> {
     let url = format!("{}{path}", cfg.url);
-    let mut req = match method {
-        Method::Post => client.post(&url),
-    };
-    req = req
+    let mut req = client
+        .post(&url)
         .timeout(HTTP_TIMEOUT)
         .header("User-Agent", "valorant-tracker")
         .header("apikey", &cfg.anon_key)
@@ -550,13 +580,12 @@ async fn send(
     req.json(body).send().await.map_err(|err| err.to_string())
 }
 
-enum Method {
-    Post,
-}
-
+/// `report_telemetry(payload jsonb)`: presence, user and session in one call.
+/// Timestamps are set by the server so a wrong local clock cannot skew them.
 #[derive(Serialize)]
-struct PresenceBody<'a> {
+struct ReportBody<'a> {
     install_id: &'a str,
+    session_id: &'a str,
     puuid: Option<String>,
     riot_name: Option<String>,
     app_version: &'static str,
@@ -570,26 +599,11 @@ struct PresenceBody<'a> {
     ally_score: Option<i32>,
     enemy_score: Option<i32>,
     agent: Option<String>,
-    session_started_at: &'a str,
-    last_seen: &'a str,
 }
 
 #[derive(Serialize)]
-struct UserBody<'a> {
-    puuid: &'a str,
-    riot_name: Option<String>,
-    app_version: &'static str,
-    install_id: &'a str,
-    last_seen: &'a str,
-}
-
-#[derive(Serialize)]
-struct SessionInsert<'a> {
-    id: &'a str,
-    install_id: &'a str,
-    started_at: &'a str,
-    ended_at: &'a str,
-    app_version: &'static str,
+struct ReportRequest<'a> {
+    payload: ReportBody<'a>,
 }
 
 #[derive(Serialize)]
@@ -658,8 +672,18 @@ fn blank_to_none(value: Option<String>) -> Option<String> {
     })
 }
 
-fn should_upsert_presence(launch_or_heartbeat: bool, phase_map_mode_changed: bool) -> bool {
-    launch_or_heartbeat || phase_map_mode_changed
+/// A score-only change waits until `SCORE_THROTTLE` has passed since the
+/// last report. Any other change, launch or heartbeat sends right away.
+fn score_throttled(
+    launch_or_heartbeat: bool,
+    core_changed: bool,
+    score_changed: bool,
+    since_last_report: Option<Duration>,
+) -> bool {
+    !launch_or_heartbeat
+        && !core_changed
+        && score_changed
+        && since_last_report.is_some_and(|d| d < SCORE_THROTTLE)
 }
 
 fn should_lookup_lobby(
@@ -732,38 +756,6 @@ fn phase_label(game_state: &str, conn_status: &str, activity: Option<&str>) -> &
         Some("custom") => "custom",
         _ => "idle",
     }
-}
-
-fn rfc3339_now() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    rfc3339(secs)
-}
-
-fn rfc3339(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
-    let tod = secs % 86_400;
-    let hour = tod / 3600;
-    let min = (tod % 3600) / 60;
-    let sec = tod % 60;
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}Z")
-}
-
-fn civil_from_days(z: i64) -> (i32, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m as u32, d as u32)
 }
 
 #[cfg(test)]
@@ -849,13 +841,25 @@ mod tests {
     }
 
     #[test]
-    fn score_only_change_does_not_request() {
-        assert!(!should_upsert_presence(false, false));
+    fn lobby_lookup_only_for_new_rosters() {
         assert!(!should_lookup_lobby(true, true, false, false, false));
         assert!(!should_lookup_lobby(true, false, false, false, false));
         assert!(should_lookup_lobby(true, false, true, false, false));
         assert!(should_lookup_lobby(true, false, false, true, false));
-        assert!(should_upsert_presence(true, false));
+    }
+
+    #[test]
+    fn score_only_changes_are_throttled() {
+        let recent = Some(Duration::from_secs(30));
+        let old = Some(SCORE_THROTTLE + Duration::from_secs(1));
+        // Score-only change shortly after a report waits.
+        assert!(score_throttled(false, false, true, recent));
+        // ...but goes out once the window passed or nothing was sent yet.
+        assert!(!score_throttled(false, false, true, old));
+        assert!(!score_throttled(false, false, true, None));
+        // Phase/map/agent changes and heartbeats are never held back.
+        assert!(!score_throttled(false, true, true, recent));
+        assert!(!score_throttled(true, false, true, recent));
     }
 
     #[test]
@@ -864,11 +868,5 @@ mod tests {
         assert_eq!(cfg.url, "https://x.supabase.co");
         assert_eq!(cfg.anon_key, "anon");
         assert!(resolve_config(Some(""), Some(""), None, None).is_none());
-    }
-
-    #[test]
-    fn rfc3339_formats_unix_epoch() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(86_400), "1970-01-02T00:00:00Z");
     }
 }

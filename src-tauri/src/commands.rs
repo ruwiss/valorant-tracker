@@ -1,6 +1,6 @@
 use crate::api::types::*;
 use crate::api::{MatchProbe, RemoteResult};
-use crate::constants::{resolve_match_mode, AGENTS, MAP_NAMES, QUEUE_NAMES};
+use crate::constants::{map_label, resolve_match_mode, AGENTS, QUEUE_NAMES};
 use crate::state::{AppState, EncounterPlayer};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -822,10 +822,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                 // Id was residual; fall through to coregame / idle logic.
             }
             RemoteResult::Ok(match_data) => {
-                let map_name = MAP_NAMES
-                    .get(match_data.map_id.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Unknown".into());
+                let map_name = map_label(&match_data.map_id);
                 let (report_mode, queue_id) = resolve_live_mode(
                     state,
                     &match_id,
@@ -1023,10 +1020,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                         *state.last_full_game_state.write() = Some(gs.clone());
                         return Ok(gs);
                     } else {
-                    let map_name = MAP_NAMES
-                        .get(match_data.map_id.as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "Unknown".into());
+                    let map_name = map_label(&match_data.map_id);
                     let match_queue = first_nonempty([
                         Some(match_data.queue_id.as_str()).filter(|s| !s.is_empty()),
                         match_data
