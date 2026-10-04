@@ -47,6 +47,7 @@ discord-rich-presence = "1.1"
 winreg = "0.55"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
+semver = "1"
 
 # Single-instance mechanism (Windows only)
 [target.'cfg(windows)'.dependencies]

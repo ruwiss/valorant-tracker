@@ -1,4 +1,5 @@
 mod api;
+mod auto_update;
 mod commands;
 mod translate;
 mod constants;
@@ -72,6 +73,18 @@ pub fn run() -> RunResult {
             SingleInstanceGuard::dummy()
         }
     };
+
+    let context = tauri::generate_context!();
+
+    // An update downloaded last session but never installed (app was killed
+    // before exit): install it now, before any window shows. The installer
+    // relaunches the new version.
+    if auto_update::install_pending_before_launch(
+        &context.config().identifier,
+        &context.package_info().version,
+    ) {
+        return RunResult::Completed;
+    }
 
     // Get the shutdown flag before we start (guard is Send-safe now)
     let shutdown_flag = guard.shutdown_flag();
@@ -148,6 +161,8 @@ pub fn run() -> RunResult {
             commands::log_frontend_message,
             commands::translate_text,
             commands::get_install_count,
+            commands::get_ready_update,
+            commands::restart_to_update,
             last_match::get_last_match,
         ])
         .setup(move |app| {
@@ -191,6 +206,9 @@ pub fn run() -> RunResult {
             // `connection_changed` / `game_state_changed` events to the frontend.
             commands::start_supervisor(app.handle().clone());
 
+            // Silent background update download; installs on next restart.
+            auto_update::start(app.handle().clone());
+
             // WebView2 treats Ctrl+F / Ctrl+P / F3 as browser chrome. The
             // tauri.conf `browserAcceleratorKeys` field isn't in 2.8/2.9
             // schema, so flip the setting on the live controller instead.
@@ -209,8 +227,13 @@ pub fn run() -> RunResult {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                auto_update::install_on_exit(app);
+            }
+        });
 
     RunResult::Completed
 }

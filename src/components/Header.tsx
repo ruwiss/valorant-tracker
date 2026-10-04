@@ -19,13 +19,13 @@ export function Header() {
   const hideWindow = useSettingsStore((s) => s.hideWindow);
   const windowStyle = useSettingsStore((s) => s.windowStyle);
   const getMapSplash = useAssetsStore((s) => s.getMapSplash);
-  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const initUpdates = useUpdateStore((s) => s.init);
   const setIsOpen = useChatStore((s) => s.setIsOpen);
   const closeSidePanel = usePanelStore((s) => s.close);
   const { t } = useI18n();
 
   useEffect(() => {
-    checkForUpdate();
+    initUpdates();
   }, []);
 
   const mapSplash = gameState.map_name ? getMapSplash(gameState.map_name) : null;

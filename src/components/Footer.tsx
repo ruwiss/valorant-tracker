@@ -16,11 +16,9 @@ export function Footer() {
   const openSettings = usePanelStore((s) => s.openSettings);
   const openShop = usePanelStore((s) => s.openShop);
   const close = usePanelStore((s) => s.close);
-  const updateAvailable = useUpdateStore((s) => s.updateAvailable);
-  const updateVersion = useUpdateStore((s) => s.updateVersion);
-  const isDownloading = useUpdateStore((s) => s.isDownloading);
-  const downloadProgress = useUpdateStore((s) => s.downloadProgress);
-  const downloadAndInstall = useUpdateStore((s) => s.downloadAndInstall);
+  const readyVersion = useUpdateStore((s) => s.readyVersion);
+  const isRestarting = useUpdateStore((s) => s.isRestarting);
+  const restartToUpdate = useUpdateStore((s) => s.restartToUpdate);
   const { t } = useI18n();
   const getAgentByUuid = useConstantsStore((s) => s.getAgentByUuid);
 
@@ -82,26 +80,21 @@ export function Footer() {
       </div>
       
       <div className="flex items-center gap-2 shrink-0">
-        {updateAvailable && (
+        {readyVersion && (
           <button
-            onClick={downloadAndInstall}
-            disabled={isDownloading}
+            onClick={restartToUpdate}
+            disabled={isRestarting}
             className="h-8 px-2.5 flex items-center gap-1.5 rounded-lg cursor-pointer bg-accent-gold/10 border border-accent-gold/20 text-accent-gold hover:bg-accent-gold/20 hover:border-accent-gold/40 transition-all shrink-0"
-            title={isDownloading ? `${downloadProgress}%` : `${t("header.update")} v${updateVersion}`}
+            title={t("footer.updateReady", { version: readyVersion })}
           >
-            {isDownloading ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-accent-gold border-t-transparent rounded-full animate-spin" />
-                <span className="text-[10px] font-bold">{downloadProgress}%</span>
-              </>
+            {isRestarting ? (
+              <div className="w-3.5 h-3.5 border-2 border-accent-gold border-t-transparent rounded-full animate-spin" />
             ) : (
-              <>
-                <svg className="w-3.5 h-3.5 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                </svg>
-                <span className="text-[10px] font-bold whitespace-nowrap">v{updateVersion}</span>
-              </>
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
+              </svg>
             )}
+            <span className="text-[10px] font-bold whitespace-nowrap">v{readyVersion}</span>
           </button>
         )}
         <button

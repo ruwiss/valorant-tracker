@@ -3134,6 +3134,18 @@ pub async fn get_install_count(
     Ok(crate::usage::report(&app, &state.http_client).await)
 }
 
+/// Version of a silently downloaded update waiting for the next restart.
+#[tauri::command]
+pub fn get_ready_update(app: tauri::AppHandle) -> Option<String> {
+    crate::auto_update::ready_version(&app)
+}
+
+/// Optional "restart now": install the downloaded update and relaunch.
+#[tauri::command]
+pub fn restart_to_update(app: tauri::AppHandle) -> Result<(), String> {
+    crate::auto_update::restart_and_install(&app)
+}
+
 #[tauri::command]
 pub fn minimize_window(window: tauri::Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
