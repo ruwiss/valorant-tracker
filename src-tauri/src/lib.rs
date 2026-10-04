@@ -49,6 +49,22 @@ fn disable_browser_accelerator_keys(webview: &tauri::webview::PlatformWebview) {
     }
 }
 
+/// Flip the WebView2 controller's visibility. While invisible it stops
+/// painting and throttles timers; the native window hide/minimize alone
+/// leaves it rendering in the background.
+pub fn set_webview_visible(window: &tauri::WebviewWindow, visible: bool) {
+    #[cfg(windows)]
+    {
+        let _ = window.with_webview(move |webview| unsafe {
+            if let Err(e) = webview.controller().SetIsVisible(visible) {
+                tracing::warn!("[WebView] SetIsVisible({visible}) failed: {e}");
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (window, visible);
+}
+
 /// Result of attempting to run the application
 pub enum RunResult {
     /// Application ran normally and exited
@@ -156,6 +172,7 @@ pub fn run() -> RunResult {
             commands::reset_license,
             commands::minimize_window,
             commands::close_window,
+            commands::set_webview_visible,
             commands::set_always_on_top,
             commands::focus_window,
             commands::open_log_file,
@@ -227,6 +244,16 @@ pub fn run() -> RunResult {
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Taskbar minimize/restore (non-tray mode) bypasses the frontend.
+            if let tauri::WindowEvent::Resized(_) = event {
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                    let minimized = window.is_minimized().unwrap_or(false);
+                    let shown = window.is_visible().unwrap_or(true);
+                    set_webview_visible(&webview, shown && !minimized);
+                }
+            }
         })
         .build(context)
         .expect("error while building tauri application")

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useGameStore } from "../stores/gameStore";
-import { useSettingsStore } from "../stores/settingsStore";
+import { setWebviewVisible, useSettingsStore } from "../stores/settingsStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
@@ -60,6 +60,7 @@ export function useGameLoop() {
       listen("show-overlay", async () => {
         await usePanelStore.getState().syncWindowToState();
         const win = getCurrentWindow();
+        await setWebviewVisible(true);
         if (!(await win.isVisible())) await win.show();
         if (await win.isMinimized()) await win.unminimize();
         await win.setFocus();

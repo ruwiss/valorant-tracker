@@ -3283,6 +3283,15 @@ pub fn minimize_window(window: tauri::Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
 }
 
+/// Tell WebView2 whether the overlay is on screen. Hiding/minimizing the
+/// native window does not do this, so a hidden overlay kept rendering
+/// (animations, timers) at full rate and cost the game FPS.
+#[tauri::command]
+pub fn set_webview_visible(window: tauri::WebviewWindow, visible: bool) -> Result<(), String> {
+    crate::set_webview_visible(&window, visible);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn close_window(window: tauri::Window) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())

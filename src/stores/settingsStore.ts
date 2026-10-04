@@ -184,6 +184,14 @@ async function isOverlayShown(win: Awaited<ReturnType<typeof getCurrentWindow>>)
   return !(await win.isMinimized());
 }
 
+/**
+ * Hiding/minimizing the native window leaves WebView2 painting in the
+ * background (and stealing GPU time from the game). Tell it explicitly.
+ */
+export async function setWebviewVisible(visible: boolean) {
+  await invokeCommand("set_webview_visible", { visible }, { suppressErrorToast: true }).catch(() => {});
+}
+
 async function concealWindow(
   win: Awaited<ReturnType<typeof getCurrentWindow>>,
   { windowStyle, minimizeToTray }: { windowStyle: WindowStyle; minimizeToTray: boolean },
@@ -193,9 +201,11 @@ async function concealWindow(
       await slideWindow(win, "out");
     }
     await win.hide();
+    await setWebviewVisible(false);
     return;
   }
   await win.minimize();
+  await setWebviewVisible(false);
 }
 
 async function revealWindow(
@@ -203,6 +213,7 @@ async function revealWindow(
   windowStyle: WindowStyle,
   fromMinimize: boolean,
 ) {
+  await setWebviewVisible(true);
   if (fromMinimize) {
     await win.unminimize();
     await win.show();
