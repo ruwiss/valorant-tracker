@@ -1,4 +1,5 @@
-use crate::api::types::{FrequentTeammatesResponse, PlayerSkinData};
+use crate::api::types::PlayerSkinData;
+use crate::recent_form::RecentFormResponse;
 use crate::api::ValorantAPI;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -78,9 +79,15 @@ pub struct AppState {
     pub last_match: RwLock<Option<crate::api::types::LastMatch>>,
 
     // On-demand "who do they queue with" scan (player panel).
-    pub frequent_teammates_cache: RwLock<HashMap<String, FrequentTeammatesResponse>>,
+    pub frequent_teammates_cache: RwLock<HashMap<String, crate::api::types::FrequentTeammatesResponse>>,
     pub last_frequent_lookup: RwLock<Option<std::time::Instant>>,
     pub frequent_lookup_busy: AtomicBool,
+
+    // On-demand recent competitive form (stats button). Same PD budget as
+    // frequent-teammate scans — the two must not burst at once.
+    pub recent_form_cache: RwLock<HashMap<String, RecentFormResponse>>,
+    pub last_recent_form_lookup: RwLock<Option<std::time::Instant>>,
+    pub recent_form_busy: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -131,6 +138,9 @@ impl AppState {
             frequent_teammates_cache: RwLock::new(HashMap::new()),
             last_frequent_lookup: RwLock::new(None),
             frequent_lookup_busy: AtomicBool::new(false),
+            recent_form_cache: RwLock::new(HashMap::new()),
+            last_recent_form_lookup: RwLock::new(None),
+            recent_form_busy: AtomicBool::new(false),
         }
     }
 }

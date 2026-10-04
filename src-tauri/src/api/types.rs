@@ -348,6 +348,8 @@ pub struct LatestCompetitiveUpdate {
     pub tier_before_update: Option<u32>,
     #[serde(default)]
     pub ranked_rating_before_update: Option<u32>,
+    #[serde(default, rename = "SeasonID")]
+    pub season_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -469,6 +471,8 @@ pub struct MatchPlayer {
     pub character_id: Option<String>,
     #[serde(default)]
     pub stats: Option<MatchPlayerStats>,
+    #[serde(default, alias = "RoundDamage")]
+    pub round_damage: Option<Vec<RoundDamage>>,
     #[serde(default)]
     pub competitive_tier: Option<i32>,
     #[serde(default)]
@@ -477,6 +481,19 @@ pub struct MatchPlayer {
     pub player_card: Option<String>,
     #[serde(default)]
     pub is_observer: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RoundDamage {
+    #[serde(default, alias = "Damage")]
+    pub damage: Option<i32>,
+    #[serde(default, alias = "Headshots")]
+    pub headshots: Option<i32>,
+    #[serde(default, alias = "Bodyshots")]
+    pub bodyshots: Option<i32>,
+    #[serde(default, alias = "Legshots")]
+    pub legshots: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

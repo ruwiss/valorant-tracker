@@ -5,7 +5,6 @@ use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use parking_lot::RwLock;
-use rquest_util::Emulation;
 use crate::party::{self, is_group_tag};
 use futures_util::future::join_all;
 use std::collections::{HashMap, HashSet};
@@ -33,7 +32,6 @@ struct LockfileData {
 
 pub struct ValorantAPI {
     client: reqwest::Client, // Standard client for Local Riot API (supports invalid certs)
-    tracker_client: rquest::Client, // Impersonation client for Tracker.gg
     pub puuid: RwLock<String>,
     pub region: RwLock<String>,
     pub shard: RwLock<String>,
@@ -97,16 +95,8 @@ impl ValorantAPI {
             .build()
             .unwrap();
 
-        // 2. Impersonation client for Tracker.gg (Chrome 120 - Safe fallback for v4)
-        let tracker_client = rquest::Client::builder()
-            .emulation(Emulation::Chrome120) // v4 supports this range reliably
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap();
-
         Self {
             client,
-            tracker_client,
             puuid: RwLock::new(String::new()),
             region: RwLock::new(String::new()),
             shard: RwLock::new(String::new()),
@@ -1827,6 +1817,45 @@ impl ValorantAPI {
             .unwrap_or_default()
     }
 
+    /// Last competitive match ids. `None` means the history request failed.
+    /// Entries with a non-competitive `QueueID` are dropped in case the query
+    /// filter is ignored.
+    pub async fn get_competitive_match_ids(&self, puuid: &str, take: usize) -> Option<Vec<String>> {
+        const SCAN: u32 = 20;
+        let url = self.pd_url(&format!(
+            "/match-history/v1/history/{}?startIndex=0&endIndex={}&queue=competitive",
+            puuid, SCAN
+        ));
+        match self.get_remote_ex::<MatchHistoryResponse>(&url).await {
+            RemoteResult::Ok(data) => Some(
+                data.history
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|h| match h.queue_id.as_deref() {
+                        Some(q) => q.eq_ignore_ascii_case("competitive"),
+                        None => true,
+                    })
+                    .map(|h| h.match_id)
+                    .take(take)
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// Current rank, this act's W/L, and peak tier from one MMR read.
+    pub async fn get_rank_snapshot(
+        &self,
+        puuid: &str,
+    ) -> Option<crate::recent_form::RankSnapshot> {
+        let url = self.pd_url(&format!("/mmr/v1/players/{}", puuid));
+        match self.get_remote_ex::<MmrResponse>(&url).await {
+            RemoteResult::Ok(data) => Some(crate::recent_form::rank_snapshot_from_mmr(&data)),
+            RemoteResult::NotFound => Some(crate::recent_form::RankSnapshot::default()),
+            RemoteResult::Transient => None,
+        }
+    }
+
     /// Like [`get_match_history`], but `None` means the request failed (retry).
     /// `Some(vec)` is a successful parse — empty when the player has no games.
     pub async fn get_match_history_opt(&self, puuid: &str, count: u32) -> Option<Vec<String>> {
@@ -2903,52 +2932,5 @@ impl ValorantAPI {
         }
     }
 
-    /// Fetch player stats from tracker.gg
-    pub async fn get_tracker_stats(
-        &self,
-        player_name: &str,
-    ) -> Result<serde_json::Value, ApiError> {
-        let encoded_name = urlencoding::encode(player_name);
-        let url = format!(
-            "https://api.tracker.gg/api/v2/valorant/standard/profile/riot/{}",
-            encoded_name
-        );
-
-        tracing::debug!("[Tracker] Fetching stats for {}...", player_name);
-
-        // Use impersonated client - no need for manual headers
-        // The client automatically handles User-Agent and TLS fingerprinting
-        // Use impersonation client for tracker.gg
-        let response = self
-            .tracker_client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| ApiError::RequestFailed(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            tracing::error!("[Tracker] request failed with status {}", status);
-
-            if status == 429 {
-                let retry_after = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|h| h.to_str().ok())
-                    .unwrap_or("60"); // Default to 60s if missing
-                return Err(ApiError::RequestFailed(format!("HTTP 429:{}", retry_after)));
-            }
-
-            return Err(ApiError::RequestFailed(format!("HTTP {}", status)));
-        }
-
-        let json = response
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| ApiError::ParseError(e.to_string()))?;
-
-        tracing::info!("[Tracker] Successfully fetched stats");
-        Ok(json)
-    }
 }
 

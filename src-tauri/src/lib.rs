@@ -14,6 +14,7 @@ mod telemetry;
 mod last_match;
 mod seen_names;
 mod party;
+mod recent_form;
 
 use single_instance::{SingleInstanceGuard, SingleInstanceResult};
 use state::AppState;
@@ -127,7 +128,7 @@ pub fn run() -> RunResult {
             commands::cancel_friend_request,
             commands::get_dm_cid,
             commands::get_cached_image,
-            commands::get_tracker_stats,
+            commands::get_recent_form,
             commands::get_peak_rank,
             commands::get_frequent_teammates,
             commands::get_storefront,

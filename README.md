@@ -14,7 +14,7 @@ Desktop overlay for VALORANT. Live match data, a few automation tools, and chat.
 - Open a player to see who they queued with in their last 12 games, and which agents they play most.
 - In The Range your own card is on the roster, so you can check skins and stats without queuing.
 - After a game the last-match card keeps the score and roster. Friend requests can be sent from there.
-- Player stats: K/D, win rate, ACS, peak rank, and other combat numbers.
+- Player stats: recent competitive K/D, win rate, ACS, and peak rank from the live client.
 - Daily shop and Night Market, with VP and Radianite balances.
 - Translate a foreign player name and see which language it came from.
 - Overlay chat shows friend DMs.

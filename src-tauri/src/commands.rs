@@ -1371,6 +1371,7 @@ fn ensure_rank_cache_match(state: &AppState, match_id: &str) {
         }
         state.cached_ranks.write().clear();
         state.ranks_mmr_fetched.write().clear();
+        state.recent_form_cache.write().clear();
         *state.cached_ranks_match_id.write() = Some(match_id.to_string());
     }
 }
@@ -2631,20 +2632,149 @@ pub async fn get_cached_image(
         Err(_) => Ok(None),
     }
 }
+/// Seconds another live PD burst must wait. Shared with frequent-teammate
+/// scans: 12 details / 2-wide inside 15s already 429'd the client.
+const RECENT_FORM_COOLDOWN_SECS: u64 = 20;
+const RECENT_FORM_TAKE: usize = 10;
+const RECENT_FORM_CONCURRENCY: usize = 2;
+
+fn pd_burst_wait(state: &AppState, cooldown_secs: u64) -> Option<u32> {
+    let busy = state.recent_form_busy.load(std::sync::atomic::Ordering::SeqCst)
+        || state.frequent_lookup_busy.load(std::sync::atomic::Ordering::SeqCst);
+    // Use the more recent of the two bursts so a frequent-teammate scan also
+    // holds the stats button, and the other way around.
+    let elapsed = match (
+        state.last_recent_form_lookup.read().map(|t| t.elapsed().as_secs()),
+        state.last_frequent_lookup.read().map(|t| t.elapsed().as_secs()),
+    ) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    match crate::recent_form::decide_scan(false, busy, elapsed, cooldown_secs) {
+        crate::recent_form::ScanDecision::Wait { retry_after_secs } => Some(retry_after_secs),
+        _ => None,
+    }
+}
+
+/// Recent competitive form from the local Riot session.
+///
+/// Same player is served from an in-memory cache until the match id changes.
+/// A different player has to wait out the cooldown, and only one scan runs
+/// at a time, so mashing the button cannot stampede match-details.
 #[tauri::command]
-pub async fn get_tracker_stats(
+pub async fn get_recent_form(
     state: State<'_, AppState>,
-    player_name: String,
-) -> Result<serde_json::Value, String> {
-    tracing::info!("[Command] get_tracker_stats() for player: {}", player_name);
+    puuid: String,
+) -> Result<crate::recent_form::RecentFormResponse, String> {
+    use crate::recent_form::{
+        aggregate_recent_form, form_match_from_details, response_from_parts, RecentFormResponse,
+    };
+    use futures_util::future::join_all;
+
+    if puuid.is_empty() {
+        return Ok(RecentFormResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(mut cached) = state.recent_form_cache.read().get(&puuid).cloned() {
+        cached.from_cache = true;
+        cached.retry_after_secs = 0;
+        return Ok(cached);
+    }
+
+    if !*state.api.connected.read() {
+        return Ok(RecentFormResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    }
+
+    if let Some(retry_after_secs) = pd_burst_wait(&state, RECENT_FORM_COOLDOWN_SECS) {
+        return Ok(RecentFormResponse {
+            status: "rate_limited".into(),
+            retry_after_secs,
+            ..Default::default()
+        });
+    }
+
+    if state
+        .recent_form_busy
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(RecentFormResponse {
+            status: "rate_limited".into(),
+            retry_after_secs: RECENT_FORM_COOLDOWN_SECS as u32,
+            ..Default::default()
+        });
+    }
+
+    if state.frequent_lookup_busy.load(Ordering::SeqCst) {
+        state.recent_form_busy.store(false, Ordering::SeqCst);
+        return Ok(RecentFormResponse {
+            status: "rate_limited".into(),
+            retry_after_secs: RECENT_FORM_COOLDOWN_SECS as u32,
+            ..Default::default()
+        });
+    }
+
+    if let Some(mut cached) = state.recent_form_cache.read().get(&puuid).cloned() {
+        state.recent_form_busy.store(false, Ordering::SeqCst);
+        cached.from_cache = true;
+        cached.retry_after_secs = 0;
+        return Ok(cached);
+    }
+
+    let api = state.api.clone();
+    let puuid_for_fetch = puuid.clone();
+    let fetched = async move {
+        let rank_fut = api.get_rank_snapshot(&puuid_for_fetch);
+        let history_fut = api.get_competitive_match_ids(&puuid_for_fetch, RECENT_FORM_TAKE);
+        let (rank, history) = futures_util::future::join(rank_fut, history_fut).await;
+        let match_ids = history?;
+        let mut slices = Vec::new();
+        let mut remaining = match_ids;
+        while !remaining.is_empty() {
+            let n = RECENT_FORM_CONCURRENCY.min(remaining.len());
+            let chunk: Vec<String> = remaining.drain(..n).collect();
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|id| {
+                    let mid = id.clone();
+                    let api = api.clone();
+                    async move { api.get_match_details(&mid).await }
+                })
+                .collect();
+            for details in join_all(futs).await {
+                let Some(details) = details else { continue };
+                if let Some(slice) = form_match_from_details(&details, &puuid_for_fetch) {
+                    slices.push(slice);
+                }
+            }
+        }
+        Some((rank.unwrap_or_default(), slices))
+    }
+    .await;
+
+    state.recent_form_busy.store(false, Ordering::SeqCst);
+    *state.last_recent_form_lookup.write() = Some(std::time::Instant::now());
+
+    let Some((rank, slices)) = fetched else {
+        tracing::warn!("[recent_form] history fetch failed for {}", puuid);
+        return Ok(RecentFormResponse {
+            status: "error".into(),
+            ..Default::default()
+        });
+    };
+
+    let response = response_from_parts(aggregate_recent_form(&slices), rank);
     state
-        .api
-        .get_tracker_stats(&player_name)
-        .await
-        .map_err(|e| {
-            tracing::error!("[Command] get_tracker_stats() failed: {}", e);
-            e.to_string()
-        })
+        .recent_form_cache
+        .write()
+        .insert(puuid, response.clone());
+    Ok(response)
 }
 
 /// Peak rank response type
@@ -2735,6 +2865,14 @@ pub async fn get_frequent_teammates(
     if !*state.api.connected.read() {
         return Ok(FrequentTeammatesResponse {
             status: "error".into(),
+            ..Default::default()
+        });
+    }
+
+    if state.recent_form_busy.load(Ordering::SeqCst) {
+        return Ok(FrequentTeammatesResponse {
+            status: "rate_limited".into(),
+            retry_after_secs: COOLDOWN_SECS as u32,
             ..Default::default()
         });
     }

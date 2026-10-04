@@ -6,6 +6,7 @@ import type { ConnectionEvent, GameState } from "../lib/types";
 import { useI18n } from "../lib/i18n";
 import { usePanelStore } from "./panelStore";
 import { useLastMatchStore } from "./lastMatchStore";
+import { usePlayerStatsStore } from "./playerStatsStore";
 
 /** Ignore a stale "connected" emit that races a just-clicked reconnect. */
 const RECONNECT_MIN_VISIBLE_MS = 600;
@@ -178,6 +179,10 @@ export const useGameStore = create<GameStore>()(
 
 					return { gameState: newState };
 				});
+
+				if (prev.match_id !== get().gameState.match_id) {
+					usePlayerStatsStore.getState().clearCache();
+				}
 
 				if (
 					wasLive &&

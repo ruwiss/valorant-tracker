@@ -23,9 +23,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 # Standard client for Local Riot API (native-tls for Windows)
 reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "deflate", "blocking"] }
-# Impersonation client for Tracker.gg (v4 to match rquest-util)
-rquest = { version = "4", features = ["json", "cookies", "gzip", "brotli", "deflate"] }
-rquest-util = "2"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 base64 = "0.22"
@@ -39,7 +36,6 @@ once_cell = "1.19"
 tauri-plugin-shell = "2.3.3"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-dialog = "2"
-urlencoding = "2.1"
 # Discord Rich Presence (pure-Rust IPC, no external process needed)
 discord-rich-presence = "1.1"
 

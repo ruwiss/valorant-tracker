@@ -21,7 +21,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
-  const { getError, getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
+  const { getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
 
   // Check if this player is currently selected (viewing skins)
   const isSelected = panelType === "player" && selectedPlayer?.puuid === player.puuid;
@@ -38,7 +38,6 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
     : null;
 
   const statusColor = player.locked ? "bg-success" : player.agent ? "bg-warning" : "bg-dim";
-  const isPrivate = getError(player.puuid) === "PROFILE_PRIVATE";
   const stats = getStats(player.puuid);
   const loading = isLoading(player.puuid);
   const hasStats = !!stats;
@@ -89,24 +88,24 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
 
   const handleStatsClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isPrivate || loading || isRateLimited) return;
+    if (loading) return;
 
+    // Cached player opens immediately, even while other clicks are cooling down.
     if (hasStats) {
       openStats(player);
       return;
     }
 
-    // Lazy load stats
-    await fetchStats(player.name, player.puuid);
-    // After fetch, check state again
+    if (isRateLimited) return;
+
+    await fetchStats(player.puuid);
     const newState = usePlayerStatsStore.getState();
     const newStats = newState.getStats(player.puuid);
     const newError = newState.getError(player.puuid);
 
     if (newStats && !newError) {
       openStats(player);
-    } else {
-      // Show error feedback for 2 seconds
+    } else if (newState.retryAfter <= Date.now()) {
       setFetchError(true);
       setTimeout(() => setFetchError(false), 2000);
     }
@@ -237,9 +236,9 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
       </span>
 
       {/* Level - left of stats button, tries initial data then stats data */}
-      {(player.level > 0 || (stats?.accountLevel ?? 0) > 0) && (
+      {(player.level > 0 || (stats?.account_level ?? 0) > 0) && (
         <span className="relative z-10 text-[10px] text-dim mr-2 group-hover/row:text-primary transition-colors drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-          {t("player.level")} {player.level > 0 ? player.level : (stats?.accountLevel ?? 0)}
+          {t("player.level")} {player.level > 0 ? player.level : (stats?.account_level ?? 0)}
         </span>
       )}
 
@@ -260,26 +259,22 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
       {/* Stats button */}
       <button
         onClick={handleStatsClick}
-        disabled={isPrivate || loading || isRateLimited}
+        disabled={loading || (isRateLimited && !hasStats)}
         className={`relative z-10 p-1 mr-1 rounded transition-colors group flex items-center justify-center ${
           loading
             ? "cursor-wait opacity-70"
-            : isRateLimited
+            : isRateLimited && !hasStats
               ? "opacity-50 cursor-not-allowed text-warning"
-              : isPrivate
-                ? "opacity-30 cursor-not-allowed"
-                : hasStats
-                  ? "hover:bg-accent-cyan/20 cursor-pointer"
-                  : "opacity-50 hover:opacity-100 hover:bg-accent-cyan/20 cursor-pointer"
+              : hasStats
+                ? "hover:bg-accent-cyan/20 cursor-pointer"
+                : "opacity-50 hover:opacity-100 hover:bg-accent-cyan/20 cursor-pointer"
         }`}
         title={
           loading
             ? t("stats.loading")
-            : isRateLimited
-              ? `Rate Limit! Wait ${rateLimitRemaining}s`
-              : isPrivate
-                ? t("player.hiddenProfile")
-                : t("stats.title")
+            : isRateLimited && !hasStats
+              ? t("stats.wait", { seconds: rateLimitRemaining })
+              : t("stats.title")
         }
       >
         {loading ? (
@@ -291,16 +286,14 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
             ></path>
           </svg>
-        ) : isRateLimited ? (
-          <span className="text-[9px] font-bold text-warning">429</span>
+        ) : isRateLimited && !hasStats ? (
+          <span className="text-[9px] font-bold text-warning">{rateLimitRemaining}</span>
         ) : (
           <svg
             className={`w-3.5 h-3.5 transition-colors ${
               fetchError
                 ? "text-red-500"
-                : isPrivate
-                  ? "text-dim"
-                  : hasStats
+                : hasStats
                     ? "text-accent-cyan group-hover:text-accent-cyan/80"
                     : "text-dim group-hover:text-accent-cyan/80"
             }`}
