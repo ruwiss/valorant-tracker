@@ -274,6 +274,8 @@
   }
   .pill.ingame { border-color: rgba(61,214,140,0.45); color: var(--ok); }
   .pill.pregame { border-color: rgba(226,177,90,0.5); color: var(--warn); }
+  .pill.queue { border-color: rgba(120,170,255,0.5); color: #9ec1ff; }
+  .pill.custom { border-color: rgba(190,150,255,0.5); color: #d2b8ff; }
   .pill.idle, .pill.paused, .pill.offline { color: var(--muted); }
 
   .pager {
@@ -358,6 +360,27 @@
     .menu-btn { display: inline-flex; }
     .search { display: none; }
   }
+  .stat .v small { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 6px; letter-spacing: 0; }
+  .live-pill .when { color: var(--faint); }
+  .badge-live {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    font-size: 10px;
+    color: var(--ok);
+    border: 1px solid rgba(61,214,140,0.45);
+    vertical-align: 1px;
+  }
+  .pill.closed { color: var(--faint); border-color: var(--line); }
+  .notice {
+    border: 1px solid rgba(255,70,85,0.35);
+    background: var(--accent-dim);
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .busy { opacity: 0.55; transition: opacity 0.15s; }
+  .table-wrap { overflow-x: auto; }
+  .sub { color: var(--faint); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -383,7 +406,7 @@
       <p class="muted">Bu ekran sadece sana açık.</p>
       <label class="field"><span>E-posta</span><input id="email" type="email" required autocomplete="username"></label>
       <label class="field"><span>Şifre</span><input id="password" type="password" required autocomplete="current-password"></label>
-      <button class="btn" type="submit">Giriş yap</button>
+      <button class="btn" type="submit" id="signin-btn">Giriş yap</button>
       <div id="login-error" class="err"></div>
     </form>
   </div>
@@ -408,8 +431,8 @@
       <button class="btn ghost small menu-btn" id="menu" type="button">Menü</button>
       <div class="crumb" id="crumb"></div>
       <div class="top-spacer"></div>
-      <div class="live-pill" id="live-pill"><i></i><span>bağlantı yok</span></div>
-      <input class="search" id="global-search" placeholder="İsim veya PUUID" autocomplete="off">
+      <div class="live-pill" id="live-pill"><i></i><span class="what">—</span><span class="when"></span></div>
+      <input class="search" id="global-search" placeholder="İsim veya PUUID, Enter" autocomplete="off">
       <button class="btn ghost small" id="refresh" type="button">Yenile</button>
     </header>
     <div class="page" id="page"></div>
@@ -419,40 +442,51 @@
 <aside class="drawer" id="drawer"></aside>
 
 <script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
 (function () {
   "use strict";
+
+  // ------------------------------------------------------------------
+  // Ücretsiz kota: Realtime yok. Tüm sayımlar sunucuda (admin_* RPC).
+  // Genel bakış / Canlı sekme görünürken 30 sn'de bir tek istekle
+  // yenilenir; listeler (Kullanıcılar / Oturumlar) yalnızca istenince.
+  // ------------------------------------------------------------------
+
   var cfg = window.TELEMETRY_CONFIG;
   if (!cfg || !cfg.url || !cfg.anonKey || cfg.url.indexOf("YOUR_PROJECT") !== -1 || cfg.anonKey.indexOf("YOUR_ANON_KEY") !== -1) {
     document.getElementById("config-error").style.display = "block";
     return;
   }
 
-  var supabase = window.supabase.createClient(cfg.url, cfg.anonKey);
+  var sb = window.supabase.createClient(cfg.url, cfg.anonKey);
   var PAGE = 25;
+  var POLL_MS = 30000;
+
+  var ROUTES = {
+    overview: { title: "Genel bakış", poll: true },
+    live: { title: "Canlı", poll: true },
+    users: { title: "Kullanıcılar", poll: false, sorts: ["riot_name", "app_version", "first_seen", "last_seen"], sort: "last_seen" },
+    sessions: { title: "Oturumlar", poll: false, sorts: ["started_at", "duration"], sort: "started_at" }
+  };
+  var PHASES = ["ingame", "pregame", "queue", "custom", "idle", "paused", "offline"];
+
   var state = {
-    route: "overview",
+    route: null,
     q: "",
     page: 1,
-    sort: "last_seen",
+    sort: "",
     asc: false,
-    phase: "all",
-    version: "all",
-    loading: false,
-    error: "",
-    cache: {}
+    phase: "",
+    version: "",
+    versions: null,
+    seq: 0,
+    timer: null,
+    loadedAt: 0,
+    user: null
   };
-  var views = {};
-  var viewsAt = {};
-  var binders = {};
 
-  var titles = {
-    overview: ["Genel bakış", "Bugün ve şu an"],
-    live: ["Canlı", "Son 6 dakikada görülen kurulumlar"],
-    users: ["Kullanıcılar", "Overlay kullanan Riot hesapları"],
-    sessions: ["Oturumlar", "Uygulama açılışları"]
-  };
+  // ---------------- yardımcılar ----------------
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -460,27 +494,25 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
-  function istanbulDay() {
-    var parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit"
-    }).formatToParts(new Date());
-    var y = "", m = "", d = "";
-    parts.forEach(function (p) {
-      if (p.type === "year") y = p.value;
-      else if (p.type === "month") m = p.value;
-      else if (p.type === "day") d = p.value;
-    });
-    return y + "-" + m + "-" + d + "T00:00:00+03:00";
+  // UTF-8'in Windows-1252 diye okunmasıyla bozulmuş Türkçe harfleri onarır
+  // (eski kayıtlar için; sunucu yeni kayıtları zaten düzeltiyor).
+  var MOJIBAKE = [["Ã§","ç"],["Ã‡","Ç"],["ÄŸ","ğ"],["Äž","Ğ"],["Ä±","ı"],["Ä°","İ"],["Ã¶","ö"],["Ã–","Ö"],["ÅŸ","ş"],["Åž","Ş"],["Ã¼","ü"],["Ãœ","Ü"]];
+  function fixText(s) {
+    if (s == null) return s;
+    s = String(s);
+    if (!/[ÃÄÅ]/.test(s)) return s;
+    MOJIBAKE.forEach(function (p) { s = s.split(p[0]).join(p[1]); });
+    return s;
   }
   function ago(iso) {
     if (!iso) return "—";
     var t = new Date(iso).getTime();
     if (isNaN(t)) return "—";
     var s = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (s < 60) return s + " sn";
-    if (s < 3600) return Math.floor(s / 60) + " dk";
-    if (s < 86400) return Math.floor(s / 3600) + " sa";
-    return Math.floor(s / 86400) + " g";
+    if (s < 60) return s + " sn önce";
+    if (s < 3600) return Math.floor(s / 60) + " dk önce";
+    if (s < 86400) return Math.floor(s / 3600) + " sa önce";
+    return Math.floor(s / 86400) + " gün önce";
   }
   function fmt(iso) {
     if (!iso) return "—";
@@ -491,466 +523,551 @@
       day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
     });
   }
+  function clock() {
+    return new Date().toLocaleTimeString("tr-TR", { timeZone: "Europe/Istanbul", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  function dur(sec) {
+    if (sec == null) return "—";
+    var m = Math.max(0, Math.round(sec / 60));
+    if (m < 1) return "<1 dk";
+    if (m < 60) return m + " dk";
+    return Math.floor(m / 60) + " sa " + (m % 60) + " dk";
+  }
+  function num(n) { return (n || 0).toLocaleString("tr-TR"); }
   function phaseLabel(p) {
-    return { idle: "Menü", pregame: "Ajan seçimi", ingame: "Oyunda", paused: "Durduruldu", offline: "Kapalı" }[p] || (p || "—");
+    return {
+      idle: "Menüde",
+      queue: "Kuyrukta",
+      custom: "Özel lobide",
+      pregame: "Ajan seçiminde",
+      ingame: "Oyunda",
+      paused: "Duraklatıldı",
+      offline: "Oyun kapalı",
+      closed: "Uygulama kapalı"
+    }[p] || (p || "—");
+  }
+  function modeLabel(raw) {
+    if (!raw) return "";
+    raw = fixText(raw);
+    var k = String(raw).toLocaleLowerCase("tr-TR").replace(/[\s_-]+/g, "");
+    var map = {
+      swiftplay: "Tam Gaz", tamgaz: "Tam Gaz",
+      competitive: "Rekabetçi", rekabetçi: "Rekabetçi", rekabetci: "Rekabetçi",
+      unrated: "Derecesiz", normal: "Derecesiz", derecesiz: "Derecesiz",
+      spikerush: "Spike Hücumu",
+      deathmatch: "Ölüm Kalım",
+      ggteam: "Tırmanış", escalation: "Tırmanış",
+      hurm: "Takım Ölüm Kalım", teamdeathmatch: "Takım Ölüm Kalım",
+      onefa: "Replikasyon", replication: "Replikasyon",
+      premier: "Premier", premierteam: "Premier",
+      custom: "Özel Oyun", customgame: "Özel Oyun", özeloyun: "Özel Oyun",
+      newmap: "Yeni Harita",
+      snowball: "Kartopu Savaşı", snowballfight: "Kartopu Savaşı"
+    };
+    return map[k] || raw;
+  }
+  function inMatch(r) { return r.phase === "ingame" || r.phase === "pregame"; }
+  function mapLabel(r) {
+    if (!inMatch(r) || !r.map_name) return "";
+    var m = fixText(r.map_name);
+    return /^unknown$/i.test(m) ? "Bilinmeyen harita" : m;
+  }
+  function scoreText(r) {
+    if (r.phase !== "ingame" || r.ally_score == null || r.enemy_score == null) return "";
+    return r.ally_score + "–" + r.enemy_score;
+  }
+  function detail(r) {
+    var bits = [];
+    var mode = modeLabel(r.mode_name);
+    if (mode && (inMatch(r) || r.phase === "queue" || r.phase === "custom")) bits.push(mode);
+    var map = mapLabel(r);
+    if (map) bits.push(map);
+    var score = scoreText(r);
+    if (score) bits.push(score);
+    if (r.agent && inMatch(r)) bits.push(r.agent);
+    if (r.party_size > 1) bits.push(r.party_size + " kişilik parti");
+    return bits.length ? bits.join(" · ") : "—";
   }
   function pill(p) {
-    var k = p || "offline";
+    var k = p || "closed";
     return '<span class="pill ' + esc(k) + '">' + esc(phaseLabel(k)) + "</span>";
   }
-  function safeQ(q) {
-    return q.replace(/[%_,.()]/g, "").trim();
+  function nameCell(name) {
+    return name ? esc(name) : '<span class="muted">İsimsiz</span>';
+  }
+  function debounce(fn, ms) {
+    var t;
+    return function () {
+      var args = arguments;
+      clearTimeout(t);
+      t = setTimeout(function () { fn.apply(null, args); }, ms || 250);
+    };
+  }
+  function rpc(name, args) {
+    return sb.rpc(name, args || {}).then(function (res) {
+      if (res.error) throw res.error;
+      return res.data;
+    });
+  }
+  function errText(e) {
+    var msg = (e && (e.message || e.error_description)) || String(e);
+    if (/forbidden|42501/i.test(msg) || (e && e.code === "42501")) return "Bu hesap yönetici değil (admins tablosunda yok).";
+    if (/admin_overview|admin_live|admin_users|admin_sessions|admin_detail/.test(msg) && /function|schema cache/i.test(msg)) {
+      return "Sunucu fonksiyonları bulunamadı. supabase/schema.sql dosyasını SQL Editor'da çalıştır.";
+    }
+    return msg;
   }
 
-  function setRoute(route, reset) {
+  // ---------------- yenileme durumu ----------------
+
+  function setPill(kind) {
+    var pillEl = $("live-pill");
+    var auto = ROUTES[state.route] && ROUTES[state.route].poll;
+    pillEl.classList.toggle("on", kind === "ok" && auto);
+    pillEl.querySelector(".what").textContent =
+      kind === "busy" ? "yükleniyor…" :
+      kind === "err" ? "hata" :
+      auto ? (document.visibilityState === "visible" ? "otomatik · 30 sn" : "duraklatıldı") : "elle yenile";
+    pillEl.querySelector(".when").textContent = state.loadedAt ? " · " + clock() : "";
+  }
+
+  function schedule() {
+    clearTimeout(state.timer);
+    if (!ROUTES[state.route] || !ROUTES[state.route].poll) return;
+    state.timer = setTimeout(function () {
+      if (document.visibilityState === "visible") load();
+      else schedule();
+    }, POLL_MS);
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!state.user || !state.route) return;
+    var auto = ROUTES[state.route].poll;
+    if (document.visibilityState === "visible" && auto && Date.now() - state.loadedAt > POLL_MS) load();
+    else setPill("ok");
+  });
+
+  // ---------------- yönlendirme ----------------
+
+  function routeFromHash() {
+    var r = (location.hash || "").replace(/^#\/?/, "");
+    return ROUTES[r] ? r : "overview";
+  }
+
+  function go(route) {
+    if (location.hash !== "#/" + route) location.hash = "#/" + route;
+    else enter(route);
+  }
+
+  window.addEventListener("hashchange", function () {
+    if (state.user) enter(routeFromHash());
+  });
+
+  function enter(route) {
+    var changed = state.route !== route;
     state.route = route;
-    var sorts = {
-      overview: ["last_seen"],
-      live: ["last_seen"],
-      users: ["riot_name", "app_version", "first_seen", "last_seen"],
-      sessions: ["started_at", "app_version"]
-    };
-    if (!sorts[route] || sorts[route].indexOf(state.sort) === -1) {
-      state.sort = route === "sessions" ? "started_at" : "last_seen";
-      state.asc = false;
-    }
-    if (reset) {
+    if (changed) {
       state.page = 1;
-      state.phase = "all";
-      state.version = "all";
-      state.sort = route === "sessions" ? "started_at" : "last_seen";
+      state.phase = "";
+      state.version = "";
+      state.sort = ROUTES[route].sort || "";
       state.asc = false;
     }
-    location.hash = "#/" + route;
     document.querySelectorAll("#nav button").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-route") === route);
     });
-    var t = titles[route];
-    $("crumb").innerHTML = "<strong>" + esc(t[0]) + "</strong>";
+    $("crumb").innerHTML = "<strong>" + esc(ROUTES[route].title) + "</strong>";
     $("rail").classList.remove("open");
-    if (views[route]) {
-      $("page").innerHTML = views[route];
-      $("page").setAttribute("data-route", route);
-      if (binders[route]) binders[route]();
-      if (!reset && Date.now() - viewsAt[route] < 20000) return;
+    $("global-search").value = state.q;
+    shell();
+    load();
+  }
+
+  // Sayfa iskeleti bir kez çizilir; yenilemede yalnızca #body değişir.
+  // Böylece arama kutusu yazarken sıfırlanmaz.
+  function shell() {
+    var r = state.route;
+    var head = {
+      overview: ["Genel bakış", "İstanbul saati. Çevrimiçi = son 6 dakikada sinyal gelen ve uygulaması açık kurulum."],
+      live: ["Canlı", "Şu an uygulaması açık kurulumlar."],
+      users: ["Kullanıcılar", "Overlay kullanan Riot hesapları."],
+      sessions: ["Oturumlar", "Uygulama açılışları, son 30 gün."]
+    }[r];
+    var tools = "";
+    if (r !== "overview") {
+      tools = '<div class="toolbar">' +
+        '<input class="grow" id="local-q" placeholder="İsim veya PUUID ara" autocomplete="off" value="' + esc(state.q) + '">' +
+        (r === "live" ? '<select id="phase">' + ['<option value="">Tüm durumlar</option>'].concat(PHASES.map(function (p) {
+          return '<option value="' + p + '"' + (state.phase === p ? " selected" : "") + ">" + esc(phaseLabel(p)) + "</option>";
+        })).join("") + "</select>" : "") +
+        '<select id="version"><option value="">Tüm sürümler</option></select>' +
+        "</div>";
     }
-    renderPage();
+    $("page").innerHTML =
+      '<div class="page-head"><div><h1>' + esc(head[0]) + "</h1><p>" + esc(head[1]) + "</p></div></div>" +
+      '<div id="notice"></div>' + tools + '<div id="body"><div class="loading">Yükleniyor…</div></div>';
+
+    var q = $("local-q");
+    if (q) q.oninput = debounce(function () { state.q = q.value; state.page = 1; $("global-search").value = state.q; load(); }, 300);
+    var phase = $("phase");
+    if (phase) phase.onchange = function () { state.phase = phase.value; state.page = 1; load(); };
+    var version = $("version");
+    if (version) version.onchange = function () { state.version = version.value; state.page = 1; load(); };
+    fillVersions(state.versions || []);
   }
 
-  function beginLoad() {
-    if (views[state.route]) return;
-    $("page").innerHTML = '<div class="loading">Yükleniyor…</div>';
+  function fillVersions(list) {
+    var sel = $("version");
+    if (!sel) return;
+    var current = state.version;
+    var opts = list.slice();
+    if (current && opts.indexOf(current) === -1) opts.unshift(current);
+    sel.innerHTML = '<option value="">Tüm sürümler</option>' + opts.map(function (v) {
+      return '<option value="' + esc(v) + '"' + (v === current ? " selected" : "") + ">" + esc(v) + "</option>";
+    }).join("");
   }
 
-  function saveView(bind) {
-    views[state.route] = $("page").innerHTML;
-    viewsAt[state.route] = Date.now();
-    binders[state.route] = bind || function () {};
-    binders[state.route]();
+  // Sürüm listesi (Kullanıcılar / Oturumlar filtresi). Bir kez çekilir.
+  function ensureVersions() {
+    if (state.versions) return Promise.resolve(state.versions);
+    return rpc("admin_overview").then(function (d) {
+      state.versions = (d.versions || []).map(function (x) { return x.v; }).filter(Boolean);
+      return state.versions;
+    }).catch(function () { return []; });
   }
 
-  function pager(total) {
-    var pages = Math.max(1, Math.ceil(total / PAGE));
-    if (state.page > pages) state.page = pages;
-    var from = total ? (state.page - 1) * PAGE + 1 : 0;
-    var to = Math.min(total, state.page * PAGE);
-    return '<div class="pager"><span>' + from + "–" + to + " / " + total + '</span><span class="spacer"></span>' +
-      '<button class="btn ghost small" data-page="prev" ' + (state.page <= 1 ? "disabled" : "") + '>Önceki</button>' +
-      '<span>' + state.page + " / " + pages + "</span>" +
-      '<button class="btn ghost small" data-page="next" ' + (state.page >= pages ? "disabled" : "") + '>Sonraki</button></div>';
-  }
+  // ---------------- yükleme ----------------
 
-  function bindPager(total) {
-    document.querySelectorAll("[data-page]").forEach(function (b) {
-      b.onclick = function () {
-        var pages = Math.max(1, Math.ceil(total / PAGE));
-        if (b.getAttribute("data-page") === "prev") state.page = Math.max(1, state.page - 1);
-        else state.page = Math.min(pages, state.page + 1);
-        renderPage();
-      };
+  var loaders = {};
+
+  function load() {
+    var route = state.route;
+    var seq = ++state.seq;
+    clearTimeout(state.timer);
+    setPill("busy");
+    var body = $("body");
+    if (body) body.classList.add("busy");
+    return loaders[route]().then(function (html) {
+      if (seq !== state.seq || route !== state.route) return;
+      $("notice").innerHTML = "";
+      $("body").innerHTML = html;
+      $("body").classList.remove("busy");
+      bindBody();
+      state.loadedAt = Date.now();
+      setPill("ok");
+      schedule();
+    }).catch(function (e) {
+      if (seq !== state.seq) return;
+      if ($("body")) $("body").classList.remove("busy");
+      $("notice").innerHTML = '<div class="notice">' + esc(errText(e)) + "</div>";
+      if ($("body") && /Yükleniyor/.test($("body").textContent)) $("body").innerHTML = "";
+      setPill("err");
+      schedule();
     });
   }
 
-  function bindSort() {
-    document.querySelectorAll("th[data-sort]").forEach(function (th) {
+  function bindBody() {
+    document.querySelectorAll("#body tr[data-puuid], #body tr[data-install]").forEach(function (tr) {
+      tr.onclick = function () { openDrawer(tr.getAttribute("data-puuid"), tr.getAttribute("data-install")); };
+    });
+    document.querySelectorAll("#body th[data-sort]").forEach(function (th) {
       th.onclick = function () {
         var key = th.getAttribute("data-sort");
         if (state.sort === key) state.asc = !state.asc;
-        else { state.sort = key; state.asc = false; }
+        else { state.sort = key; state.asc = key === "riot_name"; }
         state.page = 1;
-        renderPage();
+        load();
       };
     });
-  }
-
-  async function counts() {
-    var today = istanbulDay();
-    var ago30 = new Date(Date.now() - 30 * 86400000).toISOString();
-    var liveSince = new Date(Date.now() - 360000).toISOString();
-    var res = await Promise.all([
-      supabase.from("presence").select("install_id", { count: "exact", head: true }).gte("last_seen", liveSince),
-      supabase.from("sessions").select("install_id").or("started_at.gte." + today + ",ended_at.gte." + today),
-      supabase.from("users").select("puuid", { count: "exact", head: true }),
-      supabase.from("sessions").select("id", { count: "exact", head: true })
-    ]);
-    var todayIds = {};
-    (res[1].data || []).forEach(function (r) { if (r.install_id) todayIds[r.install_id] = 1; });
-    return {
-      online: res[0].count || 0,
-      today: Object.keys(todayIds).length,
-      users: res[2].count || 0,
-      sessions: res[3].count || 0,
-      error: [res[0], res[1], res[2], res[3]].filter(function (r) { return r.error; }).map(function (r) { return r.error.message; }).join(" · ")
-    };
-  }
-
-  async function renderOverview() {
-    if (!views.overview) {
-      $("page").innerHTML = '<div class="stats">' + [0,1,2,3].map(function () { return '<div class="stat"><div class="skel"></div><div class="skel"></div></div>'; }).join("") + "</div>";
-    }
-    var c = await counts();
-    var today = istanbulDay();
-    var ago30 = new Date(Date.now() - 30 * 86400000).toISOString();
-    var liveSince = new Date(Date.now() - 360000).toISOString();
-    var packed = await Promise.all([
-      supabase.from("sessions").select("started_at").gte("started_at", today).limit(1000),
-      supabase.from("users").select("app_version").gte("last_seen", ago30).limit(1000),
-      supabase.from("presence").select("riot_name,phase,map_name,mode_name,last_seen,app_version").gte("last_seen", liveSince).order("last_seen", { ascending: false }).limit(8),
-      supabase.from("sessions").select("install_id,started_at,app_version").order("started_at", { ascending: false }).limit(8)
-    ]);
-    var hours = new Array(24).fill(0);
-    (packed[0].data || []).forEach(function (r) {
-      var h = new Date(r.started_at).toLocaleString("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", hourCycle: "h23" });
-      var n = parseInt(h, 10);
-      if (!isNaN(n)) hours[n] += 1;
+    document.querySelectorAll("#body [data-page]").forEach(function (b) {
+      b.onclick = function () {
+        state.page = Math.max(1, state.page + (b.getAttribute("data-page") === "next" ? 1 : -1));
+        load();
+      };
     });
-    var maxH = Math.max.apply(null, hours.concat([1]));
-    var versions = {};
-    (packed[1].data || []).forEach(function (r) {
-      var v = r.app_version || "?";
-      versions[v] = (versions[v] || 0) + 1;
-    });
-    var vers = Object.keys(versions).sort(function (a, b) { return versions[b] - versions[a]; });
-    var maxV = vers.reduce(function (m, v) { return Math.max(m, versions[v]); }, 1);
-    var live = packed[2].data || [];
-    var recent = packed[3].data || [];
-
-    $("page").innerHTML =
-      '<div class="page-head"><div><h1>Genel bakış</h1><p>İstanbul günü. Çevrimiçi = son 6 dakika.</p></div></div>' +
-      (c.error ? '<div class="err">' + esc(c.error) + "</div>" : "") +
-      '<div class="stats">' +
-        stat("Şu an açık", c.online, "presence") +
-        stat("Bugün aktif", c.today, "kurulum") +
-        stat("Kullanıcı", c.users, "Riot hesabı") +
-        stat("Oturum", c.sessions, "tüm zamanlar") +
-      "</div>" +
-      '<div class="grid-2">' +
-        '<section class="panel"><h2>Bugünkü açılışlar</h2><div class="body">' +
-          '<div class="hour">' + hours.map(function (n) {
-            return '<span style="height:' + Math.max(4, Math.round(n / maxH * 92)) + 'px" title="' + n + '"></span>';
-          }).join("") + "</div>" +
-          '<div class="hour-labels"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>' +
-        "</div></section>" +
-        '<section class="panel"><h2>Sürüm, son 30 gün</h2><div class="body">' +
-          (vers.length ? vers.map(function (v) {
-            return '<div class="ver-row"><b>' + esc(v) + '</b><div class="track"><i style="width:' + Math.round(versions[v] / maxV * 100) + '%"></i></div><span>' + versions[v] + "</span></div>";
-          }).join("") : '<div class="empty">Kayıt yok.</div>') +
-        "</div></section>" +
-      "</div>" +
-      '<div class="grid-2">' +
-        '<section class="panel"><h2>Şu an oyunda veya menüde</h2>' + tableLive(live, true) + "</section>" +
-        '<section class="panel"><h2>Son açılışlar</h2>' +
-          (recent.length ? '<table><tbody>' + recent.map(function (r) {
-            return "<tr><td class=\"mono\">" + esc(ago(r.started_at)) + "</td><td>" + esc(r.app_version || "—") + '</td><td class="muted mono">' + esc((r.install_id || "").slice(0, 8)) + "</td></tr>";
-          }).join("") + "</tbody></table>" : '<div class="empty">Henüz oturum yok.</div>') +
-        "</section>" +
-      "</div>";
-    saveView(function () { bindRows(); });
-  }
-
-  function stat(k, v, s) {
-    return '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + "</div></div>";
-  }
-
-  function tableLive(rows, compact) {
-    if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
-    return '<table><thead><tr><th class="nosort">Oyuncu</th><th class="nosort">Durum</th>' +
-      (compact ? "" : '<th class="nosort">Harita</th><th class="nosort">Mod</th><th class="nosort">Sürüm</th>') +
-      '<th class="nosort">Görülme</th></tr></thead><tbody>' +
-      rows.map(function (r) {
-        return '<tr class="clickable" data-puuid="' + esc(r.puuid || "") + '" data-install="' + esc(r.install_id || "") + '"><td>' + esc(r.riot_name || "İsimsiz") + "</td><td>" + pill(r.phase) + "</td>" +
-          (compact ? "" : "<td>" + esc(r.map_name || "—") + "</td><td>" + esc(r.mode_name || "—") + "</td><td class=\"mono\">" + esc(r.app_version || "—") + "</td>") +
-          '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
-      }).join("") + "</tbody></table>";
-  }
-
-  async function renderLive() {
-    beginLoad();
-    var since = new Date(Date.now() - 360000).toISOString();
-    var res = await supabase.from("presence").select("*").gte("last_seen", since).order(state.sort || "last_seen", { ascending: state.asc });
-    var rows = res.data || [];
-    var q = state.q.toLowerCase();
-    rows = rows.filter(function (r) {
-      if (state.phase !== "all" && r.phase !== state.phase) return false;
-      if (state.version !== "all" && r.app_version !== state.version) return false;
-      if (!q) return true;
-      return (r.riot_name || "").toLowerCase().indexOf(q) !== -1 || (r.puuid || "").toLowerCase().indexOf(q) !== -1;
-    });
-    var versions = {};
-    (res.data || []).forEach(function (r) { if (r.app_version) versions[r.app_version] = 1; });
-    var total = rows.length;
-    var slice = rows.slice((state.page - 1) * PAGE, state.page * PAGE);
-    $("page").innerHTML =
-      '<div class="page-head"><div><h1>Canlı</h1><p>' + total + " kurulum, son 6 dakika.</p></div></div>" +
-      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
-      '<div class="toolbar">' +
-        '<input class="grow" id="local-q" placeholder="İsim veya PUUID" value="' + esc(state.q) + '">' +
-        '<select id="phase">' + ["all","ingame","pregame","idle","paused","offline"].map(function (p) {
-          return '<option value="' + p + '"' + (state.phase === p ? " selected" : "") + ">" + (p === "all" ? "Tüm durumlar" : phaseLabel(p)) + "</option>";
-        }).join("") + "</select>" +
-        '<select id="version"><option value="all">Tüm sürümler</option>' + Object.keys(versions).map(function (v) {
-          return '<option' + (state.version === v ? " selected" : "") + ">" + esc(v) + "</option>";
-        }).join("") + "</select>" +
-      "</div>" +
-      '<section class="panel">' + tableLive(slice, false) + pager(total) + "</section>";
-    saveView(function () {
-      bindPager(total);
-      bindRows();
-      var q = $("local-q");
-      if (q) q.oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.live = null; renderLive(); });
-      var phase = $("phase");
-      if (phase) phase.onchange = function (e) { state.phase = e.target.value; state.page = 1; views.live = null; renderLive(); };
-      var version = $("version");
-      if (version) version.onchange = function (e) { state.version = e.target.value; state.page = 1; views.live = null; renderLive(); };
-    });
-    keepSearch();
-  }
-
-  async function renderUsers() {
-    beginLoad();
-    var from = (state.page - 1) * PAGE;
-    var q = safeQ(state.q);
-    var query = supabase.from("users").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
-    if (q) query = query.or("riot_name.ilike.%" + q + "%,puuid.ilike.%" + q + "%");
-    if (state.version !== "all") query = query.eq("app_version", state.version);
-    var res = await query;
-    var rows = res.data || [];
-    var total = res.count || 0;
-    $("page").innerHTML =
-      '<div class="page-head"><div><h1>Kullanıcılar</h1><p>' + total + " hesap.</p></div></div>" +
-      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
-      '<div class="toolbar"><input class="grow" id="local-q" placeholder="İsim veya PUUID" value="' + esc(state.q) + '"></div>' +
-      '<section class="panel"><table><thead><tr>' +
-        th("Riot adı", "riot_name") + th("Sürüm", "app_version") + th("İlk", "first_seen") + th("Son", "last_seen") +
-        '<th class="nosort">PUUID</th></tr></thead><tbody>' +
-        (rows.length ? rows.map(function (r) {
-          return '<tr class="clickable" data-puuid="' + esc(r.puuid) + '" data-install="' + esc(r.install_id || "") + '">' +
-            "<td>" + esc(r.riot_name || "İsimsiz") + "</td>" +
-            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
-            '<td class="muted" title="' + esc(fmt(r.first_seen)) + '">' + esc(ago(r.first_seen)) + "</td>" +
-            '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td>" +
-            '<td class="mono muted">' + esc((r.puuid || "").slice(0, 8)) + "…</td></tr>";
-        }).join("") : '<tr><td colspan="5"><div class="empty">Kayıt yok.</div></td></tr>') +
-      "</tbody></table>" + pager(total) + "</section>";
-    bindPager(total);
-    bindSort();
-    bindRows();
-    $("local-q").oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.users = null; renderUsers(); });
-    saveView(function () {
-      bindPager(total);
-      bindSort();
-      bindRows();
-      var q = $("local-q");
-      if (q) q.oninput = debounce(function (e) { state.q = e.target.value; state.page = 1; views.users = null; renderUsers(); });
-    });
-    keepSearch();
-  }
-
-  async function renderSessions() {
-    beginLoad();
-    var from = (state.page - 1) * PAGE;
-    var query = supabase.from("sessions").select("*", { count: "exact" }).order(state.sort, { ascending: state.asc }).range(from, from + PAGE - 1);
-    if (state.version !== "all") query = query.eq("app_version", state.version);
-    var res = await query;
-    var rows = res.data || [];
-    var ids = rows.map(function (r) { return r.install_id; }).filter(Boolean);
-    var names = {};
-    if (ids.length) {
-      var users = await supabase.from("users").select("install_id,riot_name,puuid").in("install_id", ids);
-      (users.data || []).forEach(function (u) { names[u.install_id] = u; });
-    }
-    var total = res.count || 0;
-    $("page").innerHTML =
-      '<div class="page-head"><div><h1>Oturumlar</h1><p>Her uygulama açılışı bir satır.</p></div></div>' +
-      (res.error ? '<div class="err">' + esc(res.error.message) + "</div>" : "") +
-      '<section class="panel"><table><thead><tr>' +
-        th("Açılış", "started_at") + th("Sürüm", "app_version") + '<th class="nosort">Oyuncu</th><th class="nosort">Süre</th></tr></thead><tbody>' +
-        (rows.length ? rows.map(function (r) {
-          var u = names[r.install_id] || {};
-          var dur = "—";
-          if (r.started_at && r.ended_at) {
-            var mins = Math.max(0, Math.round((new Date(r.ended_at) - new Date(r.started_at)) / 60000));
-            dur = mins < 60 ? mins + " dk" : Math.floor(mins / 60) + " sa " + (mins % 60) + " dk";
-          }
-          return '<tr class="clickable" data-puuid="' + esc(u.puuid || "") + '" data-install="' + esc(r.install_id || "") + '">' +
-            '<td title="' + esc(fmt(r.started_at)) + '">' + esc(fmt(r.started_at)) + "</td>" +
-            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
-            "<td>" + esc(u.riot_name || "—") + "</td>" +
-            '<td class="muted">' + dur + "</td></tr>";
-        }).join("") : '<tr><td colspan="4"><div class="empty">Oturum yok.</div></td></tr>') +
-      "</tbody></table>" + pager(total) + "</section>";
-    saveView(function () {
-      bindPager(total);
-      bindSort();
-      bindRows();
+    document.querySelectorAll("#body [data-goto]").forEach(function (a) {
+      a.onclick = function (e) { e.preventDefault(); go(a.getAttribute("data-goto")); };
     });
   }
 
   function th(label, key) {
+    if (!key) return '<th class="nosort">' + label + "</th>";
     var mark = state.sort === key ? (state.asc ? " ↑" : " ↓") : "";
     return '<th data-sort="' + key + '">' + label + mark + "</th>";
   }
 
-  function keepSearch() {
-    var el = $("local-q");
-    if (!el || document.activeElement === el) return;
-    if (!state.q) return;
-    el.focus();
-    var n = el.value.length;
-    el.setSelectionRange(n, n);
-  }
-  function debounce(fn) {
-    var t;
-    return function (e) {
-      var v = e.target.value;
-      clearTimeout(t);
-      t = setTimeout(function () { fn({ target: { value: v } }); }, 220);
-    };
+  function pager(total) {
+    var pages = Math.max(1, Math.ceil(total / PAGE));
+    var from = total ? (state.page - 1) * PAGE + 1 : 0;
+    var to = Math.min(total, state.page * PAGE);
+    return '<div class="pager"><span>' + num(from) + "–" + num(to) + " / " + num(total) + '</span><span class="spacer"></span>' +
+      '<button class="btn ghost small" data-page="prev" ' + (state.page <= 1 ? "disabled" : "") + ">Önceki</button>" +
+      "<span>" + state.page + " / " + pages + "</span>" +
+      '<button class="btn ghost small" data-page="next" ' + (state.page >= pages ? "disabled" : "") + ">Sonraki</button></div>";
   }
 
-  function bindRows() {
-    document.querySelectorAll("tr.clickable").forEach(function (tr) {
-      tr.onclick = function () { openDrawer(tr.getAttribute("data-puuid"), tr.getAttribute("data-install")); };
+  function rowAttrs(puuid, install) {
+    return ' class="clickable" data-puuid="' + esc(puuid || "") + '" data-install="' + esc(install || "") + '"';
+  }
+
+  function stat(k, v, s) {
+    return '<div class="stat"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div><div class="s">' + s + "</div></div>";
+  }
+
+  function bars(items, labelFn) {
+    if (!items.length) return '<div class="empty">Kayıt yok.</div>';
+    var max = items.reduce(function (m, x) { return Math.max(m, x.n); }, 1);
+    return items.map(function (x) {
+      return '<div class="ver-row"><b>' + esc(labelFn(x)) + '</b><div class="track"><i style="width:' +
+        Math.max(2, Math.round(x.n / max * 100)) + '%"></i></div><span>' + num(x.n) + "</span></div>";
+    }).join("");
+  }
+
+  function liveTable(rows, compact) {
+    if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
+    return '<div class="table-wrap"><table><thead><tr>' + th("Oyuncu") + th("Durum") + th("Ne yapıyor") +
+      (compact ? "" : th("Sürüm") + th("Bölge")) + th("Son sinyal") + "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        return "<tr" + rowAttrs(r.puuid, r.install_id) + "><td>" + nameCell(r.riot_name) + "</td><td>" + pill(r.phase) +
+          "</td><td>" + esc(detail(r)) + "</td>" +
+          (compact ? "" : '<td class="mono">' + esc(r.app_version || "—") + '</td><td class="mono">' + esc((r.region || "—").toUpperCase()) + "</td>") +
+          '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+
+  loaders.overview = function () {
+    return rpc("admin_overview").then(function (d) {
+      state.versions = (d.versions || []).map(function (x) { return x.v; }).filter(Boolean);
+      var hours = d.hours || [];
+      var maxH = Math.max.apply(null, hours.concat([1]));
+      var phases = Object.keys(d.phases || {}).map(function (k) { return { k: k, n: d.phases[k] }; })
+        .sort(function (a, b) { return PHASES.indexOf(a.k) - PHASES.indexOf(b.k); });
+      var recent = d.recent || [];
+      return '<div class="stats">' +
+          stat("Şu an açık", num(d.online) + "<small>" + num(d.in_match) + " maçta</small>", "uygulaması açık kurulum") +
+          stat("Bugün aktif", num(d.today), num(d.launches_today) + " açılış") +
+          stat("Kullanıcı", num(d.users), "Riot hesabı, tüm zamanlar") +
+          stat("Kurulum", num(d.installs_30d), "son 30 günde görülen") +
+        "</div>" +
+        '<div class="grid-2">' +
+          '<section class="panel"><h2>Bugünkü açılışlar (saat)</h2><div class="body">' +
+            '<div class="hour">' + hours.map(function (n, h) {
+              return '<span style="height:' + Math.max(2, Math.round(n / maxH * 92)) + 'px" title="' + (h < 10 ? "0" : "") + h + ":00 · " + n + ' açılış"></span>';
+            }).join("") + "</div>" +
+            '<div class="hour-labels"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>' +
+          "</div></section>" +
+          '<section class="panel"><h2>Şu an ne yapıyorlar</h2><div class="body">' +
+            bars(phases, function (x) { return phaseLabel(x.k); }) +
+          "</div></section>" +
+        "</div>" +
+        '<div class="grid-2">' +
+          '<section class="panel"><h2>Canlı <a href="#/live" data-goto="live" class="sub">tümü →</a></h2>' + liveTable(d.live || [], true) + "</section>" +
+          '<section class="panel"><h2>Sürümler (kurulum, son 30 gün)</h2><div class="body">' +
+            bars(d.versions || [], function (x) { return x.v || "?"; }) +
+          "</div></section>" +
+        "</div>" +
+        '<section class="panel"><h2>Son açılışlar <a href="#/sessions" data-goto="sessions" class="sub">tümü →</a></h2>' +
+          (recent.length ? '<div class="table-wrap"><table><tbody>' + recent.map(function (r) {
+            return "<tr" + rowAttrs(r.puuid, r.install_id) + "><td>" + nameCell(r.riot_name) + '</td><td class="mono">' +
+              esc(r.app_version || "—") + '</td><td class="muted" title="' + esc(fmt(r.started_at)) + '">' + esc(ago(r.started_at)) + "</td></tr>";
+          }).join("") + "</tbody></table></div>" : '<div class="empty">Henüz oturum yok.</div>') +
+        "</section>";
+    });
+  };
+
+  loaders.live = function () {
+    return rpc("admin_live", {
+      p_phase: state.phase || null,
+      p_version: state.version || null,
+      p_q: state.q || null,
+      p_offset: (state.page - 1) * PAGE,
+      p_limit: PAGE
+    }).then(function (d) {
+      fillVersions(d.versions || []);
+      return '<section class="panel">' + liveTable(d.rows || [], false) + pager(d.total || 0) + "</section>";
+    });
+  };
+
+  loaders.users = function () {
+    return ensureVersions().then(function (vs) {
+      fillVersions(vs);
+      return rpc("admin_users", {
+        p_q: state.q || null,
+        p_version: state.version || null,
+        p_sort: state.sort,
+        p_asc: state.asc,
+        p_offset: (state.page - 1) * PAGE,
+        p_limit: PAGE
+      });
+    }).then(function (d) {
+      var rows = d.rows || [];
+      return '<section class="panel"><div class="table-wrap"><table><thead><tr>' +
+          th("Riot adı", "riot_name") + th("Durum") + th("Sürüm", "app_version") + th("İlk görülme", "first_seen") + th("Son görülme", "last_seen") + th("PUUID") +
+        "</tr></thead><tbody>" +
+        (rows.length ? rows.map(function (r) {
+          return "<tr" + rowAttrs(r.puuid, r.install_id) + ">" +
+            "<td>" + nameCell(r.riot_name) + "</td>" +
+            "<td>" + (r.live_phase ? pill(r.live_phase) : '<span class="muted">—</span>') + "</td>" +
+            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
+            '<td class="muted" title="' + esc(fmt(r.first_seen)) + '">' + esc(fmt(r.first_seen)) + "</td>" +
+            '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td>" +
+            '<td class="mono muted">' + esc((r.puuid || "").slice(0, 8)) + "…</td></tr>";
+        }).join("") : '<tr><td colspan="6"><div class="empty">Kayıt yok.</div></td></tr>') +
+        "</tbody></table></div>" + pager(d.total || 0) + "</section>";
+    });
+  };
+
+  loaders.sessions = function () {
+    return ensureVersions().then(function (vs) {
+      fillVersions(vs);
+      return rpc("admin_sessions", {
+        p_q: state.q || null,
+        p_version: state.version || null,
+        p_sort: state.sort,
+        p_asc: state.asc,
+        p_offset: (state.page - 1) * PAGE,
+        p_limit: PAGE
+      });
+    }).then(function (d) {
+      var rows = d.rows || [];
+      return '<section class="panel"><div class="table-wrap"><table><thead><tr>' +
+          th("Açılış", "started_at") + th("Oyuncu") + th("Sürüm") + th("Süre", "duration") +
+        "</tr></thead><tbody>" +
+        (rows.length ? rows.map(function (r) {
+          return "<tr" + rowAttrs(r.puuid, r.install_id) + ">" +
+            "<td>" + esc(fmt(r.started_at)) + "</td>" +
+            "<td>" + nameCell(r.riot_name) + "</td>" +
+            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
+            "<td>" + esc(dur(r.duration)) + (r.live ? '<span class="badge-live">açık</span>' : "") + "</td></tr>";
+        }).join("") : '<tr><td colspan="4"><div class="empty">Oturum yok.</div></td></tr>') +
+        "</tbody></table></div>" + pager(d.total || 0) + "</section>";
+    });
+  };
+
+  // ---------------- detay paneli ----------------
+
+  var drawerSeq = 0;
+  function kv(k, v) { return "<span>" + esc(k) + "</span><div>" + v + "</div>"; }
+
+  function openDrawer(puuid, install) {
+    var seq = ++drawerSeq;
+    $("drawer-back").classList.add("on");
+    $("drawer").classList.add("on");
+    $("drawer").innerHTML = '<header><h3>Yükleniyor…</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>';
+    $("close-drawer").onclick = closeDrawer;
+    rpc("admin_detail", { p_puuid: puuid || null, p_install: install || null }).then(function (d) {
+      if (seq !== drawerSeq) return;
+      var u = d.user || {};
+      var p = d.presence || null;
+      var live = p && p.phase !== "closed" && Date.now() - new Date(p.last_seen).getTime() < 360000;
+      var name = u.riot_name || (p && p.riot_name) || "İsimsiz";
+      var id = u.puuid || puuid || "";
+      var rows = kv("Durum", live ? pill(p.phase) : pill("closed"));
+      if (live) {
+        rows += kv("Ne yapıyor", esc(detail(p)));
+        if (inMatch(p)) {
+          rows += kv("Harita", esc(mapLabel(p) || "—"));
+          rows += kv("Ajan", esc(p.agent || "—"));
+          if (p.phase === "ingame") rows += kv("Skor", esc(scoreText(p) || "—"));
+        }
+        if (p.mode_name) rows += kv("Mod", esc(modeLabel(p.mode_name)));
+        if (p.party_size) rows += kv("Parti", esc(p.party_size > 1 ? p.party_size + " kişi" : "Tek"));
+      }
+      rows += kv("Son sinyal", esc(p ? ago(p.last_seen) + " · " + fmt(p.last_seen) : "—"));
+      rows += kv("Sürüm", esc((p && p.app_version) || u.app_version || "—"));
+      rows += kv("Bölge", esc(((p && p.region) || "—").toUpperCase()));
+      rows += kv("İlk görülme", esc(fmt(u.first_seen)));
+      rows += kv("PUUID", id ? '<div class="mono">' + esc(id) + '</div><button class="copy" id="copy-id" type="button">Kopyala</button>' : "—");
+      rows += kv("Kurulum", '<div class="mono">' + esc((p && p.install_id) || install || u.install_id || "—") + "</div>");
+
+      var accounts = d.accounts || [];
+      var sessions = d.sessions || [];
+      $("drawer").innerHTML =
+        '<header><h3>' + esc(name) + '</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>' +
+        '<div class="kv">' + rows + "</div>" +
+        (accounts.length > 1 ? '<section class="panel" style="margin:0 16px 16px"><h2>Bu kurulumdaki hesaplar</h2><table><tbody>' +
+          accounts.map(function (a) {
+            return "<tr><td>" + nameCell(a.riot_name) + '</td><td class="muted">' + esc(ago(a.last_seen)) + "</td></tr>";
+          }).join("") + "</tbody></table></section>" : "") +
+        '<section class="panel" style="margin:0 16px 16px"><h2>Son oturumlar</h2>' +
+          (sessions.length ? "<table><tbody>" + sessions.map(function (s) {
+            return "<tr><td>" + esc(fmt(s.started_at)) + "</td><td>" + esc(dur(s.duration)) + '</td><td class="mono">' + esc(s.app_version || "—") + "</td></tr>";
+          }).join("") + "</tbody></table>" : '<div class="empty">Oturum yok.</div>') +
+        "</section>";
+      $("close-drawer").onclick = closeDrawer;
+      var copy = $("copy-id");
+      if (copy) copy.onclick = function () {
+        navigator.clipboard.writeText(id).then(function () { copy.textContent = "Kopyalandı"; });
+      };
+    }).catch(function (e) {
+      if (seq !== drawerSeq) return;
+      $("drawer").innerHTML = '<header><h3>Hata</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>' +
+        '<div class="kv"><div class="notice" style="grid-column:1/-1">' + esc(errText(e)) + "</div></div>";
+      $("close-drawer").onclick = closeDrawer;
     });
   }
 
-  async function openDrawer(puuid, installId) {
-    $("drawer-back").classList.add("on");
-    $("drawer").classList.add("on");
-    $("drawer").innerHTML = '<header><h3>Yükleniyor</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>';
-    $("close-drawer").onclick = closeDrawer;
-    var userQ = puuid
-      ? supabase.from("users").select("*").eq("puuid", puuid).maybeSingle()
-      : supabase.from("users").select("*").eq("install_id", installId).maybeSingle();
-    var userRes = await userQ;
-    var user = userRes.data;
-    var inst = (user && user.install_id) || installId;
-    var presence = inst
-      ? await supabase.from("presence").select("*").eq("install_id", inst).maybeSingle()
-      : { data: null };
-    var sessions = inst
-      ? await supabase.from("sessions").select("*").eq("install_id", inst).order("started_at", { ascending: false }).limit(8)
-      : { data: [] };
-    var name = (user && user.riot_name) || (presence.data && presence.data.riot_name) || "İsimsiz";
-    var id = (user && user.puuid) || puuid || "";
-    $("drawer").innerHTML =
-      '<header><h3>' + esc(name) + '</h3><button class="btn ghost small" id="close-drawer" type="button">Kapat</button></header>' +
-      '<div class="kv">' +
-        row("Durum", presence.data ? pill(presence.data.phase) : "—") +
-        row("Harita", esc((presence.data && presence.data.map_name) || "—")) +
-        row("Mod", esc((presence.data && presence.data.mode_name) || "—")) +
-        row("Sürüm", esc((user && user.app_version) || "—")) +
-        row("Bölge", esc((presence.data && presence.data.region) || "—")) +
-        row("İlk", esc(fmt(user && user.first_seen))) +
-        row("Son", esc(fmt((user && user.last_seen) || (presence.data && presence.data.last_seen)))) +
-        '<span>PUUID</span><div><div class="mono">' + esc(id || "—") + '</div>' + (id ? '<button class="copy" id="copy-id" type="button">Kopyala</button>' : "") + "</div>" +
-      "</div>" +
-      '<section class="panel" style="margin:0 16px 16px"><h2>Son oturumlar</h2>' +
-        ((sessions.data || []).length ? "<table><tbody>" + sessions.data.map(function (s) {
-          return "<tr><td>" + esc(fmt(s.started_at)) + '</td><td class="mono">' + esc(s.app_version || "—") + "</td></tr>";
-        }).join("") + "</tbody></table>" : '<div class="empty">Oturum yok.</div>') +
-      "</section>";
-    $("close-drawer").onclick = closeDrawer;
-    var copy = $("copy-id");
-    if (copy) copy.onclick = function () { navigator.clipboard.writeText(id); copy.textContent = "Kopyalandı"; };
-  }
-  function row(k, v) { return "<span>" + k + "</span><div>" + v + "</div>"; }
   function closeDrawer() {
+    drawerSeq++;
     $("drawer").classList.remove("on");
     $("drawer-back").classList.remove("on");
   }
 
-  var renderers = { overview: renderOverview, live: renderLive, users: renderUsers, sessions: renderSessions };
-  function renderPage() { renderers[state.route](); }
-
-  var channel = null;
-  var fetchTimer = null;
-  function watch() {
-    if (channel) return;
-    channel = supabase.channel("admin-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "presence" }, bump)
-      .on("postgres_changes", { event: "*", schema: "public", table: "users" }, bump)
-      .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, bump)
-      .subscribe(function (status) {
-        var on = status === "SUBSCRIBED";
-        $("live-pill").classList.toggle("on", on);
-        $("live-pill").querySelector("span").textContent = on ? "canlı" : "yenile ile";
-      });
-  }
-  function bump() {
-    clearTimeout(fetchTimer);
-    fetchTimer = setTimeout(renderPage, 500);
-  }
-
-  function showApp(user) {
-    $("login-screen").style.display = "none";
-    $("app").classList.add("on");
-    $("who").textContent = user.email || "";
-    var route = (location.hash || "#/overview").replace("#/", "") || "overview";
-    if (!titles[route]) route = "overview";
-    setRoute(route, false);
-    watch();
-  }
+  // ---------------- olaylar ----------------
 
   $("nav").onclick = function (e) {
     var b = e.target.closest("button");
-    if (!b) return;
-    setRoute(b.getAttribute("data-route"), false);
+    if (b) go(b.getAttribute("data-route"));
   };
   $("menu").onclick = function () { $("rail").classList.toggle("open"); };
-  $("refresh").onclick = renderPage;
+  $("refresh").onclick = function () { load(); };
   $("drawer-back").onclick = closeDrawer;
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDrawer(); });
   $("global-search").addEventListener("keydown", function (e) {
     if (e.key !== "Enter") return;
-    state.q = e.target.value;
+    state.q = e.target.value.trim();
     state.page = 1;
-    setRoute(state.q ? "users" : state.route, false);
-    if (!state.q) renderPage();
-    else renderUsers();
+    if (state.route === "overview") go("users");
+    else { var q = $("local-q"); if (q) q.value = state.q; load(); }
   });
-  $("signout").onclick = function () { supabase.auth.signOut(); };
-  $("signin").onsubmit = async function (e) {
+  $("signout").onclick = function () { sb.auth.signOut(); };
+  $("signin").onsubmit = function (e) {
     e.preventDefault();
     $("login-error").textContent = "";
-    var res = await supabase.auth.signInWithPassword({
+    $("signin-btn").disabled = true;
+    sb.auth.signInWithPassword({
       email: $("email").value.trim(),
       password: $("password").value
-    });
-    if (res.error) $("login-error").textContent = res.error.message;
+    }).then(function (res) {
+      if (res.error) $("login-error").textContent = res.error.message;
+    }).finally(function () { $("signin-btn").disabled = false; });
   };
 
-  supabase.auth.onAuthStateChange(function (_e, session) {
+  function showApp(user) {
+    if (state.user && state.user.id === user.id) return;
+    state.user = user;
+    $("login-screen").style.display = "none";
+    $("app").classList.add("on");
+    $("who").textContent = user.email || "";
+    enter(routeFromHash());
+  }
+
+  function showLogin() {
+    state.user = null;
+    state.route = null;
+    clearTimeout(state.timer);
+    $("app").classList.remove("on");
+    $("login-screen").style.display = "grid";
+    closeDrawer();
+  }
+
+  sb.auth.onAuthStateChange(function (_e, session) {
     if (session && session.user) showApp(session.user);
-    else {
-      $("app").classList.remove("on");
-      $("login-screen").style.display = "grid";
-      closeDrawer();
-      if (channel) { supabase.removeChannel(channel); channel = null; }
-    }
+    else showLogin();
   });
-  supabase.auth.getSession().then(function (res) {
+  sb.auth.getSession().then(function (res) {
     if (res.data && res.data.session) showApp(res.data.session.user);
-    else $("login-screen").style.display = "grid";
+    else showLogin();
   });
 })();
 </script>
