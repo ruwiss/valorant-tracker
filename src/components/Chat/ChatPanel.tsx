@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useChatStore, Tab, isLiveConversation } from "../../stores/chatStore";
 import { useGameStore } from "../../stores/gameStore";
 import { useSettingsStore } from "../../stores/settingsStore"; // Import Settings Store
@@ -61,7 +62,7 @@ export function ChatPanel() {
   } = useChatStore();
   const openPlayer = usePanelStore((s) => s.openPlayer);
   const { isConnected, gameState } = useGameStore();
-  const { hideWindow, isWindowVisible } = useSettingsStore(); // Get hideWindow & visibility state
+  const { hideWindow, isWindowVisible, windowStyle } = useSettingsStore();
   const { t } = useI18n();
   const [inputValue, setInputValue] = useState("");
   const [friendSearch, setFriendSearch] = useState("");
@@ -359,6 +360,19 @@ export function ChatPanel() {
     setIsOpen(false);
   };
 
+  const startDrag = async (e: React.MouseEvent) => {
+    if (windowStyle === "docked") return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return;
+
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (err) {
+      console.error("Drag failed:", err);
+    }
+  };
+
   const handleFriendClick = async (puuid: string) => {
     await startDm(puuid);
     setActiveTab("DM");
@@ -384,7 +398,13 @@ export function ChatPanel() {
     <div className="fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-md animate-fade-in flex justify-end" onClick={handleBackdropClick}>
       <div className={clsx("w-[450px] h-full bg-dark/95 border-l border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden transform transition-transform duration-300 ease-out", isOpen ? "translate-x-0" : "translate-x-full")} onClick={(e) => e.stopPropagation()}>
         {/* HEADER */}
-        <div data-tauri-drag-region className="h-14 border-b border-white/5 bg-linear-to-r from-white/5 to-transparent flex items-center justify-between px-6 shrink-0 relative overflow-hidden cursor-move">
+        <div
+          className={clsx(
+            "h-14 border-b border-white/5 bg-linear-to-r from-white/5 to-transparent flex items-center justify-between px-6 shrink-0 relative overflow-hidden",
+            windowStyle === "docked" ? "cursor-default" : "cursor-move",
+          )}
+          onMouseDown={startDrag}
+        >
           {/* Decorative glint */}
           <div className="absolute top-0 left-0 w-1 h-full bg-accent-red shadow-[0_0_10px_#ff4655]" />
           <h2 className="text-lg font-bold text-white font-display tracking-widest uppercase pointer-events-none">{t("chat.title")}</h2>
