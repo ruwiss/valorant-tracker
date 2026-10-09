@@ -236,6 +236,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "welcome.title": "Quick tip",
     "welcome.hotkey": "Press {hotkey} anytime to show or hide this overlay.",
     "welcome.borderless": "For in-game use, set Valorant to Windowed Fullscreen (Settings → Video → Display Mode).",
+    "changelog.title": "WHAT'S NEW",
+    "changelog.ok": "OK",
+    "changelog.preview": "Preview",
+    "changelog.empty": "No notes for this version.",
 
     // Player Stats
     "stats.title": "Recent Form",
@@ -677,6 +681,10 @@ const translations: Record<Locale, Record<string, string>> = {
     "welcome.title": "Hızlı ipucu",
     "welcome.hotkey": "Overlay'i açıp kapatmak için {hotkey} tuşuna bas.",
     "welcome.borderless": "Oyunda da çalışması için Valorant'ı Pencereli Tam Ekran yap (Ayarlar → Video → Görüntü Modu).",
+    "changelog.title": "YENİLİKLER",
+    "changelog.ok": "Tamam",
+    "changelog.preview": "Önizle",
+    "changelog.empty": "Bu sürüm için not yok.",
 
     // Player Stats
     "stats.title": "SON FORM",

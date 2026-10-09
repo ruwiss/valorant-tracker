@@ -704,7 +704,20 @@ export function SettingsPanel() {
               <SettingsRow
                 icon={Info}
                 label={t("settings.version")}
-                control={<span className="text-[11px] font-mono text-primary">{appVersion}</span>}
+                control={
+                  <span className="flex items-center gap-2">
+                    {import.meta.env.DEV && (
+                      <button
+                        type="button"
+                        onClick={() => useSettingsStore.getState().requestChangelogPreview()}
+                        className="text-[10px] font-bold text-accent-cyan hover:text-white"
+                      >
+                        {t("changelog.preview")}
+                      </button>
+                    )}
+                    <span className="text-[11px] font-mono text-primary">{appVersion}</span>
+                  </span>
+                }
               />
               {installs !== null && (
                 <SettingsRow

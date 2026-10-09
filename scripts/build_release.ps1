@@ -4,6 +4,134 @@
 
 $ErrorActionPreference = "Stop"
 
+# WinForms needs STA. pwsh starts MTA, so hand off before any other work.
+if ([System.Threading.Thread]::CurrentThread.ApartmentState -ne "STA") {
+    $hostExe = (Get-Process -Id $PID).Path
+    & $hostExe -STA -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+    exit $LASTEXITCODE
+}
+
+function Escape-ChangelogString([string]$Value) {
+    if ([string]::IsNullOrEmpty($Value)) { return "" }
+    return $Value.Replace('\', '\\').Replace('"', '\"').Replace("`r`n", '\n').Replace("`n", '\n').Replace("`r", '\n')
+}
+
+function Read-ReleaseChangelog {
+    param([string]$Version, [string]$NotesFile)
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $existingTr = ""
+    $existingEn = ""
+    if (Test-Path -LiteralPath $NotesFile) {
+        try {
+            $existing = Get-Content -LiteralPath $NotesFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $existingTr = [string]$existing.tr
+            $existingEn = [string]$existing.en
+        } catch {
+            Write-Host "Could not read previous changelog notes. Starting blank." -ForegroundColor Yellow
+        }
+    }
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Yenilikler $Version"
+    $form.ClientSize = New-Object System.Drawing.Size(460, 400)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.TopMost = $true
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    $labelTr = New-Object System.Windows.Forms.Label
+    $labelTr.Text = "Türkçe"
+    $labelTr.Location = New-Object System.Drawing.Point(12, 10)
+    $labelTr.AutoSize = $true
+
+    $boxTr = New-Object System.Windows.Forms.TextBox
+    $boxTr.Multiline = $true
+    $boxTr.ScrollBars = "Vertical"
+    $boxTr.AcceptsReturn = $true
+    $boxTr.Location = New-Object System.Drawing.Point(12, 30)
+    $boxTr.Size = New-Object System.Drawing.Size(436, 120)
+    $boxTr.Text = $existingTr
+
+    $labelEn = New-Object System.Windows.Forms.Label
+    $labelEn.Text = "English"
+    $labelEn.Location = New-Object System.Drawing.Point(12, 158)
+    $labelEn.AutoSize = $true
+
+    $boxEn = New-Object System.Windows.Forms.TextBox
+    $boxEn.Multiline = $true
+    $boxEn.ScrollBars = "Vertical"
+    $boxEn.AcceptsReturn = $true
+    $boxEn.Location = New-Object System.Drawing.Point(12, 178)
+    $boxEn.Size = New-Object System.Drawing.Size(436, 120)
+    $boxEn.Text = $existingEn
+
+    $hint = New-Object System.Windows.Forms.Label
+    $hint.Text = "Satır satır yaz. Boş bırakırsan kart çıkmaz."
+    $hint.Location = New-Object System.Drawing.Point(12, 308)
+    $hint.Size = New-Object System.Drawing.Size(436, 32)
+
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "Tamam"
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $ok.Location = New-Object System.Drawing.Point(268, 352)
+    $ok.Size = New-Object System.Drawing.Size(84, 28)
+
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = "İptal"
+    $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $cancel.Location = New-Object System.Drawing.Point(360, 352)
+    $cancel.Size = New-Object System.Drawing.Size(84, 28)
+
+    $form.CancelButton = $cancel
+    $form.Controls.AddRange(@($labelTr, $boxTr, $labelEn, $boxEn, $hint, $ok, $cancel))
+
+    $dialogResult = $form.ShowDialog()
+    $tr = $boxTr.Text
+    $en = $boxEn.Text
+    $form.Dispose()
+
+    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+        return $null
+    }
+
+    return @{
+        tr = ($tr -replace "`r`n", "`n" -replace "`r", "`n").Trim()
+        en = ($en -replace "`r`n", "`n" -replace "`r", "`n").Trim()
+    }
+}
+
+function Write-ReleaseChangelog {
+    param($Notes, [string]$ProjectRoot)
+
+    $jsonPath = Join-Path $ProjectRoot "src\changelog.notes.json"
+    $tsPath = Join-Path $ProjectRoot "src\changelog.ts"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+
+    $json = (@{ tr = $Notes.tr; en = $Notes.en } | ConvertTo-Json -Compress)
+    [System.IO.File]::WriteAllText($jsonPath, $json, $utf8)
+
+    $raw = [System.IO.File]::ReadAllText($tsPath)
+    $tr = Escape-ChangelogString $Notes.tr
+    $en = Escape-ChangelogString $Notes.en
+    $block = "export const changelogNotes: Record<Locale, string> = {`n  tr: `"$tr`",`n  en: `"$en`",`n};"
+    # Regex replacement treats $ as a backreference, so double it.
+    $replacement = ("// changelog-notes:start`n$block`n// changelog-notes:end").Replace('$', '$$')
+    $updated = [regex]::Replace(
+        $raw,
+        '(?s)// changelog-notes:start\r?\n.*?// changelog-notes:end',
+        $replacement
+    )
+    if ($updated -eq $raw) {
+        throw "Could not find changelog note markers in src/changelog.ts"
+    }
+    [System.IO.File]::WriteAllText($tsPath, $updated, $utf8)
+}
+
 # Set working directory to project root
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
@@ -19,7 +147,16 @@ $tauriConf = Get-Content $TAURI_CONF_PATH | ConvertFrom-Json
 $version = $tauriConf.version
 Write-Host "Current Version: $version" -ForegroundColor Green
 
-# 2. Check Signing Keys
+# 2. Changelog, before anything destructive. Cancel aborts the build.
+$changelog = Read-ReleaseChangelog -Version $version -NotesFile (Join-Path $ProjectRoot "src\changelog.notes.json")
+if ($null -eq $changelog) {
+    Write-Host "Build cancelled." -ForegroundColor Yellow
+    exit 1
+}
+Write-ReleaseChangelog -Notes $changelog -ProjectRoot $ProjectRoot
+Write-Host "Changelog saved." -ForegroundColor Green
+
+# 3. Check Signing Keys
 $DefaultKeyPath = Join-Path $ProjectRoot "valorant-tracker.key"
 $DefaultPassword = "omergundogar"
 
@@ -128,6 +265,10 @@ Write-Host "Generating latest.json..." -ForegroundColor Cyan
 $updateUrl = "https://github.com/$GITHUB_REPO/releases/latest/download/$safeSetupName"
 $pubDate = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
 $notes = "Update for version $version"
+if ($changelog.tr -or $changelog.en) {
+    $noteParts = @($changelog.tr, $changelog.en) | Where-Object { $_ }
+    $notes = $noteParts -join "`n`n"
+}
 
 $latestJson = @{
     version = $version

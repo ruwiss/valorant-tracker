@@ -12,8 +12,10 @@ import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useGameLoop } from "./hooks/useGameLoop";
 import { useI18n } from "./lib/i18n";
+import { changelogDevPreview, changelogText, planChangelog } from "./changelog";
+import { getVersion } from "@tauri-apps/api/app";
 import { Toaster } from "sonner";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 
 /** How long the first-launch tip stays under the header (ms). */
@@ -47,6 +49,7 @@ function isBrowserChromeShortcut(e: KeyboardEvent): boolean {
 
 /** Guard StrictMode double-mount so the tip only schedules once per session. */
 let welcomeTipScheduled = false;
+let changelogScheduled = false;
 
 function WelcomeTipBanner({
   hotkey,
@@ -87,11 +90,49 @@ function WelcomeTipBanner({
   );
 }
 
+function ChangelogCard({
+  text,
+  onDismiss,
+}: {
+  text: string;
+  onDismiss: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="absolute inset-0 z-[80] flex items-center justify-center bg-black/60 p-5 animate-smooth-appear">
+      <div
+        role="dialog"
+        aria-label={t("changelog.title")}
+        className="relative flex h-[72%] w-full max-w-[440px] flex-col rounded-2xl border border-white/10 bg-[#0c1218] px-5 pb-5 pt-4 shadow-2xl"
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="absolute top-3 right-3 flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-white/10 hover:text-white"
+          aria-label={t("header.close")}
+        >
+          <X className="h-4 w-4" strokeWidth={2.5} />
+        </button>
+        <div className="mb-3 pr-10 text-[13px] font-black tracking-[0.16em] text-accent-cyan">
+          {t("changelog.title")}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap text-[15px] leading-relaxed text-primary">
+          {text || t("changelog.empty")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { gameState, status, pendingReconnect } = useGameStore();
-  const { windowStyle, hotkey } = useSettingsStore();
-  const { t } = useI18n();
+  const { windowStyle, hotkey, changelogPreviewTick } = useSettingsStore();
+  const { t, locale } = useI18n();
   const [showWelcomeTip, setShowWelcomeTip] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
+  const [changelogIsPreview, setChangelogIsPreview] = useState(false);
+  const changelogVersionRef = useRef<string | null>(null);
   const showReconnectBar =
     (pendingReconnect || status === "RECONNECTING") &&
     (gameState.state === "pregame" || gameState.state === "ingame");
@@ -167,6 +208,62 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!changelogPreviewTick) return;
+    setChangelogIsPreview(true);
+    setShowChangelog(true);
+  }, [changelogPreviewTick]);
+
+  useEffect(() => {
+    if (changelogScheduled) return;
+    changelogScheduled = true;
+
+    const run = async () => {
+      if (import.meta.env.DEV && changelogDevPreview) {
+        setChangelogIsPreview(true);
+        setShowChangelog(true);
+        return;
+      }
+
+      let version = "";
+      try {
+        version = await getVersion();
+      } catch {
+        return;
+      }
+
+      const { lastSeenChangelogVersion, hasSeenWelcome, markChangelogSeen } = useSettingsStore.getState();
+      const notes = changelogText(useI18n.getState().locale);
+      const plan = planChangelog({
+        notes,
+        currentVersion: version,
+        seenVersion: lastSeenChangelogVersion,
+        hasUsedAppBefore: hasSeenWelcome,
+      });
+      if (plan.markSeen) markChangelogSeen(version);
+      if (plan.show) {
+        changelogVersionRef.current = version;
+        setChangelogIsPreview(false);
+        setShowChangelog(true);
+      }
+    };
+
+    if (useSettingsStore.persist.hasHydrated()) {
+      void run();
+      return;
+    }
+    return useSettingsStore.persist.onFinishHydration(() => {
+      void run();
+    });
+  }, []);
+
+  const dismissChangelog = () => {
+    if (!changelogIsPreview && changelogVersionRef.current) {
+      useSettingsStore.getState().markChangelogSeen(changelogVersionRef.current);
+    }
+    setShowChangelog(false);
+  };
+
   const renderContent = () => {
     switch (gameState.state) {
       case "pregame":
@@ -179,7 +276,7 @@ function App() {
   };
 
   return (
-    <div className={`h-full flex bg-dark/95 backdrop-blur-md overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
+    <div className={`relative h-full flex bg-dark/95 backdrop-blur-md overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
       {/* Main content - Fixed width to prevent jumping during resize */}
       <div className="relative w-[380px] flex-none flex flex-col p-4 pl-5">
         <Header />
@@ -218,6 +315,10 @@ function App() {
 
       {/* Chat Panel Overlay */}
       <ChatPanel />
+
+      {showChangelog && (
+        <ChangelogCard text={changelogText(locale)} onDismiss={dismissChangelog} />
+      )}
 
       <Toaster position="top-right" richColors theme="dark" />
     </div>

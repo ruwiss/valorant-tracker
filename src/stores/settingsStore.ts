@@ -69,6 +69,8 @@ interface SettingsState {
   minimizeToTray: boolean;
   /** First-launch tip toast; shown once then persisted as seen. */
   hasSeenWelcome: boolean;
+  /** App version whose changelog card was dismissed. Null until the first launch records it. */
+  lastSeenChangelogVersion: string | null;
 }
 
 interface SettingsStore extends SettingsState {
@@ -93,6 +95,10 @@ interface SettingsStore extends SettingsState {
   syncDiscordRpc: () => void;
   setMinimizeToTray: (enabled: boolean) => void;
   markWelcomeSeen: () => void;
+  markChangelogSeen: (version: string) => void;
+  /** Bumps when dev settings asks to open the changelog card. Not persisted. */
+  changelogPreviewTick: number;
+  requestChangelogPreview: () => void;
 }
 
 const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 5;
@@ -253,9 +259,19 @@ export const useSettingsStore = create<SettingsStore>()(
       discordRpcEnabled: true,
       minimizeToTray: true,
       hasSeenWelcome: false,
+      lastSeenChangelogVersion: null,
+      changelogPreviewTick: 0,
 
       markWelcomeSeen: () => {
         set({ hasSeenWelcome: true });
+      },
+
+      markChangelogSeen: (version: string) => {
+        set({ lastSeenChangelogVersion: version });
+      },
+
+      requestChangelogPreview: () => {
+        set((state) => ({ changelogPreviewTick: state.changelogPreviewTick + 1 }));
       },
 
       setAutoLockDelaySeconds: (seconds: number) => {
@@ -524,6 +540,7 @@ export const useSettingsStore = create<SettingsStore>()(
         discordRpcEnabled: state.discordRpcEnabled,
         minimizeToTray: state.minimizeToTray,
         hasSeenWelcome: state.hasSeenWelcome,
+        lastSeenChangelogVersion: state.lastSeenChangelogVersion,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SettingsState>;
