@@ -1,10 +1,8 @@
-import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
-import { useUpdateStore } from "../stores/updateStore";
 import { useChatStore } from "../stores/chatStore";
 import { usePanelStore } from "../stores/panelStore"; 
 import { useI18n } from "../lib/i18n";
@@ -20,14 +18,9 @@ export function Header() {
   const hideWindow = useSettingsStore((s) => s.hideWindow);
   const windowStyle = useSettingsStore((s) => s.windowStyle);
   const getMapSplash = useAssetsStore((s) => s.getMapSplash);
-  const initUpdates = useUpdateStore((s) => s.init);
   const setIsOpen = useChatStore((s) => s.setIsOpen);
   const closeSidePanel = usePanelStore((s) => s.close);
   const { t } = useI18n();
-
-  useEffect(() => {
-    initUpdates();
-  }, []);
 
   const mapSplash = gameState.map_name ? getMapSplash(gameState.map_name) : null;
   const isReconnecting = pendingReconnect || status === "RECONNECTING";

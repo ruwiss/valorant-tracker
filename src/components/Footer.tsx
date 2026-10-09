@@ -1,9 +1,8 @@
 import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
-import { useUpdateStore } from "../stores/updateStore";
 import { useConstantsStore } from "../stores/constantsStore";
-import { CircleArrowUp, Settings, ShoppingBag } from "lucide-react";
+import { Settings, ShoppingBag } from "lucide-react";
 
 export function Footer() {
   const autoLockAgent = useGameStore((s) => s.autoLockAgent);
@@ -17,9 +16,6 @@ export function Footer() {
   const openSettings = usePanelStore((s) => s.openSettings);
   const openShop = usePanelStore((s) => s.openShop);
   const close = usePanelStore((s) => s.close);
-  const readyVersion = useUpdateStore((s) => s.readyVersion);
-  const isRestarting = useUpdateStore((s) => s.isRestarting);
-  const restartToUpdate = useUpdateStore((s) => s.restartToUpdate);
   const { t } = useI18n();
   const getAgentByUuid = useConstantsStore((s) => s.getAgentByUuid);
 
@@ -81,21 +77,6 @@ export function Footer() {
       </div>
       
       <div className="flex items-center gap-2 shrink-0">
-        {readyVersion && (
-          <button
-            onClick={restartToUpdate}
-            disabled={isRestarting}
-            className="h-8 px-2.5 flex items-center gap-1.5 rounded-lg cursor-pointer bg-accent-gold/10 border border-accent-gold/20 text-accent-gold hover:bg-accent-gold/20 hover:border-accent-gold/40 transition-all shrink-0"
-            title={t("footer.updateReady", { version: readyVersion })}
-          >
-            {isRestarting ? (
-              <div className="w-3.5 h-3.5 border-2 border-accent-gold border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <CircleArrowUp className="w-3.5 h-3.5" />
-            )}
-            <span className="text-[10px] font-bold whitespace-nowrap">v{readyVersion}</span>
-          </button>
-        )}
         <button
           onClick={openShop}
           className={`w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer border transition-all duration-300 shrink-0 ${isOpen && panelType === "shop" ? "text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]" : "text-secondary hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"}`}

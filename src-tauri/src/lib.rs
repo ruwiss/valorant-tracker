@@ -179,8 +179,6 @@ pub fn run() -> RunResult {
             commands::log_frontend_message,
             commands::translate_text,
             commands::get_install_count,
-            commands::get_ready_update,
-            commands::restart_to_update,
             last_match::get_last_match,
         ])
         .setup(move |app| {

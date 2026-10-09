@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tauri_plugin_updater::UpdaterExt;
 
 /// Re-check interval for sessions that stay open (tray) for days.
@@ -152,24 +152,6 @@ pub fn install_on_exit(app: &AppHandle) {
     }
 }
 
-/// Version of a downloaded update waiting to be installed, if any.
-pub fn ready_version(app: &AppHandle) -> Option<String> {
-    let dir = updates_dir(&app.config().identifier)?;
-    ready_installer(&dir, &app.package_info().version).map(|(m, _)| m.version)
-}
-
-/// Install now and relaunch (optional "restart to update" button).
-pub fn restart_and_install(app: &AppHandle) -> Result<(), String> {
-    let dir = updates_dir(&app.config().identifier).ok_or("No updates directory")?;
-    let (_, path) = ready_installer(&dir, &app.package_info().version)
-        .ok_or("No downloaded update")?;
-    if !spawn_installer(&path, true) {
-        return Err("Failed to start installer".into());
-    }
-    app.exit(0);
-    Ok(())
-}
-
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;
@@ -232,7 +214,7 @@ pub fn start(app: AppHandle) {
         loop {
             match check_and_download(&app).await {
                 Ok(Some(version)) => {
-                    let _ = app.emit("update_ready", &version);
+                    tracing::debug!("[Updater] {version} parked; installs on exit");
                 }
                 Ok(None) => tracing::debug!("[Updater] Up to date"),
                 Err(e) => tracing::warn!("[Updater] Update check failed: {e}"),
