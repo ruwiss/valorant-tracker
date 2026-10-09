@@ -177,7 +177,9 @@ export function ShopPanel() {
   const [error, setError] = useState<string | null>(null);
   const fetchedRef = useRef<string | null>(null);
 
-  const connected = status === "CONNECTED" || status === "WAITING_FOR_GAME";
+  // WAITING_FOR_GAME means Valorant is not running. Those store commands
+  // return "Not connected" and each one toasts — the empty state is enough.
+  const connected = status === "CONNECTED";
 
   useEffect(() => {
     if (!connected) {
@@ -197,8 +199,12 @@ export function ShopPanel() {
     try {
       const apiLocale = SKIN_API_LOCALES[locale];
       const [data, walletData] = await Promise.all([
-        invokeCommand<StorefrontData | null>("get_storefront"),
-        invokeCommand<WalletData | null>("get_wallet").catch(() => null),
+        invokeCommand<StorefrontData | null>("get_storefront", undefined, {
+          suppressErrorToast: true,
+        }),
+        invokeCommand<WalletData | null>("get_wallet", undefined, {
+          suppressErrorToast: true,
+        }).catch(() => null),
         ensureTierColorCache(),
       ]);
 
