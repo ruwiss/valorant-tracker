@@ -12,6 +12,7 @@ mod state;
 mod usage;
 mod telemetry;
 mod last_match;
+mod locale;
 mod seen_names;
 mod party;
 mod recent_form;
@@ -133,6 +134,7 @@ pub fn run() -> RunResult {
             commands::set_discord_rpc,
             commands::get_discord_rpc,
             commands::get_connection_status,
+            commands::get_client_locale,
             commands::get_player_loadout,
             commands::get_chat_messages,
             commands::get_active_conversations,

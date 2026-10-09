@@ -85,8 +85,8 @@ export function PlayerStatsPanel() {
   ].filter((card): card is CombatCard => Boolean(card));
 
   return (
-    <div data-stats-panel className={`relative flex flex-col h-full overflow-hidden ${VAL_DARK} border-l border-white/5`}>
-      <div className="relative p-4 pb-2">
+    <div data-stats-panel className={`relative flex h-full min-h-0 flex-col overflow-hidden ${VAL_DARK} border-l border-white/5`}>
+      <div className="relative shrink-0 p-4 pb-2">
         <div className="flex items-center gap-4">
           <div className="relative group">
             <div className="absolute -inset-0.5 bg-linear-to-br from-[#ff4655] to-dark opacity-30 blur-sm rounded-full" />
@@ -113,7 +113,7 @@ export function PlayerStatsPanel() {
             </Tooltip>
             {tier > 0 && (
               <Tooltip text={t("stats.desc.rank")} className="relative mt-1">
-                <div className="text-[11px] font-black tracking-wide" style={{ color: rankColor }}>
+                <div className="truncate whitespace-nowrap text-[11px] font-black tracking-wide" style={{ color: rankColor }}>
                   {getLocalizedRank(tier, locale)}
                   {rr > 0 ? ` · ${rr} RR` : ""}
                 </div>
@@ -123,7 +123,7 @@ export function PlayerStatsPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-2 custom-scrollbar">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2 custom-scrollbar">
         {loading && (
           <div className="h-48 flex flex-col items-center justify-center">
             <div className="w-8 h-8 border-2 border-[#ff4655] border-t-transparent animate-spin rounded-full" />

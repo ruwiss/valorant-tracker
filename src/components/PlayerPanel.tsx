@@ -1262,9 +1262,9 @@ export function PlayerPanel() {
 	};
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex h-full min-h-0 flex-col overflow-hidden">
 			{/* Player Header — card banner behind name/rank */}
-			<div className="relative overflow-hidden border-b border-border/50">
+			<div className="relative shrink-0 overflow-hidden border-b border-border/50">
 				{cardBannerUrl && (
 					<>
 						<CachedImage
@@ -1408,10 +1408,10 @@ export function PlayerPanel() {
 							)}
 
 
-							<div className="flex items-center gap-1.5 mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+							<div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
 								{selectedPlayer.agent && (
 									<span
-										className="font-display text-[11px] font-semibold"
+										className="shrink-0 font-display text-[11px] font-semibold whitespace-nowrap"
 										style={{ color: agentColor }}
 									>
 										{selectedPlayer.agent.charAt(0).toUpperCase() +
@@ -1420,7 +1420,7 @@ export function PlayerPanel() {
 								)}
 								{selectedPlayer.rank_tier > 0 && (
 									<span
-										className="font-display text-[11px] font-semibold"
+										className="shrink-0 font-display text-[11px] font-semibold whitespace-nowrap"
 										style={{ color: rankColor }}
 									>
 										{rankName}
@@ -1430,16 +1430,16 @@ export function PlayerPanel() {
 								{/* Peak Rank Compact Display */}
 								{peakRank && peakRank.tier > selectedPlayer.rank_tier && (
 									<>
-										<span className="text-[9px] text-secondary/50">•</span>
+										<span className="shrink-0 text-[9px] text-secondary/50">•</span>
 										<div
-											className="flex items-center gap-1"
+											className="flex min-w-0 items-center gap-1 overflow-hidden"
 											title={`${t("player.peak")}: ${getLocalizedRank(peakRank.tier, locale)}`}
 										>
-											<span className="text-[9px] font-extrabold text-primary/85 uppercase tracking-wider">
+											<span className="shrink-0 text-[9px] font-extrabold text-primary/85 uppercase tracking-wider">
 												{t("player.peak")}
 											</span>
 											<span
-												className="font-display text-[11px] font-semibold"
+												className="truncate font-display text-[11px] font-semibold whitespace-nowrap"
 												style={{ color: peakRank.rank_color }}
 											>
 												{getLocalizedRank(peakRank.tier, locale)}
@@ -1455,7 +1455,7 @@ export function PlayerPanel() {
 
 			{/* Skins / regulars content */}
 			<div
-				className="flex-1 overflow-y-auto"
+				className="min-h-0 flex-1 overflow-y-auto"
 				onMouseLeave={() => setHoveredWeapon(null)}
 			>
 				{fromFriends || playerSubView === "regulars" ? (

@@ -115,6 +115,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "pregame.allies": "ALLIES",
     "pregame.enemies": "ENEMIES",
     "pregame.selecting": "Selecting...",
+    "side.attack": "ATK",
+    "side.defense": "DEF",
 
     // Ingame
     "ingame.allies": "ALLIES",
@@ -560,6 +562,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "pregame.allies": "TAKIMIM",
     "pregame.enemies": "DÜŞMANLAR",
     "pregame.selecting": "Seçiliyor...",
+    "side.attack": "Saldıran",
+    "side.defense": "Defans",
 
     // Ingame
     "ingame.allies": "TAKIMIM",
@@ -932,6 +936,10 @@ export function getLocalizedRank(tier: number, locale: Locale): string {
     return `${name(ranks[rankIndex])} ${level}`;
   }
   return "";
+}
+
+export function tLocale(locale: Locale, key: string): string {
+  return translations[locale][key] || translations.en[key] || key;
 }
 
 export const useI18n = create<I18nStore>()(

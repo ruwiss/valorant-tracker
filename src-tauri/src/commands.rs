@@ -1748,6 +1748,13 @@ pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
     state.discord.is_enabled()
 }
 
+/// Riot Client locale (`tr_TR`, `en_US`, ...). Mode and side labels follow this,
+/// not the overlay language setting.
+#[tauri::command]
+pub fn get_client_locale() -> Option<String> {
+    crate::locale::read_riot_client_locale()
+}
+
 /// Initial-sync helper: returns the current connection status so the frontend
 /// can render correctly without waiting for the next `connection_changed` event.
 #[tauri::command]

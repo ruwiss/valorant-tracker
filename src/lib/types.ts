@@ -59,6 +59,8 @@ export interface GameState {
   match_id: string | null;
   map_name: string | null;
   mode_name: string | null;
+  /** Raw Riot queue id when the backend knows it (`swiftplay`, `competitive`, ...). */
+  queue_id?: string | null;
   side: string | null;
   allies: PlayerData[];
   enemies: PlayerData[];
