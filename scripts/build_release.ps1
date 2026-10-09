@@ -119,16 +119,14 @@ function Write-ReleaseChangelog {
     $tr = Escape-ChangelogString $Notes.tr
     $en = Escape-ChangelogString $Notes.en
     $block = "export const changelogNotes: Record<Locale, string> = {`n  tr: `"$tr`",`n  en: `"$en`",`n};"
-    # Regex replacement treats $ as a backreference, so double it.
-    $replacement = ("// changelog-notes:start`n$block`n// changelog-notes:end").Replace('$', '$$')
-    $updated = [regex]::Replace(
-        $raw,
-        '(?s)// changelog-notes:start\r?\n.*?// changelog-notes:end',
-        $replacement
-    )
-    if ($updated -eq $raw) {
+    $pattern = '(?s)// changelog-notes:start\r?\n.*?// changelog-notes:end'
+    if (-not [regex]::IsMatch($raw, $pattern)) {
         throw "Could not find changelog note markers in src/changelog.ts"
     }
+    # Regex replacement treats $ as a backreference, so double it.
+    # An unchanged file is valid: empty notes hide the card and match what is already there.
+    $replacement = ("// changelog-notes:start`n$block`n// changelog-notes:end").Replace('$', '$$')
+    $updated = [regex]::Replace($raw, $pattern, $replacement)
     [System.IO.File]::WriteAllText($tsPath, $updated, $utf8)
 }
 
