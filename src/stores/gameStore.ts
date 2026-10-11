@@ -62,6 +62,10 @@ interface GameStore {
 	reconnectAcked: boolean;
 	reconnectStartedAt: number;
 
+	/** Live autolock countdown. Null when no sequence is running. */
+	autolockCountdown: { running: boolean; remainingMs: number } | null;
+	setAutolockCountdown: (ev: { running: boolean; remaining_ms: number }) => void;
+
 	// Event-driven setters
 	setGameState: (newState: GameState) => void;
 	applyConnectionEvent: (ev: ConnectionEvent) => void;
@@ -126,6 +130,14 @@ export const useGameStore = create<GameStore>()(
 			pendingReconnect: false,
 			reconnectAcked: false,
 			reconnectStartedAt: 0,
+			autolockCountdown: null,
+
+			setAutolockCountdown: (ev) =>
+				set({
+					autolockCountdown: ev.running
+						? { running: true, remainingMs: ev.remaining_ms }
+						: null,
+				}),
 
 			// Computed helpers
 			isConnected: () => get().status === "CONNECTED",

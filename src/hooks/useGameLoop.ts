@@ -112,6 +112,12 @@ export function useGameLoop() {
         useOverlayUsersStore.getState().add(incoming);
       });
 
+    const setupAutolockListener = () =>
+      listen<{ running: boolean; remaining_ms: number }>("autolock_countdown", (event) => {
+        if (!event.payload) return;
+        useGameStore.getState().setAutolockCountdown(event.payload);
+      });
+
     // 4. Initial sync - render correct state without waiting for the next event.
     const initialSync = async () => {
       try {
@@ -135,6 +141,7 @@ export function useGameLoop() {
     let unlistenVisibility: (() => void) | undefined;
     let unlistenLastMatch: (() => void) | undefined;
     let unlistenOverlayUsers: (() => void) | undefined;
+    let unlistenAutolock: (() => void) | undefined;
 
     setupConnectionListener().then((u) => { unlistenConnection = u; });
     setupStateListener().then((u) => { unlistenState = u; });
@@ -150,6 +157,9 @@ export function useGameLoop() {
     setupOverlayUsersListener().then((u) => { unlistenOverlayUsers = u; }).catch((e) =>
       console.error("[GameLoop] Failed to setup overlay-users listener:", e)
     );
+    setupAutolockListener().then((u) => { unlistenAutolock = u; }).catch((e) =>
+      console.error("[GameLoop] Failed to setup autolock listener:", e)
+    );
     initialSync();
 
     return () => {
@@ -159,6 +169,7 @@ export function useGameLoop() {
       if (unlistenVisibility) unlistenVisibility();
       if (unlistenLastMatch) unlistenLastMatch();
       if (unlistenOverlayUsers) unlistenOverlayUsers();
+      if (unlistenAutolock) unlistenAutolock();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

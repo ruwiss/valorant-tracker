@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FILE_VERSION: u32 = 1;
-const MAX_ENTRIES: usize = 2500;
+const MAX_ENTRIES: usize = 20_000;
 
 static STORE: OnceCell<Mutex<Inner>> = OnceCell::new();
 
@@ -47,9 +47,30 @@ pub fn init(data_dir: &Path) {
     let _ = STORE.set(Mutex::new(Inner { path, names }));
 }
 
-/// Store real Riot IDs. Agent fallbacks and empty names are ignored.
-/// Unchanged entries skip the disk write.
+fn puuid_key(puuid: &str) -> String {
+    puuid.trim().to_ascii_lowercase()
+}
+
+/// Store real Riot IDs. A new `Name#Tag` replaces the saved one.
+/// Agent fallbacks and empty names are ignored. Disk is written only when a
+/// name string changes, so a 1s poll of the same ids does not rewrite the file.
 pub fn remember<'a, I>(pairs: I)
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    write_names(pairs, true);
+}
+
+/// Insert a Riot ID only when this puuid is not stored yet.
+/// A different name already on file is left alone.
+pub fn remember_if_absent<'a, I>(pairs: I)
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    write_names(pairs, false);
+}
+
+fn write_names<'a, I>(pairs: I, replace: bool)
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
@@ -58,16 +79,18 @@ where
     let now = now_secs();
     let mut changed = false;
     for (puuid, name) in pairs {
-        if puuid.is_empty() {
+        let key = puuid_key(puuid);
+        if key.is_empty() {
             continue;
         }
         let Some(clean) = sanitize_riot_id(name) else {
             continue;
         };
-        match inner.names.get(puuid) {
+        match inner.names.get(&key) {
             Some(row) if row.n == clean => {}
+            Some(_) if !replace => {}
             _ => {
-                inner.names.insert(puuid.to_string(), Row { n: clean, t: now });
+                inner.names.insert(key, Row { n: clean, t: now });
                 changed = true;
             }
         }
@@ -81,7 +104,8 @@ where
 
 pub fn lookup(puuid: &str) -> Option<String> {
     let inner = STORE.get()?.lock();
-    inner.names.get(puuid).map(|r| r.n.clone())
+    let key = puuid_key(puuid);
+    inner.names.get(&key).map(|r| r.n.clone())
 }
 
 pub fn is_riot_id(name: &str) -> bool {
@@ -153,10 +177,23 @@ fn load(path: &Path) -> HashMap<String, Row> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return HashMap::new();
     };
-    serde_json::from_str::<FileDto>(&raw)
-        .ok()
-        .map(|dto| dto.n)
-        .unwrap_or_default()
+    let Some(dto) = serde_json::from_str::<FileDto>(&raw).ok() else {
+        return HashMap::new();
+    };
+    let mut names: HashMap<String, Row> = HashMap::new();
+    for (puuid, row) in dto.n {
+        let key = puuid_key(&puuid);
+        if key.is_empty() {
+            continue;
+        }
+        match names.get(&key) {
+            Some(existing) if existing.t >= row.t => {}
+            _ => {
+                names.insert(key, row);
+            }
+        }
+    }
+    names
 }
 
 fn save(path: &Path, names: &HashMap<String, Row>) {
@@ -173,5 +210,41 @@ fn save(path: &Path, names: &HashMap<String, Row>) {
     let tmp = path.with_extension("json.tmp");
     if std::fs::write(&tmp, json.as_bytes()).is_ok() {
         let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rename_keeps_one_lowercase_key_and_ignores_empty() {
+        let dir = std::env::temp_dir().join(format!(
+            "seen-names-{}-{}",
+            std::process::id(),
+            now_secs()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        init(&dir);
+
+        remember([("ABC-DEF", "Old#Tag")]);
+        remember([("abc-def", "New#Tag")]);
+        assert_eq!(lookup("AbC-DeF").as_deref(), Some("New#Tag"));
+
+        remember([("abc-def", "")]);
+        remember([("abc-def", "hidden")]);
+        assert_eq!(lookup("abc-def").as_deref(), Some("New#Tag"));
+
+        remember_if_absent([("abc-def", "Older#Name"), ("zzz-1", "Fresh#One")]);
+        assert_eq!(lookup("abc-def").as_deref(), Some("New#Tag"));
+        assert_eq!(lookup("ZZZ-1").as_deref(), Some("Fresh#One"));
+
+        let raw = std::fs::read_to_string(dir.join("seen_names.json")).unwrap();
+        assert!(!raw.contains("ABC-DEF"));
+        assert!(raw.contains("abc-def"));
+        assert!(raw.contains("New#Tag"));
+        assert!(!raw.contains("Old#Tag"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

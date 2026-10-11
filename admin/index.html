@@ -582,8 +582,6 @@
     if (mode && (inMatch(r) || r.phase === "queue" || r.phase === "custom")) bits.push(mode);
     var map = mapLabel(r);
     if (map) bits.push(map);
-    var score = scoreText(r);
-    if (score) bits.push(score);
     if (r.agent && inMatch(r)) bits.push(r.agent);
     if (r.party_size > 1) bits.push(r.party_size + " kişilik parti");
     return bits.length ? bits.join(" · ") : "—";
@@ -825,11 +823,13 @@
 
   function liveTable(rows, compact) {
     if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
-    return '<div class="table-wrap"><table><thead><tr>' + th("Oyuncu") + th("Durum") + th("Ne yapıyor") +
+    return '<div class="table-wrap"><table><thead><tr>' + th("Oyuncu") + th("Durum") + th("Ne yapıyor") + th("Skor") +
       (compact ? "" : th("Sürüm") + th("Bölge")) + th("Son sinyal") + "</tr></thead><tbody>" +
       rows.map(function (r) {
+        var score = scoreText(r);
         return "<tr" + rowAttrs(r.puuid, r.install_id) + "><td>" + nameCell(r.riot_name) + "</td><td>" + pill(r.phase) +
-          "</td><td>" + esc(detail(r)) + "</td>" +
+          "</td><td>" + esc(detail(r)) + '</td><td class="mono">' +
+          (score ? esc(score) : '<span class="muted">—</span>') + "</td>" +
           (compact ? "" : '<td class="mono">' + esc(r.app_version || "—") + '</td><td class="mono">' + esc((r.region || "—").toUpperCase()) + "</td>") +
           '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
       }).join("") + "</tbody></table></div>";

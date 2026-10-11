@@ -92,6 +92,60 @@ async fn try_apply_armed_preset(app: &tauri::AppHandle) {
     let _ = app.emit("preset_auto_applied", &ev);
 }
 
+const AUTOLOCK_UI_WAIT_MS: u64 = 3_000;
+const AUTOLOCK_SLICE_MS: u64 = 200;
+
+#[derive(serde::Serialize, Clone)]
+struct AutolockCountdown {
+    running: bool,
+    remaining_ms: u64,
+}
+
+fn emit_autolock(app: &tauri::AppHandle, running: bool, remaining_ms: u64) {
+    let _ = app.emit(
+        "autolock_countdown",
+        AutolockCountdown {
+            running,
+            remaining_ms,
+        },
+    );
+}
+
+/// Sleep in short slices so cancel lands within 200ms. Emits the countdown
+/// before each slice. Returns true when the user cancelled.
+async fn sleep_autolock(
+    app: &tauri::AppHandle,
+    cancel: &AtomicBool,
+    mut remaining_ms: u64,
+    duration_ms: u64,
+) -> bool {
+    let mut left = duration_ms;
+    while left > 0 {
+        if cancel.load(Ordering::Relaxed) {
+            emit_autolock(app, false, 0);
+            return true;
+        }
+        emit_autolock(app, true, remaining_ms);
+        let step = left.min(AUTOLOCK_SLICE_MS);
+        tokio::time::sleep(tokio::time::Duration::from_millis(step)).await;
+        left -= step;
+        remaining_ms = remaining_ms.saturating_sub(step);
+    }
+    false
+}
+
+async fn nap_autolock(cancel: &AtomicBool, mut left: u64) -> bool {
+    while left > 0 {
+        if cancel.load(Ordering::Relaxed) {
+            return true;
+        }
+        let step = left.min(AUTOLOCK_SLICE_MS);
+        tokio::time::sleep(tokio::time::Duration::from_millis(step)).await;
+        left -= step;
+    }
+    false
+}
+
 /// Single background supervisor that OWNS the connection lifecycle:
 /// connect -> watch game state -> self-reconnect on token/lockfile changes ->
 /// drive autolock. Emits `connection_changed` and `game_state_changed` events.
@@ -110,6 +164,8 @@ pub fn start_supervisor(app: tauri::AppHandle) {
     let auto_lock_agent = app.state::<AppState>().auto_lock_agent.clone();
     let auto_lock_delay_ms = app.state::<AppState>().auto_lock_delay_ms.clone();
     let map_agent_preferences = app.state::<AppState>().map_agent_preferences.clone();
+    let autolock_cancel = app.state::<AppState>().autolock_cancel.clone();
+    let autolock_skip_match = app.state::<AppState>().autolock_skip_match.clone();
     let discord = app.state::<AppState>().discord.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -363,23 +419,56 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                         .map(|p| p.locked)
                                         .unwrap_or(false);
 
-                                    if !is_locked {
+                                    let skip_this_match = {
+                                        let skipped = autolock_skip_match.read().clone();
+                                        if skipped.as_deref() == Some(match_id.as_str()) {
+                                            true
+                                        } else {
+                                            if skipped.is_some() {
+                                                *autolock_skip_match.write() = None;
+                                            }
+                                            false
+                                        }
+                                    };
+
+                                    if !is_locked && !skip_this_match {
                                         let api_clone = api.clone();
                                         let in_progress_clone = autolock_in_progress.clone();
+                                        let cancel_flag = autolock_cancel.clone();
+                                        let skip_slot = autolock_skip_match.clone();
+                                        let app_handle = app.clone();
+                                        let match_for_skip = match_id.clone();
 
                                         // Spawn a SEPARATE task so we don't block the state emitter
                                         in_progress_clone.store(true, Ordering::Relaxed);
+                                        cancel_flag.store(false, Ordering::Relaxed);
                                         let lock_delay_ms = *auto_lock_delay_ms.read();
                                         tokio::spawn(async move {
+                                            let total = AUTOLOCK_UI_WAIT_MS + lock_delay_ms;
+                                            let mut remaining = total;
+                                            let abort = |reason: &str| {
+                                                tracing::info!("[Autolock] {reason}");
+                                                *skip_slot.write() = Some(match_for_skip.clone());
+                                                emit_autolock(&app_handle, false, 0);
+                                                in_progress_clone.store(false, Ordering::Relaxed);
+                                            };
+
                                             tracing::info!(
                                                 "[Autolock] Waiting for UI to load (3s)..."
                                             );
+                                            if sleep_autolock(
+                                                &app_handle,
+                                                &cancel_flag,
+                                                remaining,
+                                                AUTOLOCK_UI_WAIT_MS,
+                                            )
+                                            .await
+                                            {
+                                                abort("Cancelled before hover.");
+                                                return;
+                                            }
+                                            remaining = remaining.saturating_sub(AUTOLOCK_UI_WAIT_MS);
 
-                                            // Phase 1: Wait for game client UI to fully render agent grid
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(
-                                                3000,
-                                            ))
-                                            .await;
                                             api_clone.select_agent(&match_id, &agent_id).await;
                                             tracing::info!(
                                                 "[Autolock] Agent selected (hovering visible)"
@@ -389,10 +478,17 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                                 "[Autolock] Waiting before lock ({}ms)...",
                                                 lock_delay_ms
                                             );
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                            if sleep_autolock(
+                                                &app_handle,
+                                                &cancel_flag,
+                                                remaining,
                                                 lock_delay_ms,
-                                            ))
-                                            .await;
+                                            )
+                                            .await
+                                            {
+                                                abort("Cancelled before lock.");
+                                                return;
+                                            }
 
                                             // Phase 2: Lock with verification + fast retry.
                                             // A single fire-and-forget lock can be silently
@@ -401,16 +497,21 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                             // early). Confirm via the pregame match and
                                             // re-attempt until the agent is actually locked,
                                             // the pregame ends, or we hit the safety cap.
+                                            emit_autolock(&app_handle, true, 0);
                                             let my_puuid = api_clone.puuid.read().clone();
                                             let mut locked = false;
                                             for attempt in 1..=20u32 {
+                                                if cancel_flag.load(Ordering::Relaxed) {
+                                                    abort("Cancelled during lock retries.");
+                                                    return;
+                                                }
                                                 api_clone.lock_agent(&match_id, &agent_id).await;
 
                                                 // Give the server a moment, then verify.
-                                                tokio::time::sleep(
-                                                    tokio::time::Duration::from_millis(700),
-                                                )
-                                                .await;
+                                                if nap_autolock(&cancel_flag, 700).await {
+                                                    abort("Cancelled during lock retries.");
+                                                    return;
+                                                }
 
                                                 match api_clone.get_pregame_match(&match_id).await {
                                                     Some(m) => {
@@ -446,10 +547,10 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                                         api_clone
                                                             .select_agent(&match_id, &agent_id)
                                                             .await;
-                                                        tokio::time::sleep(
-                                                            tokio::time::Duration::from_millis(500),
-                                                        )
-                                                        .await;
+                                                        if nap_autolock(&cancel_flag, 500).await {
+                                                            abort("Cancelled during lock retries.");
+                                                            return;
+                                                        }
                                                     }
                                                     None => {
                                                         // Pregame gone (game started, dodge,
@@ -468,6 +569,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                                     );
                                             }
 
+                                            emit_autolock(&app_handle, false, 0);
                                             // Allow next sequence after a small buffer
                                             tokio::time::sleep(tokio::time::Duration::from_millis(
                                                 1000,
@@ -1700,6 +1802,13 @@ pub fn set_auto_lock_delay(state: State<'_, AppState>, seconds: u64) {
 #[tauri::command]
 pub fn get_auto_lock_delay(state: State<'_, AppState>) -> u64 {
     (*state.auto_lock_delay_ms.read() / 1000).clamp(1, 10)
+}
+
+/// Stop the in-flight autolock for this match. The saved agent preference stays on.
+#[tauri::command]
+pub fn cancel_autolock(state: State<'_, AppState>) {
+    state.autolock_cancel.store(true, Ordering::Relaxed);
+    tracing::info!("[Command] cancel_autolock");
 }
 
 #[tauri::command]

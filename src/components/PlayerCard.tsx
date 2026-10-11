@@ -9,7 +9,8 @@ import { useState, useEffect } from "react";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
-import { ChartColumn, History, LoaderCircle } from "lucide-react";
+import { ChartColumn, History, LoaderCircle, StickyNote } from "lucide-react";
+import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
 interface Props {
   player: PlayerData;
@@ -23,6 +24,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
   const { getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
+  const note = usePlayerNotesStore((s) => noteFor(s.notes, player.puuid));
 
   // Check if this player is currently selected (viewing skins)
   const isSelected = panelType === "player" && selectedPlayer?.puuid === player.puuid;
@@ -223,6 +225,11 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
           <History className={`shrink-0 w-2.5 h-2.5 opacity-55 ${
               player.is_me ? "text-accent-gold/70" : "text-secondary"
             }`} strokeWidth={2.4} aria-hidden />
+        )}
+        {note && (
+          <span title={note} className="shrink-0 inline-flex">
+            <StickyNote className="w-2.5 h-2.5 text-accent-gold/80" aria-hidden />
+          </span>
         )}
       </span>
 

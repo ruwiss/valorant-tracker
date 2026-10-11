@@ -2,6 +2,7 @@ import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useI18n } from "../lib/i18n";
 import { useConstantsStore } from "../stores/constantsStore";
+import { invokeCommand } from "../utils/ipc";
 import { Settings, ShoppingBag } from "lucide-react";
 
 export function Footer() {
@@ -11,6 +12,7 @@ export function Footer() {
   const getAgentForMap = useGameStore((s) => s.getAgentForMap);
   const toggleAutoLock = useGameStore((s) => s.toggleAutoLock);
   const pausedAutoLockAgent = useGameStore((s) => s.pausedAutoLockAgent);
+  const autolockCountdown = useGameStore((s) => s.autolockCountdown);
   const isOpen = usePanelStore((s) => s.isOpen);
   const panelType = usePanelStore((s) => s.panelType);
   const openSettings = usePanelStore((s) => s.openSettings);
@@ -72,7 +74,19 @@ export function Footer() {
         {/* Helper Text */}
         <div className="flex flex-col justify-center min-w-0">
           <span className="text-[9px] text-secondary uppercase tracking-[0.12em] font-semibold mb-0.5 truncate">{t("footer.autoLock")}</span>
-          <span className={`font-display text-[13px] font-bold leading-none truncate ${isSwitchOn ? "text-accent-cyan drop-shadow-[0_0_5px_rgba(0,212,170,0.3)]" : "text-secondary"}`}>{statusText}</span>
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className={`font-display text-[13px] font-bold leading-none truncate ${isSwitchOn ? "text-accent-cyan drop-shadow-[0_0_5px_rgba(0,212,170,0.3)]" : "text-secondary"}`}>{statusText}</span>
+            {autolockCountdown?.running && (
+              <button
+                type="button"
+                onClick={() => void invokeCommand("cancel_autolock")}
+                title={t("footer.cancelAutolock")}
+                className="shrink-0 min-w-5 h-4 px-1 rounded-sm border border-accent-red/50 bg-accent-red/15 text-[10px] font-bold tabular-nums text-accent-red hover:bg-accent-red hover:text-white transition-colors"
+              >
+                {Math.max(1, Math.ceil(autolockCountdown.remainingMs / 1000))}
+              </button>
+            )}
+          </span>
         </div>
       </div>
       

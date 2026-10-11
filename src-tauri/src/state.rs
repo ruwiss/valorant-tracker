@@ -17,6 +17,10 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub auto_lock_agent: Arc<RwLock<Option<String>>>,
     pub auto_lock_delay_ms: Arc<RwLock<u64>>,
+    /// Set by `cancel_autolock`. The in-flight sequence checks it between sleeps.
+    pub autolock_cancel: Arc<AtomicBool>,
+    /// Match id whose lock the user cancelled. Stops the next poll from arming again.
+    pub autolock_skip_match: Arc<RwLock<Option<String>>>,
     // Cache for party detection - persists across pregame->ingame transition
     pub cached_parties: RwLock<HashMap<String, String>>,
     // Track which match the party cache belongs to
@@ -107,6 +111,8 @@ impl AppState {
                 .unwrap_or_default(),
             auto_lock_agent: Arc::new(RwLock::new(None)),
             auto_lock_delay_ms: Arc::new(RwLock::new(5000)),
+            autolock_cancel: Arc::new(AtomicBool::new(false)),
+            autolock_skip_match: Arc::new(RwLock::new(None)),
             cached_parties: RwLock::new(HashMap::new()),
             cached_parties_match_id: RwLock::new(None),
             in_game_session: RwLock::new(false),

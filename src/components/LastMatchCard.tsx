@@ -11,7 +11,8 @@ import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
-import { Check, ChevronDown, Clock, UserPlus } from "lucide-react";
+import { Check, ChevronDown, Clock, StickyNote, UserPlus } from "lucide-react";
+import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
 function parseRiotId(name: string): { gameName: string; gameTag: string } | null {
   const hash = name.lastIndexOf("#");
@@ -95,6 +96,7 @@ function LastMatchPlayerRow({
   const isFriend = friends.some((f) => f.puuid === player.puuid);
   const isPending = outgoingRequests.some((r) => r.puuid === player.puuid);
   const canAdd = !player.is_me && !!riotId && !isFriend && !isPending;
+  const note = usePlayerNotesStore((s) => noteFor(s.notes, player.puuid));
 
   const copyName = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -196,6 +198,11 @@ function LastMatchPlayerRow({
           />
         )}
         {isOverlayUser && <OverlayUserMark title={t("player.overlayUserHint")} />}
+        {note && (
+          <span title={note} className="shrink-0 inline-flex">
+            <StickyNote className="w-2.5 h-2.5 text-accent-gold/80" aria-hidden />
+          </span>
+        )}
       </div>
 
       <div

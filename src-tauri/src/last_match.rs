@@ -132,7 +132,7 @@ async fn fetch_last_match_from_api(
                 }
                 let names = api.get_player_names(&name_ids).await;
                 apply_resolved_names(&mut parsed, &names);
-                remember_and_fill_seen_names(&mut parsed);
+                remember_and_fill_seen_names(&mut parsed, &names);
                 return Ok(Some(parsed));
             }
         }
@@ -283,11 +283,28 @@ fn resolve_score(
 }
 
 
-fn remember_and_fill_seen_names(m: &mut LastMatch) {
+fn fresh_name<'a>(names: &'a HashMap<String, String>, puuid: &str) -> Option<&'a str> {
+    names
+        .iter()
+        .find(|(id, _)| id.eq_ignore_ascii_case(puuid))
+        .map(|(_, name)| name.as_str())
+        .filter(|name| !name.is_empty())
+}
+
+fn remember_and_fill_seen_names(m: &mut LastMatch, fresh: &HashMap<String, String>) {
     crate::seen_names::remember(
         std::iter::once(&m.me)
             .chain(m.allies.iter())
             .chain(m.enemies.iter())
+            .filter_map(|p| fresh_name(fresh, &p.puuid).map(|name| (p.puuid.as_str(), name))),
+    );
+    // Match-detail names fill a puuid we have never seen. They must not
+    // replace a newer name the name service already stored.
+    crate::seen_names::remember_if_absent(
+        std::iter::once(&m.me)
+            .chain(m.allies.iter())
+            .chain(m.enemies.iter())
+            .filter(|p| fresh_name(fresh, &p.puuid).is_none())
             .map(|p| (p.puuid.as_str(), p.name.as_str())),
     );
     let fill = |p: &mut LastMatchPlayer| {

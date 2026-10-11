@@ -11,6 +11,7 @@ import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users } from "lucide-react";
+import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
 let regularsCooldownUntil = 0;
@@ -195,6 +196,13 @@ export function PlayerPanel() {
 	const [cooldownLeft, setCooldownLeft] = useState(0);
 	const [cooldownGen, setCooldownGen] = useState(0);
 	const [regularsAgents, setRegularsAgents] = useState<FrequentAgentPick[]>([]);
+	const setPlayerNote = usePlayerNotesStore((s) => s.setNote);
+	const storedNote = usePlayerNotesStore((s) =>
+		selectedPlayer ? noteFor(s.notes, selectedPlayer.puuid) : "",
+	);
+	const [noteDraft, setNoteDraft] = useState(storedNote);
+	const noteDraftRef = useRef(noteDraft);
+	noteDraftRef.current = noteDraft;
 
 	// Reset state when player changes
 	useEffect(() => {
@@ -214,6 +222,11 @@ export function PlayerPanel() {
 		setRegularsError(null);
 		setRegularsCopied(null);
 		setRegularsAgents([]);
+		setNoteDraft(
+			selectedPlayer
+				? noteFor(usePlayerNotesStore.getState().notes, selectedPlayer.puuid)
+				: "",
+		);
 
 		if (selectedPlayer?.puuid) {
 			invokeCommand<PeakRankData | null>("get_peak_rank", {
@@ -223,6 +236,23 @@ export function PlayerPanel() {
 				.catch(console.error);
 		}
 	}, [selectedPlayer?.puuid]);
+	useEffect(() => {
+		const id = selectedPlayer?.puuid ?? "";
+		const load = () => {
+			setNoteDraft(id ? noteFor(usePlayerNotesStore.getState().notes, id) : "");
+		};
+		if (usePlayerNotesStore.persist.hasHydrated()) load();
+		return usePlayerNotesStore.persist.onFinishHydration(load);
+	}, [selectedPlayer?.puuid]);
+	useEffect(() => {
+		const id = selectedPlayer?.puuid ?? "";
+		const initial = id ? noteFor(usePlayerNotesStore.getState().notes, id) : "";
+		return () => {
+			if (!id || !usePlayerNotesStore.persist.hasHydrated()) return;
+			if (noteDraftRef.current.trim() === initial.trim()) return;
+			setPlayerNote(id, noteDraftRef.current);
+		};
+	}, [selectedPlayer?.puuid, setPlayerNote]);
 	useEffect(() => {
 		if (!selectedPlayer) {
 			fetchedRef.current = null;
@@ -1375,6 +1405,18 @@ export function PlayerPanel() {
 									)}
 								</button>
 							</div>
+
+							{selectedPlayer.puuid && (
+								<input
+									type="text"
+									value={noteDraft}
+									maxLength={140}
+									placeholder={t("player.notePlaceholder")}
+									onChange={(e) => setNoteDraft(e.target.value.slice(0, 140))}
+									onBlur={() => setPlayerNote(selectedPlayer.puuid, noteDraft)}
+									className="mt-1 h-7 w-full bg-black/30 border border-white/[0.08] rounded-sm px-2 text-[11px] text-white placeholder:text-secondary/50 focus:outline-none focus:border-accent-gold/40"
+								/>
+							)}
 
 							{translatedName ? (
 								<div className="text-[10px] text-[#f5d78e] font-medium italic -mt-0.5 truncate drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">

@@ -127,6 +127,7 @@ pub fn run() -> RunResult {
             commands::get_auto_lock,
             commands::set_auto_lock_delay,
             commands::get_auto_lock_delay,
+            commands::cancel_autolock,
             commands::set_map_preferences,
             commands::pause_watching,
             commands::resume_watching,

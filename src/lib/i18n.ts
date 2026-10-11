@@ -79,6 +79,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "footer.active": "ACTIVE",
     "footer.inactive": "INACTIVE",
     "footer.agentLock": "Agent Lock",
+    "footer.cancelAutolock": "Cancel this lock",
 
     // Waiting State
     "waiting.title": "Waiting for Match",
@@ -153,6 +154,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsAgents": "Most played",
     "player.authorBadge": "Made this overlay",
     "player.authorHint": "Overlay author",
+    "player.notePlaceholder": "Note",
     "player.overlayUserBadge": "Uses this overlay",
     "player.overlayUserHint": "Uses this overlay",
 
@@ -526,6 +528,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "footer.active": "ETKİN",
     "footer.inactive": "PASİF",
     "footer.agentLock": "Ajan Kilitleme",
+    "footer.cancelAutolock": "Bu kilidi iptal et",
 
     // Waiting State
     "waiting.title": "Maç Bekleniyor",
@@ -600,6 +603,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.regularsAgents": "En çok oynadığı",
     "player.authorBadge": "Bu overlay'i yazan kişi",
     "player.authorHint": "Overlay yazarı",
+    "player.notePlaceholder": "Not",
     "player.overlayUserBadge": "Bu overlay'i kullanıyor",
     "player.overlayUserHint": "Bu overlay'i kullanıyor",
 

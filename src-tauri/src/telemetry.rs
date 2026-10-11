@@ -11,9 +11,9 @@ use tokio::sync::Notify;
 const HEARTBEAT: Duration = Duration::from_secs(300);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(4);
 const NAME_RETRY: Duration = Duration::from_secs(300);
-/// Round score changes every ~100 s. Reporting each one doubled request
-/// volume for a field nobody needs to the second; batch score-only changes.
-const SCORE_THROTTLE: Duration = Duration::from_secs(120);
+/// Round score changes about once a minute. A short hold keeps the admin
+/// column current without a report on every poll.
+const SCORE_THROTTLE: Duration = Duration::from_secs(15);
 /// Exit must not hold the app open: best effort, then give up.
 const EXIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn score_only_changes_are_throttled() {
-        let recent = Some(Duration::from_secs(30));
+        let recent = Some(Duration::from_secs(5));
         let old = Some(SCORE_THROTTLE + Duration::from_secs(1));
         // Score-only change shortly after a report waits.
         assert!(score_throttled(false, false, true, recent));
