@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { toast } from "sonner";
 import { useGameStore } from "../stores/gameStore";
 import { setWebviewVisible, useSettingsStore } from "../stores/settingsStore";
 import { usePanelStore } from "../stores/panelStore";
@@ -9,7 +8,6 @@ import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
 import { useOverlayUsersStore } from "../stores/overlayUsersStore";
-import { useI18n } from "../lib/i18n";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionEvent, GameState, LastMatch } from "../lib/types";
 
@@ -65,9 +63,6 @@ export function useGameLoop() {
       if (!isWatchingForGame(store.status)) return;
       waitingSinceRef.current = null;
       store.toggleMatchWatching();
-      toast.info(useI18n.getState().t("toast.autoPausedNoGame"), {
-        id: "auto-pause-no-game",
-      });
     }, remaining);
 
     return () => window.clearTimeout(id);
