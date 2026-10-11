@@ -7,7 +7,7 @@ import { usePanelStore } from "../../stores/panelStore";
 import { useI18n } from "../../lib/i18n";
 import type { Friend } from "../../lib/types";
 import clsx from "clsx";
-import { ArrowDown, ChevronDown, IdCard, MessageSquare, MessagesSquare, Minus, Search, SendHorizontal, Users } from "lucide-react";
+import { ArrowDown, ChevronDown, MessagesSquare, Minus, Search, SendHorizontal, UserRound, Users } from "lucide-react";
 
 /** Stable per-name hue so each friend keeps the same avatar colour. */
 function avatarHue(name: string): number {
@@ -541,19 +541,14 @@ export function ChatPanel() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-0.5 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity">
-                            <span className="icon-btn" aria-hidden>
-                              <MessageSquare className="w-3.5 h-3.5" />
-                            </span>
-                            <button
-                              type="button"
-                              title={t("chat.viewProfile")}
-                              onClick={(e) => openFriendProfile(e, friend)}
-                              className="icon-btn hover:text-accent-cyan!"
-                            >
-                              <IdCard className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            title={t("chat.viewProfile")}
+                            onClick={(e) => openFriendProfile(e, friend)}
+                            className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-dim opacity-50 group-hover:opacity-100 hover:text-accent-cyan hover:bg-white/5 transition-colors"
+                          >
+                            <UserRound className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       );
                     })}
