@@ -51,8 +51,10 @@ interface GameStore {
 	mapAgentPreferences: Record<string, string>;
 	pausedAutoLockAgent: string | null;
 
-	// Whether the user paused match watching (persisted across restarts)
+	// Match-watching pause for this session (not persisted across launches).
 	pausedByUser: boolean;
+	/** Set when the 5‑min no-game timer paused us — auto-resume when Riot/game returns. */
+	autoPausedNoGame: boolean;
 
 	// Kept only so existing UI (WaitingState) keeps compiling; the frontend no
 	// longer tracks reconnect attempts - the backend owns reconnection.
@@ -78,6 +80,8 @@ interface GameStore {
 	getAgentForMap: (mapName: string) => string | null;
 	toggleAutoLock: () => void;
 	toggleMatchWatching: () => void;
+	/** Pause from the no-game timer (chat stays usable; resume when host returns). */
+	autoPauseNoGame: () => void;
 	reconnect: (manual?: boolean) => void;
 	checkGameProcess: () => void;
 
@@ -134,6 +138,7 @@ export const useGameStore = create<GameStore>()(
 			mapAgentPreferences: {},
 			pausedAutoLockAgent: null,
 			pausedByUser: false,
+			autoPausedNoGame: false,
 			reconnectAttempts: 0,
 			pendingReconnect: false,
 			reconnectAcked: false,
@@ -394,22 +399,41 @@ export const useGameStore = create<GameStore>()(
 				const paused = get().status === "PAUSED";
 				if (paused) {
 					// Resume
-					set({ status: "CONNECTING", pausedByUser: false });
+					set({
+						status: "CONNECTING",
+						pausedByUser: false,
+						autoPausedNoGame: false,
+					});
 					invokeCommand("resume_watching").catch(console.error);
 				} else {
-					// Pause — cancel any in-flight "check game" reconnect first so
-					// one click from WAITING_FOR_GAME goes straight to paused.
+					// Manual pause — stay paused until the user hits play.
 					clearReconnectTimers();
 					toast.dismiss("reconnect");
 					set({
 						status: "PAUSED",
 						pausedByUser: true,
+						autoPausedNoGame: false,
 						pendingReconnect: false,
 						reconnectAcked: false,
 						gameState: initialGameState,
 					});
 					invokeCommand("pause_watching").catch(console.error);
 				}
+			},
+
+			autoPauseNoGame: () => {
+				if (get().status === "PAUSED") return;
+				clearReconnectTimers();
+				toast.dismiss("reconnect");
+				set({
+					status: "PAUSED",
+					pausedByUser: true,
+					autoPausedNoGame: true,
+					pendingReconnect: false,
+					reconnectAcked: false,
+					gameState: initialGameState,
+				});
+				invokeCommand("pause_watching").catch(console.error);
 			},
 
 			// Manual reconnect button - asks the supervisor to re-init now.
@@ -462,8 +486,8 @@ export const useGameStore = create<GameStore>()(
 
 				// Pause is session-only — never restore "duraklatıldı" across launches
 				// (auto-pause / last session used to stick and open the app paused).
-				if (get().pausedByUser) {
-					set({ pausedByUser: false });
+				if (get().pausedByUser || get().autoPausedNoGame) {
+					set({ pausedByUser: false, autoPausedNoGame: false });
 				}
 
 				console.log("Pushing settings to backend...", {
@@ -501,11 +525,16 @@ export const useGameStore = create<GameStore>()(
 				mapAgentPreferences: state.mapAgentPreferences,
 				pausedAutoLockAgent: state.pausedAutoLockAgent,
 			}),
-			// Drop stale pausedByUser from older builds still sitting in localStorage.
+			// Drop stale pause flags from older builds still sitting in localStorage.
 			merge: (persisted, current) => {
 				const p = (persisted ?? {}) as Partial<GameStore>;
-				const { pausedByUser: _ignore, ...rest } = p;
-				return { ...current, ...rest, pausedByUser: false };
+				const { pausedByUser: _p, autoPausedNoGame: _a, ...rest } = p;
+				return {
+					...current,
+					...rest,
+					pausedByUser: false,
+					autoPausedNoGame: false,
+				};
 			},
 		},
 	),

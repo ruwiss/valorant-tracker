@@ -36,12 +36,14 @@ function isWatchingForGame(status: string): boolean {
 export function useGameLoop() {
   const { setGameState, applyConnectionEvent, pushSettingsToBackend } = useGameStore();
   const status = useGameStore((s) => s.status);
+  const autoPausedNoGame = useGameStore((s) => s.autoPausedNoGame);
   const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
   const waitingSinceRef = useRef<number | null>(null);
 
-  // No Valorant for 5 minutes → pause watching (one click resume later).
+  // No game/Riot for 5 minutes → pause match watching only (chat can come back
+  // on its own when the host returns — see auto-resume below).
   useEffect(() => {
     if (status === "CONNECTED" || status === "PAUSED" || !isWatchingForGame(status)) {
       waitingSinceRef.current = null;
@@ -62,11 +64,42 @@ export function useGameLoop() {
       if (store.status === "CONNECTED" || store.status === "PAUSED") return;
       if (!isWatchingForGame(store.status)) return;
       waitingSinceRef.current = null;
-      store.toggleMatchWatching();
+      store.autoPauseNoGame();
     }, remaining);
 
     return () => window.clearTimeout(id);
   }, [status]);
+
+  // After auto-pause: when Riot Client or Valorant comes back, resume watching
+  // so we don't stay stuck on "Duraklatıldı" until the overlay is restarted.
+  useEffect(() => {
+    if (status !== "PAUSED" || !autoPausedNoGame) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const up = await invokeCommand<boolean>("get_chat_host_running", undefined, {
+          suppressErrorToast: true,
+        });
+        if (cancelled || !up) return;
+        const store = useGameStore.getState();
+        if (store.status === "PAUSED" && store.autoPausedNoGame) {
+          store.toggleMatchWatching();
+        }
+      } catch {
+        // still down
+      }
+    };
+
+    void tick();
+    const id = window.setInterval(() => {
+      void tick();
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [status, autoPausedNoGame]);
 
   useEffect(() => {
     // 1. One-time setup: assets, constants, window, hotkey, autolock delay.

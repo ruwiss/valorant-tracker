@@ -2462,6 +2462,12 @@ pub async fn get_game_running() -> Result<bool, String> {
     Ok(is_game_running())
 }
 
+/// Riot Client Services and/or Valorant — enough to host local chat again.
+#[tauri::command]
+pub async fn get_chat_host_running() -> Result<bool, String> {
+    Ok(crate::process::is_chat_host_running())
+}
+
 /// Capture the currently signed-in account's cloud settings as a named preset.
 /// Requires an active connection (the game must be/have been open for tokens).
 #[tauri::command]

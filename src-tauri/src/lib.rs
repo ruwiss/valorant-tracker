@@ -164,6 +164,7 @@ pub fn run() -> RunResult {
             commands::disarm_preset,
             commands::get_armed_preset,
             commands::get_game_running,
+            commands::get_chat_host_running,
             commands::get_preset_crosshairs,
             // License commands
             commands::get_machine_id,
