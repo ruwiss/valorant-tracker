@@ -4,11 +4,14 @@ import { LastMatchCard } from "./LastMatchCard";
 import { Pause, Play } from "lucide-react";
 
 export function WaitingState() {
-  const { status, pendingReconnect, reconnectAttempts, toggleMatchWatching, checkGameProcess } = useGameStore();
+  const { status, pendingReconnect, reconnectAttempts, toggleMatchWatching } = useGameStore();
   const { t } = useI18n();
 
   const isPaused = status === "PAUSED";
-  const isWaitingForGame = status === "WAITING_FOR_GAME" && !pendingReconnect;
+  // Riot-only (chat ready, game closed) still shows the "start Valorant" idle view.
+  const isWaitingForGame =
+    (status === "WAITING_FOR_GAME" || status === "RIOT_CONNECTED") &&
+    !pendingReconnect;
   const isLoading = status === "CONNECTING" || status === "RECONNECTING" || status === "IDLE" || pendingReconnect;
 
   const activeView = isPaused ? "paused" : isWaitingForGame ? "waitingForGame" : isLoading ? "loading" : "waiting";
@@ -34,7 +37,7 @@ export function WaitingState() {
              </div>
           ) : isWaitingForGame ? (
              <div className="flex flex-col items-center text-center w-full">
-                 <button onClick={() => checkGameProcess()} className="group relative w-20 h-20 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title={t("waiting.checkGame")}>
+                 <button onClick={toggleMatchWatching} className="group relative w-20 h-20 mb-5 flex items-center justify-center cursor-pointer transition-transform active:scale-95 shrink-0" title={t("waiting.clickToPause")}>
                     <div className="absolute inset-0 rounded-full border border-accent-cyan/30 bg-accent-cyan/5 group-hover:border-accent-cyan/50 group-hover:bg-accent-cyan/10 transition-colors" />
                     <div className="absolute inset-[-6px] rounded-full border border-dashed border-accent-cyan/20 animate-[spin_10s_linear_infinite]" />
                     <div className="absolute inset-[-12px] rounded-full border border-accent-cyan/10 opacity-0 group-hover:opacity-100 transition-opacity animate-pulse" />

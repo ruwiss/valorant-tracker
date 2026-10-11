@@ -11,15 +11,24 @@ use tauri::State;
 
 #[derive(serde::Serialize, Clone)]
 pub struct ConnectionEvent {
-    pub status: String, // "connected" | "connecting" | "waiting_for_game" | "paused"
+    /// "connected" | "riot_connected" | "connecting" | "waiting_for_game" | "paused"
+    ///
+    /// `riot_connected` = Riot Client tokens live (chat/friends OK) but VALORANT
+    /// process is not running. Full match/shop/preset features need `connected`.
+    pub status: String,
     pub region: String,
+    /// Signed-in account puuid when tokens are live (chat "is me" without a match).
+    #[serde(default)]
+    pub puuid: String,
 }
 
 /// Emit a `connection_changed` event only when it differs from the last one.
 fn emit_connection(app: &tauri::AppHandle, last_json: &mut String, status: &str, region: &str) {
+    let puuid = app.state::<AppState>().api.puuid.read().clone();
     let ev = ConnectionEvent {
         status: status.to_string(),
         region: region.to_string(),
+        puuid,
     };
     if let Ok(json) = serde_json::to_string(&ev) {
         if json != *last_json {
@@ -27,6 +36,30 @@ fn emit_connection(app: &tauri::AppHandle, last_json: &mut String, status: &str,
             *last_json = json;
         }
     }
+}
+
+/// Social/chat-ready vs full game link. Chat uses local Riot Client APIs; the
+/// VALORANT process is only required for match state / remote game features.
+fn link_status(game_up: bool) -> &'static str {
+    if game_up {
+        "connected"
+    } else {
+        "riot_connected"
+    }
+}
+
+/// Make sure local chat tokens exist when Riot Client and/or Valorant is up.
+/// Used by chat commands so friends/DM work even while match-watching is
+/// paused or the supervisor is still mid-connect.
+async fn ensure_chat_link(api: &crate::api::ValorantAPI) -> Result<(), String> {
+    if !crate::process::is_chat_host_running() {
+        return Err("Not connected".into());
+    }
+    if *api.connected.read() && !*api.needs_reinit.read() {
+        return Ok(());
+    }
+    api.initialize().await.map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Force a connection attempt now. Kept for compatibility / manual use; the
@@ -201,26 +234,70 @@ pub fn start_supervisor(app: tauri::AppHandle) {
             }
             skip_sleep = false;
 
-            // 0. Respect user pause - stop watching but keep the task alive.
+            // 0. Respect user pause - stop match watching but keep chat alive.
+            // Drop the chat link only when BOTH Riot Client and Valorant are gone
+            // (game can stay up after the client UX is closed).
             if *app.state::<AppState>().is_paused.read() {
                 poll_interval_ms = POLL_PAUSED_MS;
+                if !crate::process::is_chat_host_running() {
+                    *api.connected.write() = false;
+                    *api.needs_reinit.write() = true;
+                } else if !*api.connected.read() || *api.needs_reinit.read() {
+                    // Game/Riot came back while paused — refresh tokens for chat.
+                    if let Err(e) = api.initialize().await {
+                        tracing::debug!("[Supervisor] Paused chat init failed: {}", e);
+                    }
+                }
                 emit_connection(&app, &mut last_conn_json, "paused", "");
                 discord.update(&GameState::default(), "paused");
+                continue;
+            }
+
+            // 0b. No chat host (Riot Client AND game both gone) while we still
+            // held tokens → drop the link. Don't drop if Valorant alone is up.
+            if *api.connected.read() && !crate::process::is_chat_host_running() {
+                tracing::info!("[Supervisor] Riot stack gone — dropping chat link");
+                *api.connected.write() = false;
+                *api.needs_reinit.write() = true;
+                {
+                    let state = app.state::<AppState>();
+                    drop_range_or_dead_cache(&state);
+                }
+                let idle = GameState {
+                    state: "idle".into(),
+                    ..Default::default()
+                };
+                if let Ok(json) = serde_json::to_string(&idle) {
+                    if json != last_emitted_state_json {
+                        let _ = app.emit("game_state_changed", &idle);
+                        last_emitted_state_json = json;
+                    }
+                }
+                discord.update(&idle, "waiting_for_game");
+                emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                last_phase = "idle".into();
+                poll_interval_ms = POLL_WAITING_MS;
                 continue;
             }
 
             // 1. Ensure the connection. The backend now OWNS reconnection: if we
             // are disconnected or our tokens went stale, re-initialize here with
             // backoff instead of waiting for the frontend to ask.
+            //
+            // Chat/friends talk to the Riot Client local API — VALORANT.exe is
+            // not required. Match panels still wait for the game process.
             let connected = *api.connected.read();
             let needs_reinit = *api.needs_reinit.read();
             if !connected || needs_reinit {
                 poll_interval_ms = POLL_WAITING_MS;
                 emit_connection(&app, &mut last_conn_json, "connecting", "");
 
+                let game_up = crate::process::is_game_running();
+                let chat_host = crate::process::is_chat_host_running();
+
                 // Game process gone (quit to desktop / range exit + close): drop the
                 // live cache immediately so we don't keep a phantom LIVE panel.
-                if !crate::process::is_game_running() {
+                if !game_up {
                     {
                         let state = app.state::<AppState>();
                         drop_range_or_dead_cache(&state);
@@ -236,13 +313,18 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         }
                     }
                     discord.update(&idle, "waiting_for_game");
-                    emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
-                    poll_interval_ms = POLL_WAITING_MS;
-                    consecutive_connect_failures = WAITING_AFTER_FAILURES;
                     last_phase = "idle".into();
-                    tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
-                    backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
-                    continue;
+
+                    // Neither Riot Client nor Valorant → nothing to talk to for chat.
+                    if !chat_host {
+                        emit_connection(&app, &mut last_conn_json, "waiting_for_game", "");
+                        poll_interval_ms = POLL_WAITING_MS;
+                        consecutive_connect_failures = WAITING_AFTER_FAILURES;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 3 / 2).min(MAX_BACKOFF_MS);
+                        continue;
+                    }
+                    // Riot Client up, game down → fall through to initialize() for chat.
                 }
 
                 // Mid-match token blip: keep feeding the last live snapshot so the
@@ -251,7 +333,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     let last = app.state::<AppState>().last_known_state.read().clone();
                     last == "pregame" || last == "ingame"
                 };
-                if was_live {
+                if was_live && game_up {
                     if let Some(cached) =
                         app.state::<AppState>().last_full_game_state.read().clone()
                     {
@@ -270,8 +352,13 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                     Ok(status) => {
                         backoff_ms = 1000;
                         consecutive_connect_failures = 0;
-                        tracing::info!("[Supervisor] Connected (region={})", status.region);
-                        emit_connection(&app, &mut last_conn_json, "connected", &status.region);
+                        let link = link_status(game_up);
+                        tracing::info!(
+                            "[Supervisor] Connected (region={}, link={})",
+                            status.region,
+                            link
+                        );
+                        emit_connection(&app, &mut last_conn_json, link, &status.region);
 
                         // Reset idle and menus debounce counters upon a successful reconnection/token refresh.
                         // This prevents any transient API delays immediately following reconnection from
@@ -289,18 +376,26 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                         // UI would stay stuck on the waiting screen until a manual
                         // refresh.
                         last_emitted_state_json.clear();
-                        // Next tick should be responsive so we pick up pregame ASAP.
-                        poll_interval_ms = POLL_LIVE_MS;
+                        // Next tick should be responsive so we pick up pregame ASAP
+                        // (or settle into idle chat when only Riot is up).
+                        poll_interval_ms = if game_up {
+                            POLL_LIVE_MS
+                        } else {
+                            POLL_IDLE_MS
+                        };
 
                         // Fresh token just arrived. If a preset is armed, apply it
                         // now — before the game reads its settings (~46s window).
+                        // Safe while Valorant is closed (riot-only) too.
                         try_apply_armed_preset(&app).await;
 
-                        // Idle recap: last completed match (map + score).
-                        crate::last_match::spawn_refresh(
-                            app.clone(),
-                            crate::last_match::LastMatchReason::Connected,
-                        );
+                        // Idle recap needs the game/PD path; only on full link.
+                        if game_up {
+                            crate::last_match::spawn_refresh(
+                                app.clone(),
+                                crate::last_match::LastMatchReason::Connected,
+                            );
+                        }
                     }
                     Err(e) => {
                         consecutive_connect_failures += 1;
@@ -377,16 +472,26 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                 }
 
                 // Keep the connection status fresh (region may have resolved).
+                // Chat stays up with Riot-only; full "connected" needs the game.
+                let game_up = crate::process::is_game_running();
+                let link = link_status(game_up);
                 emit_connection(
                     &app,
                     &mut last_conn_json,
-                    "connected",
+                    link,
                     &api.region.read().to_uppercase(),
                 );
 
                 // Mirror the live state into Discord Rich Presence (no-op when
                 // the feature is disabled or Discord isn't running).
-                discord.update(&current_state, "connected");
+                discord.update(
+                    &current_state,
+                    if game_up {
+                        "connected"
+                    } else {
+                        "waiting_for_game"
+                    },
+                );
 
                 // 3. Autolock logic (if in pregame and not already running a sequence)
                 if current_state.state == "pregame" && !autolock_in_progress.load(Ordering::Relaxed)
@@ -1840,6 +1945,7 @@ pub fn reconnect(app: tauri::AppHandle, state: State<'_, AppState>) {
     let ev = ConnectionEvent {
         status: "connecting".to_string(),
         region: state.api.region.read().to_uppercase(),
+        puuid: state.api.puuid.read().clone(),
     };
     let _ = app.emit("connection_changed", &ev);
 }
@@ -1876,13 +1982,14 @@ pub fn get_connection_status(state: State<'_, AppState>) -> ConnectionEvent {
     } else if needs_reinit {
         "connecting"
     } else if connected {
-        "connected"
+        link_status(crate::process::is_game_running())
     } else {
         "waiting_for_game"
     };
     ConnectionEvent {
         status: status.to_string(),
         region: state.api.region.read().to_uppercase(),
+        puuid: state.api.puuid.read().clone(),
     }
 }
 
@@ -2075,9 +2182,7 @@ pub async fn get_chat_messages(
     cid: Option<String>,
 ) -> Result<Vec<ChatMessage>, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     tracing::debug!("[get_chat_messages] Request with CID: {:?}", cid);
 
@@ -2098,9 +2203,7 @@ pub async fn get_active_conversations(
     state: State<'_, AppState>,
 ) -> Result<Vec<Conversation>, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     let mut conversations: Vec<Conversation> = api
         .get_conversations()
@@ -2163,9 +2266,7 @@ pub async fn send_message(
     message_type: String,
 ) -> Result<bool, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     tracing::debug!("[send_message] CID: {}, Type: {}", cid, message_type);
 
@@ -2191,9 +2292,7 @@ pub async fn get_paginated_chat_messages(
     page_size: usize,
 ) -> Result<PaginatedMessages, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     if let Some(history) = api.get_chat_history(cid.as_deref()).await {
         let total = history.messages.len();
@@ -2245,14 +2344,15 @@ pub async fn get_paginated_chat_messages(
 #[tauri::command]
 pub async fn get_friends(state: State<'_, AppState>) -> Result<Vec<Friend>, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    // Self-heal tokens when host is up (covers pause / supervisor still connecting).
+    ensure_chat_link(api).await?;
 
     if let Some(friends) = api.get_friends().await {
         Ok(friends.friends)
     } else {
-        Ok(vec![])
+        // Local chat API failed (stack closed mid-request, etc.) — do not pretend
+        // the user has zero friends; let the UI show the offline hint.
+        Err("Not connected".into())
     }
 }
 
@@ -2262,9 +2362,7 @@ pub async fn get_outgoing_friend_requests(
     state: State<'_, AppState>,
 ) -> Result<Vec<FriendRequest>, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     if let Some(resp) = api.get_friend_requests().await {
         Ok(resp
@@ -2285,9 +2383,7 @@ pub async fn send_friend_request(
     game_tag: String,
 ) -> Result<bool, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
     let game_name = game_name.trim().to_string();
     let game_tag = game_tag.trim().to_string();
     if game_name.is_empty() || game_tag.is_empty() {
@@ -2309,9 +2405,7 @@ pub async fn cancel_friend_request(
     puuid: String,
 ) -> Result<bool, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
     if puuid.trim().is_empty() {
         return Err("Missing puuid".into());
     }
@@ -2626,9 +2720,7 @@ pub async fn get_dm_cid(
     friend_puuid: String,
 ) -> Result<String, String> {
     let api = &state.api;
-    if !*api.connected.read() {
-        return Err("Not connected".into());
-    }
+    ensure_chat_link(api).await?;
 
     tracing::debug!("[get_dm_cid] Finding CID for friend: {}", friend_puuid);
 

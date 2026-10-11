@@ -32,6 +32,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "toast.reconnected": "Reconnected",
     "toast.reconnectNoGame": "Valorant is not running",
     "toast.reconnectFailed": "Reconnect failed",
+    "toast.autoPausedNoGame": "Paused — Valorant was not started for 5 minutes",
 
     // Dialog
     "dialog.closeTitle": "Close Application",
@@ -54,6 +55,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "chat.no_agents": "NO AGENTS FOUND",
     "chat.no_comms": "No Active Comms",
     "chat.gameRequired": "Start Valorant to view friends",
+    "chat.riotRequired": "Open Riot Client or Valorant to use chat",
     "chat.search_friends_hint": "Type to search friends...",
     "chat.agent_fallback": "AGENT",
     "chat.decrypting": "DECRYPTING HISTORY...",
@@ -480,6 +482,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "toast.reconnected": "Yeniden bağlandı",
     "toast.reconnectNoGame": "Valorant açık değil",
     "toast.reconnectFailed": "Yeniden bağlanma başarısız",
+    "toast.autoPausedNoGame": "Duraklatıldı — Valorant 5 dakikadır açılmadı",
     "settings.version": "Sürüm",
 
     // Dialog
@@ -503,6 +506,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "chat.no_agents": "ARKADAŞ BULUNAMADI",
     "chat.no_comms": "Aktif İletişim Yok",
     "chat.gameRequired": "Arkadaşları görmek için Valorant'ı başlatın",
+    "chat.riotRequired": "Sohbet için Riot Client veya Valorant'ı açın",
     "chat.search_friends_hint": "Arkadaş ara...",
     "chat.agent_fallback": "OYUNCU",
     "chat.decrypting": "Çözülüyor...",

@@ -10,8 +10,15 @@ export interface ConnectionStatus {
  * connection lifecycle and pushes these to the frontend.
  */
 export interface ConnectionEvent {
-  status: "connected" | "connecting" | "waiting_for_game" | "paused";
+  status:
+    | "connected"
+    | "riot_connected"
+    | "connecting"
+    | "waiting_for_game"
+    | "paused";
   region: string;
+  /** Signed-in puuid when Riot tokens are live (chat without a match roster). */
+  puuid?: string;
 }
 
 export interface PlayerData {

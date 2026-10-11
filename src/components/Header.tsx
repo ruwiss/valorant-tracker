@@ -83,14 +83,14 @@ export function Header() {
             className={`relative w-2 h-2 rounded-full shrink-0 ${
               status === 'CONNECTED' && !pendingReconnect ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.6)]' :
               status === 'CONNECTING' || status === 'RECONNECTING' || pendingReconnect ? 'bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6)] animate-pulse' :
-              status === 'WAITING_FOR_GAME' ? 'bg-accent-cyan shadow-[0_0_8px_rgba(0,212,170,0.6)] animate-pulse' :
+              status === 'WAITING_FOR_GAME' || status === 'RIOT_CONNECTED' ? 'bg-accent-cyan shadow-[0_0_8px_rgba(0,212,170,0.6)] animate-pulse' :
               'bg-accent-red shadow-[0_0_8px_rgba(255,70,85,0.6)]'
             }`}
             title={`${t("header.status")}: ${
              status === 'CONNECTED' ? t("status.connected") || 'LINKED' :
              status === 'CONNECTING' ? t("status.connecting") || 'LINKING' :
              status === 'RECONNECTING' ? t("status.reconnecting") || 'RETRYING' :
-             status === 'WAITING_FOR_GAME' ? t("waiting.forGame") :
+             status === 'WAITING_FOR_GAME' || status === 'RIOT_CONNECTED' ? t("waiting.forGame") :
              t("status.offline") || 'OFFLINE'
             }`}
           />

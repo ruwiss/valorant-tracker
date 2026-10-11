@@ -748,7 +748,10 @@ fn phase_label(game_state: &str, conn_status: &str, activity: Option<&str>) -> &
     if conn_status == "paused" {
         return "paused";
     }
-    if conn_status == "waiting_for_game" || conn_status == "connecting" {
+    if conn_status == "waiting_for_game"
+        || conn_status == "riot_connected"
+        || conn_status == "connecting"
+    {
         return "offline";
     }
     match activity {
@@ -834,6 +837,7 @@ mod tests {
         assert_eq!(phase_label("", "paused", None), "paused");
         assert_eq!(phase_label("ingame", "paused", None), "ingame");
         assert_eq!(phase_label("idle", "waiting_for_game", Some("queue")), "offline");
+        assert_eq!(phase_label("idle", "riot_connected", Some("queue")), "offline");
         assert_eq!(phase_label("idle", "connecting", None), "offline");
         assert_eq!(phase_label("idle", "connected", None), "idle");
         assert_eq!(phase_label("idle", "connected", Some("queue")), "queue");

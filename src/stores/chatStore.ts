@@ -21,6 +21,8 @@ interface ChatStore {
   cancellingPuuid: string | null;
   loading: boolean;
   isOpen: boolean;
+  /** null = not probed yet; false = Riot chat unreachable; true = friends API ok. */
+  chatLinkOk: boolean | null;
   /** New DMs noticed while the chat panel is closed, during menus. */
   alertCount: number;
 
@@ -87,6 +89,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   cancellingPuuid: null,
   loading: false,
   isOpen: false,
+  chatLinkOk: null,
   alertCount: 0,
   page: 0,
   hasMore: false,
@@ -155,10 +158,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 if (aOnline !== bOnline) return bOnline - aOnline;
                 return a.game_name.localeCompare(b.game_name);
             });
-            set({ friends });
+            set({ friends, chatLinkOk: true });
         }
     } catch (e) {
-        console.error("Failed to fetch friends", e);
+        // Expected while host is down / tokens still spinning up — keep quiet.
+        console.debug("Failed to fetch friends", e);
+        set({ friends: [], outgoingRequests: [], chatLinkOk: false });
     }
   },
 

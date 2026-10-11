@@ -157,9 +157,15 @@ pub fn is_game_running() -> bool {
 }
 
 /// True if the Riot Client service process is running.
-#[allow(dead_code)] // Part of the process API; not all callers wired up yet.
 pub fn is_riot_client_running() -> bool {
     imp::is_running("RiotClientServices.exe")
+}
+
+/// Local chat/friends API host is available when either Riot Client Services
+/// or Valorant itself is running. The game can stay up after the client UX
+/// is closed; chat must keep working in that case.
+pub fn is_chat_host_running() -> bool {
+    is_riot_client_running() || is_game_running()
 }
 
 /// Kill the game process only (leaving the client running). Returns the number

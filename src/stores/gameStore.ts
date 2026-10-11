@@ -33,6 +33,7 @@ export type AppConnectionStatus =
 	| "IDLE"
 	| "CONNECTING"
 	| "CONNECTED"
+	| "RIOT_CONNECTED"
 	| "RECONNECTING"
 	| "PAUSED"
 	| "WAITING_FOR_GAME";
@@ -41,6 +42,8 @@ interface GameStore {
 	// Connection state (driven by backend events)
 	status: AppConnectionStatus;
 	region: string;
+	/** Account puuid from Riot entitlements (available in riot-only chat mode). */
+	selfPuuid: string;
 	gameState: GameState;
 
 	// Map-based agent selection (persisted)
@@ -83,6 +86,8 @@ interface GameStore {
 
 	// Computed helpers
 	isConnected: () => boolean;
+	/** Chat/friends: Riot Client tokens are enough (game optional). */
+	isChatReady: () => boolean;
 	isLoading: () => boolean;
 	isPaused: () => boolean;
 	isWaitingForGame: () => boolean;
@@ -105,6 +110,8 @@ const mapBackendStatus = (s: string): AppConnectionStatus => {
 	switch (s) {
 		case "connected":
 			return "CONNECTED";
+		case "riot_connected":
+			return "RIOT_CONNECTED";
 		case "connecting":
 			return "CONNECTING";
 		case "paused":
@@ -121,6 +128,7 @@ export const useGameStore = create<GameStore>()(
 			// Initial state - the backend supervisor starts connecting on app launch.
 			status: "CONNECTING",
 			region: "",
+			selfPuuid: "",
 			gameState: initialGameState,
 			autoLockAgent: null,
 			mapAgentPreferences: {},
@@ -141,12 +149,19 @@ export const useGameStore = create<GameStore>()(
 
 			// Computed helpers
 			isConnected: () => get().status === "CONNECTED",
+			isChatReady: () => {
+				const s = get().status;
+				return s === "CONNECTED" || s === "RIOT_CONNECTED" || s === "PAUSED";
+			},
 			isLoading: () =>
 				get().status === "CONNECTING" ||
 				get().status === "RECONNECTING" ||
 				get().pendingReconnect,
 			isPaused: () => get().status === "PAUSED",
-			isWaitingForGame: () => get().status === "WAITING_FOR_GAME",
+			isWaitingForGame: () => {
+				const s = get().status;
+				return s === "WAITING_FOR_GAME" || s === "RIOT_CONNECTED";
+			},
 
 			// --- Event-driven setters (called from useGameLoop listeners) ---
 
@@ -170,10 +185,14 @@ export const useGameStore = create<GameStore>()(
 					// Transient disconnect mid-match: keep the live panel. Backend
 					// reconnects and re-emits shortly; wiping here is the classic
 					// "stuck on Oyun Bekleniyor" flash.
-					// Game actually gone (WAITING_FOR_GAME) or a range leftover: drop it.
+					// Game actually gone (WAITING / RIOT_CONNECTED) or a range leftover: drop it.
 					if (newState.state === "disconnected" && live) {
 						const st = get().status;
-						if (st === "WAITING_FOR_GAME" || prevLooksLikeRange) {
+						if (
+							st === "WAITING_FOR_GAME" ||
+							st === "RIOT_CONNECTED" ||
+							prevLooksLikeRange
+						) {
 							return { gameState: initialGameState };
 						}
 						return s;
@@ -181,7 +200,7 @@ export const useGameStore = create<GameStore>()(
 
 					// Ignore idle while we are still (re)connecting — a false idle during
 					// token refresh / pregame→ingame load must not clobber the panel.
-					// WAITING_FOR_GAME means Valorant is not running: accept idle.
+					// WAITING / RIOT_CONNECTED means Valorant is not running: accept idle.
 					if (newState.state === "idle" && live) {
 						const st = get().status;
 						if (st === "CONNECTING" || st === "RECONNECTING") {
@@ -243,16 +262,19 @@ export const useGameStore = create<GameStore>()(
 						return;
 					}
 
-					// In-flight "connected" from the poll that was already running
+					// In-flight link from the poll that was already running
 					// when the user clicked — ignore until we have seen "connecting".
-					if (next === "CONNECTED" && !get().reconnectAcked) {
+					if (
+						(next === "CONNECTED" || next === "RIOT_CONNECTED") &&
+						!get().reconnectAcked
+					) {
 						return;
 					}
 
 					const applyTerminal = () => {
 						clearReconnectTimers();
 						const t = useI18n.getState().t;
-						if (next === "CONNECTED") {
+						if (next === "CONNECTED" || next === "RIOT_CONNECTED") {
 							toast.success(t("toast.reconnected"), { id: "reconnect" });
 						} else if (next === "WAITING_FOR_GAME") {
 							toast.error(t("toast.reconnectNoGame"), { id: "reconnect" });
@@ -279,18 +301,20 @@ export const useGameStore = create<GameStore>()(
 				set((s) => ({
 					status: next,
 					region: ev.region || s.region,
-					// Pause always clears. WAITING_FOR_GAME + a range leftover (solo /
-					// Unknown map) also clears — a real live match stays, because mid-match
-					// token blips must not wipe the roster.
-					gameState: next === "PAUSED"
-						? initialGameState
-						: next === "WAITING_FOR_GAME" &&
-							  ((s.gameState.map_name || "").toLowerCase().includes("range") ||
-									((s.gameState.map_name || "").toLowerCase() === "unknown" &&
-										s.gameState.enemies.length === 0 &&
-										s.gameState.allies.length <= 1))
+					selfPuuid: ev.puuid?.trim() || s.selfPuuid,
+					// Pause / riot-only: no live match. WAITING_FOR_GAME + a range
+					// leftover also clears — a real live match stays on WAITING, because
+					// mid-match token blips must not wipe the roster.
+					gameState:
+						next === "PAUSED" || next === "RIOT_CONNECTED"
 							? initialGameState
-							: s.gameState,
+							: next === "WAITING_FOR_GAME" &&
+								  ((s.gameState.map_name || "").toLowerCase().includes("range") ||
+										((s.gameState.map_name || "").toLowerCase() === "unknown" &&
+											s.gameState.enemies.length === 0 &&
+											s.gameState.allies.length <= 1))
+								? initialGameState
+								: s.gameState,
 				}));
 
 				// Reconnected after a blip / cold start / manual refresh: pull
@@ -373,10 +397,15 @@ export const useGameStore = create<GameStore>()(
 					set({ status: "CONNECTING", pausedByUser: false });
 					invokeCommand("resume_watching").catch(console.error);
 				} else {
-					// Pause
+					// Pause — cancel any in-flight "check game" reconnect first so
+					// one click from WAITING_FOR_GAME goes straight to paused.
+					clearReconnectTimers();
+					toast.dismiss("reconnect");
 					set({
 						status: "PAUSED",
 						pausedByUser: true,
+						pendingReconnect: false,
+						reconnectAcked: false,
 						gameState: initialGameState,
 					});
 					invokeCommand("pause_watching").catch(console.error);
@@ -429,22 +458,19 @@ export const useGameStore = create<GameStore>()(
 					autoLockAgent,
 					pausedAutoLockAgent,
 					mapAgentPreferences,
-					pausedByUser,
 				} = get();
+
+				// Pause is session-only — never restore "duraklatıldı" across launches
+				// (auto-pause / last session used to stick and open the app paused).
+				if (get().pausedByUser) {
+					set({ pausedByUser: false });
+				}
+
 				console.log("Pushing settings to backend...", {
 					autoLockAgent,
 					pausedAutoLockAgent,
 					mapCount: Object.keys(mapAgentPreferences).length,
-					pausedByUser,
 				});
-
-				// Restore the user's match-watching pause intent (reflect it in the UI
-				// immediately so we don't flash a "connecting" state before the backend
-				// confirms the pause).
-				if (pausedByUser) {
-					set({ status: "PAUSED" });
-					invokeCommand("pause_watching").catch(console.error);
-				}
 
 				// Auto-lock master toggle is OFF (a paused agent is saved): keep backend clean.
 				if (pausedAutoLockAgent) {
@@ -474,8 +500,13 @@ export const useGameStore = create<GameStore>()(
 				autoLockAgent: state.autoLockAgent,
 				mapAgentPreferences: state.mapAgentPreferences,
 				pausedAutoLockAgent: state.pausedAutoLockAgent,
-				pausedByUser: state.pausedByUser,
 			}),
+			// Drop stale pausedByUser from older builds still sitting in localStorage.
+			merge: (persisted, current) => {
+				const p = (persisted ?? {}) as Partial<GameStore>;
+				const { pausedByUser: _ignore, ...rest } = p;
+				return { ...current, ...rest, pausedByUser: false };
+			},
 		},
 	),
 );

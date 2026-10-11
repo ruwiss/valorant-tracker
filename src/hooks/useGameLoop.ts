@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { useGameStore } from "../stores/gameStore";
 import { setWebviewVisible, useSettingsStore } from "../stores/settingsStore";
 import { usePanelStore } from "../stores/panelStore";
@@ -8,11 +9,24 @@ import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
 import { useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { useI18n } from "../lib/i18n";
 import { invokeCommand } from "../utils/ipc";
 import type { ConnectionEvent, GameState, LastMatch } from "../lib/types";
 
 /** Guard StrictMode double-mount so we don't spam backend / console on boot. */
 let bootstrapped = false;
+
+/** Auto-pause if Valorant never shows up while we are watching for it. */
+const NO_GAME_AUTO_PAUSE_MS = 5 * 60 * 1000;
+
+function isWatchingForGame(status: string): boolean {
+  return (
+    status === "WAITING_FOR_GAME" ||
+    status === "RIOT_CONNECTED" ||
+    status === "CONNECTING" ||
+    status === "RECONNECTING"
+  );
+}
 
 /**
  * Event-driven game loop. The backend supervisor OWNS the connection lifecycle
@@ -23,9 +37,41 @@ let bootstrapped = false;
  */
 export function useGameLoop() {
   const { setGameState, applyConnectionEvent, pushSettingsToBackend } = useGameStore();
+  const status = useGameStore((s) => s.status);
   const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
+  const waitingSinceRef = useRef<number | null>(null);
+
+  // No Valorant for 5 minutes → pause watching (one click resume later).
+  useEffect(() => {
+    if (status === "CONNECTED" || status === "PAUSED" || !isWatchingForGame(status)) {
+      waitingSinceRef.current = null;
+      return;
+    }
+
+    if (waitingSinceRef.current === null) {
+      waitingSinceRef.current = Date.now();
+    }
+
+    const remaining = Math.max(
+      0,
+      NO_GAME_AUTO_PAUSE_MS - (Date.now() - waitingSinceRef.current),
+    );
+
+    const id = window.setTimeout(() => {
+      const store = useGameStore.getState();
+      if (store.status === "CONNECTED" || store.status === "PAUSED") return;
+      if (!isWatchingForGame(store.status)) return;
+      waitingSinceRef.current = null;
+      store.toggleMatchWatching();
+      toast.info(useI18n.getState().t("toast.autoPausedNoGame"), {
+        id: "auto-pause-no-game",
+      });
+    }, remaining);
+
+    return () => window.clearTimeout(id);
+  }, [status]);
 
   useEffect(() => {
     // 1. One-time setup: assets, constants, window, hotkey, autolock delay.

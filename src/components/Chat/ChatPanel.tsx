@@ -61,7 +61,14 @@ export function ChatPanel() {
     loading,
   } = useChatStore();
   const openPlayer = usePanelStore((s) => s.openPlayer);
-  const { isConnected, gameState } = useGameStore();
+  const status = useGameStore((s) => s.status);
+  const selfPuuid = useGameStore((s) => s.selfPuuid);
+  const gameState = useGameStore((s) => s.gameState);
+  const chatLinkOk = useChatStore((s) => s.chatLinkOk);
+  const linking = status === "CONNECTING" || status === "RECONNECTING";
+  // Offline hint only when the stack is gone — not during connect/reinit blink.
+  const showRiotRequired =
+    status === "WAITING_FOR_GAME" || (chatLinkOk === false && !linking);
   const { hideWindow, isWindowVisible, windowStyle } = useSettingsStore();
   const { t } = useI18n();
   const [inputValue, setInputValue] = useState("");
@@ -145,34 +152,43 @@ export function ChatPanel() {
     }
   }, [messages]);
 
-  // Get my PUUID
-  const myPuuid = gameState.allies.find((a) => a.is_me)?.puuid;
+  // Match roster when in-game; entitlements puuid when Riot-only (menus / client).
+  const myPuuid =
+    gameState.allies.find((a) => a.is_me)?.puuid || selfPuuid || undefined;
 
   useEffect(() => {
-    if (!isOpen || !isConnected()) return;
-
-    // Initial fetch whenever we open or reconnect or BECOME VISIBLE
-    if (isWindowVisible) {
-      fetchConversations();
-      fetchMessages(true);
-      fetchFriends();
-      fetchOutgoingRequests();
+    // Hard offline only — keep the list during CONNECTING so the panel does not
+    // flash "open Riot/Valorant" while tokens refresh with the game already up.
+    if (status === "WAITING_FOR_GAME") {
+      useChatStore.setState({
+        chatLinkOk: false,
+        friends: [],
+        outgoingRequests: [],
+      });
     }
+  }, [status]);
 
-    // Only set interval if visible
-    if (!isWindowVisible) return;
+  useEffect(() => {
+    if (!isOpen || !isWindowVisible) return;
+    // No host at all — don't spam get_friends / Not connected logs.
+    if (status === "WAITING_FOR_GAME") return;
 
-    const interval = setInterval(() => {
+    const tick = async () => {
+      await fetchFriends();
+      if (useChatStore.getState().chatLinkOk !== true) return;
       fetchConversations();
       if (activeTab === "DM") {
         fetchMessages();
       }
-      fetchFriends();
       fetchOutgoingRequests();
-    }, 2000);
+    };
 
+    void tick();
+    const interval = setInterval(() => {
+      void tick();
+    }, 2000);
     return () => clearInterval(interval);
-  }, [isOpen, isConnected, activeCid, isWindowVisible, activeTab]);
+  }, [isOpen, status, activeCid, isWindowVisible, activeTab]);
 
   // Cleanup animation on unmount
   useEffect(() => {
@@ -562,9 +578,9 @@ export function ChatPanel() {
 
                     <h3 className="text-sm font-bold text-white tracking-widest uppercase mb-2">{t("chat.no_agents")}</h3>
 
-                    {!isConnected() ? (
+                    {showRiotRequired ? (
                       <div className="bg-accent-red/10 border border-accent-red/20 rounded-lg p-3 w-full text-center">
-                        <p className="text-[10px] text-accent-red font-medium leading-relaxed">{t("chat.gameRequired")}</p>
+                        <p className="text-[10px] text-accent-red font-medium leading-relaxed">{t("chat.riotRequired")}</p>
                       </div>
                     ) : (
                       <p className="text-[10px] text-dim text-center leading-relaxed max-w-[200px]">{t("chat.search_friends_hint")}</p>

@@ -13,7 +13,9 @@ export function useIncomingMessageAlert() {
   const baselineRef = useRef<UnreadBaseline | null>(null);
 
   const watching =
-    (status === "CONNECTED" || status === "PAUSED") &&
+    (status === "CONNECTED" ||
+      status === "RIOT_CONNECTED" ||
+      status === "PAUSED") &&
     phase !== "pregame" &&
     phase !== "ingame" &&
     !isOpen;
