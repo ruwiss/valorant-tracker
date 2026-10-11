@@ -19,6 +19,7 @@ export function Header() {
   const windowStyle = useSettingsStore((s) => s.windowStyle);
   const getMapSplash = useAssetsStore((s) => s.getMapSplash);
   const setIsOpen = useChatStore((s) => s.setIsOpen);
+  const alertCount = useChatStore((s) => s.alertCount);
   const closeSidePanel = usePanelStore((s) => s.close);
   const { t } = useI18n();
 
@@ -103,8 +104,13 @@ export function Header() {
 
       {/* Right: Actions */}
       <div className="relative z-10 flex items-center gap-1 bg-dark/40 p-1 rounded-xl border border-white/[0.03] shrink-0">
-        <button onClick={handleOpenChat} className="icon-btn" title={t("header.chat")}>
+        <button onClick={handleOpenChat} className="icon-btn relative" title={t("header.chat")}>
           <MessageSquare className="w-[15px] h-[15px]" />
+          {alertCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 px-0.5 rounded-full bg-accent-red text-white text-[8px] leading-[14px] font-bold text-center">
+              {alertCount > 9 ? "9+" : alertCount}
+            </span>
+          )}
         </button>
 
         <button

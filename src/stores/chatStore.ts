@@ -21,12 +21,15 @@ interface ChatStore {
   cancellingPuuid: string | null;
   loading: boolean;
   isOpen: boolean;
+  /** New DMs noticed while the chat panel is closed, during menus. */
+  alertCount: number;
 
   // Pagination
   page: number;
   hasMore: boolean;
 
   setIsOpen: (isOpen: boolean) => void;
+  addAlert: (delta: number) => void;
   setActiveCid: (cid: string | null) => void;
   setActiveTab: (tab: Tab) => void;
 
@@ -84,6 +87,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   cancellingPuuid: null,
   loading: false,
   isOpen: false,
+  alertCount: 0,
   page: 0,
   hasMore: false,
 
@@ -91,10 +95,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setIsOpen: (isOpen) => {
     if (isOpen && !get().activeCid) {
-      set({ isOpen: true, activeTab: "FRIENDS" });
+      set({ isOpen: true, activeTab: "FRIENDS", alertCount: 0 });
       return;
     }
-    set({ isOpen });
+    set(isOpen ? { isOpen, alertCount: 0 } : { isOpen });
+  },
+
+  addAlert: (delta) => {
+    if (delta <= 0 || get().isOpen) return;
+    set((state) => ({ alertCount: state.alertCount + delta }));
   },
 
   setActiveCid: (cid) => {

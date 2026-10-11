@@ -11,6 +11,7 @@ import { ChatPanel } from "./components/Chat/ChatPanel";
 import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useGameLoop } from "./hooks/useGameLoop";
+import { useIncomingMessageAlert } from "./hooks/useIncomingMessageAlert";
 import { useI18n } from "./lib/i18n";
 import { changelogDevPreview, changelogText, planChangelog } from "./changelog";
 import { getVersion } from "@tauri-apps/api/app";
@@ -139,6 +140,7 @@ function App() {
 
   // Subscribe to backend connection/game-state events (backend owns the loop)
   useGameLoop();
+  useIncomingMessageAlert();
 
   // Disable context menu and WebView chrome shortcuts (find, print, reload, zoom…)
   useEffect(() => {
