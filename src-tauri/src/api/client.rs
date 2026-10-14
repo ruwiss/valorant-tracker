@@ -142,6 +142,17 @@ impl ValorantAPI {
         })
     }
 
+    /// Riot Client local port and `Basic …` header, once `initialize` has read the lockfile.
+    pub fn local_basic_auth(&self) -> Option<(String, String)> {
+        let port = self.local_port.read().clone();
+        let auth = self.local_auth.read().clone();
+        if port.is_empty() || auth.is_empty() {
+            None
+        } else {
+            Some((port, auth))
+        }
+    }
+
     /// Check if lockfile has changed since last read (rate limited to once per second)
     pub fn check_lockfile_changed(&self) -> bool {
         let now = std::time::Instant::now();

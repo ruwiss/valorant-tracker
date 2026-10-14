@@ -1,5 +1,6 @@
 mod api;
 mod auto_update;
+mod chat_alerts;
 mod commands;
 mod translate;
 mod constants;
@@ -118,6 +119,7 @@ pub fn run() -> RunResult {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_constants,
@@ -146,6 +148,9 @@ pub fn run() -> RunResult {
             commands::send_friend_request,
             commands::cancel_friend_request,
             commands::get_dm_cid,
+            chat_alerts::set_message_alerts,
+            chat_alerts::message_alerts_live,
+            chat_alerts::message_sound_handled,
             commands::get_cached_image,
             commands::get_recent_form,
             commands::get_peak_rank,
@@ -225,6 +230,7 @@ pub fn run() -> RunResult {
             // lifecycle (connect, watch, self-reconnect, autolock) and emits
             // `connection_changed` / `game_state_changed` events to the frontend.
             commands::start_supervisor(app.handle().clone());
+            chat_alerts::start(app.handle().clone());
 
             // Silent background update download; installs on next restart.
             auto_update::start(app.handle().clone());

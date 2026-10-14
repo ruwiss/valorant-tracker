@@ -92,6 +92,10 @@ pub struct AppState {
     pub recent_form_cache: RwLock<HashMap<String, RecentFormResponse>>,
     pub last_recent_form_lookup: RwLock<Option<std::time::Instant>>,
     pub recent_form_busy: AtomicBool,
+
+    /// Menus + chat panel closed. The chat socket plays sound and a toast only while this is set.
+    pub chat_alerts_enabled: AtomicBool,
+    pub chat_alert_locale: RwLock<String>,
 }
 
 #[derive(Clone)]
@@ -147,6 +151,8 @@ impl AppState {
             recent_form_cache: RwLock::new(HashMap::new()),
             last_recent_form_lookup: RwLock::new(None),
             recent_form_busy: AtomicBool::new(false),
+            chat_alerts_enabled: AtomicBool::new(false),
+            chat_alert_locale: RwLock::new("tr".to_string()),
         }
     }
 }

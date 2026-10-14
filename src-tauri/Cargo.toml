@@ -44,6 +44,9 @@ winreg = "0.55"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 semver = "1"
+tauri-plugin-notification = "2"
+native-tls = "0.2"
+chrono = "0.4"
 
 # Single-instance mechanism (Windows only)
 [target.'cfg(windows)'.dependencies]
