@@ -5215,7 +5215,7 @@ dependencies = [
 
 [[package]]
 name = "valorant-tracker"
-version = "1.9.7"
+version = "1.9.8"
 dependencies = [
  "base64 0.22.1",
  "chrono",
