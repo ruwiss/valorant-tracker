@@ -126,6 +126,10 @@
   }
   .nav { display: flex; flex-direction: column; gap: 2px; margin-top: 28px; }
   .nav button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     text-align: left;
     background: transparent;
     border: 0;
@@ -133,7 +137,19 @@
     color: var(--muted);
     padding: 9px 12px;
     border-radius: 0;
+    width: 100%;
   }
+  .nav-count {
+    min-width: 18px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: "IBM Plex Mono", monospace;
+    line-height: 1.4;
+    background: rgba(120,170,255,0.16);
+    color: #9ec1ff;
+    border: 1px solid rgba(120,170,255,0.4);
+  }
+  .nav-count[hidden] { display: none; }
   .nav button.active {
     color: var(--text);
     background: var(--accent-dim);
@@ -418,6 +434,7 @@
     <nav class="nav" id="nav">
       <button data-route="overview">Genel bakış</button>
       <button data-route="live">Canlı</button>
+      <button data-route="queue">Sırada <span class="nav-count" id="queue-count" hidden>0</span></button>
       <button data-route="users">Kullanıcılar</button>
       <button data-route="sessions">Oturumlar</button>
     </nav>
@@ -449,8 +466,10 @@
 
   // ------------------------------------------------------------------
   // Ücretsiz kota: Realtime yok. Tüm sayımlar sunucuda (admin_* RPC).
-  // Genel bakış / Canlı sekme görünürken 30 sn'de bir tek istekle
-  // yenilenir; listeler (Kullanıcılar / Oturumlar) yalnızca istenince.
+  // Genel bakış ve Canlı, sekme görünürken 30 sn'de bir yenilenir.
+  // Sırada sekmesi görünürken 5 sn. Kullanıcılar / Oturumlar elle.
+  // Overlay sıraya girince (faz değişince) kaydı hemen yazar; 5 dk'lık
+  // nabız yalnızca aynı durumda kalınca devreye girer.
   // ------------------------------------------------------------------
 
   var cfg = window.TELEMETRY_CONFIG;
@@ -461,13 +480,13 @@
 
   var sb = window.supabase.createClient(cfg.url, cfg.anonKey);
   var PAGE = 25;
-  var POLL_MS = 30000;
 
   var ROUTES = {
-    overview: { title: "Genel bakış", poll: true },
-    live: { title: "Canlı", poll: true },
-    users: { title: "Kullanıcılar", poll: false, sorts: ["riot_name", "app_version", "first_seen", "last_seen"], sort: "last_seen" },
-    sessions: { title: "Oturumlar", poll: false, sorts: ["started_at", "duration"], sort: "started_at" }
+    overview: { title: "Genel bakış", poll: 30000 },
+    live: { title: "Canlı", poll: 30000 },
+    queue: { title: "Sırada", poll: 5000 },
+    users: { title: "Kullanıcılar", poll: 0, sorts: ["riot_name", "app_version", "first_seen", "last_seen"], sort: "last_seen" },
+    sessions: { title: "Oturumlar", poll: 0, sorts: ["started_at", "duration"], sort: "started_at" }
   };
   var PHASES = ["ingame", "pregame", "queue", "custom", "idle", "paused", "offline"];
 
@@ -582,8 +601,6 @@
     if (mode && (inMatch(r) || r.phase === "queue" || r.phase === "custom")) bits.push(mode);
     var map = mapLabel(r);
     if (map) bits.push(map);
-    var score = scoreText(r);
-    if (score) bits.push(score);
     if (r.agent && inMatch(r)) bits.push(r.agent);
     if (r.party_size > 1) bits.push(r.party_size + " kişilik parti");
     return bits.length ? bits.join(" · ") : "—";
@@ -620,30 +637,49 @@
 
   // ---------------- yenileme durumu ----------------
 
+  function pollMs() {
+    var route = ROUTES[state.route];
+    return route && route.poll ? route.poll : 0;
+  }
+
+  function setQueueBadge(n) {
+    var el = $("queue-count");
+    if (!el) return;
+    n = n || 0;
+    el.hidden = n < 1;
+    el.textContent = n > 99 ? "99+" : String(n);
+  }
+
   function setPill(kind) {
     var pillEl = $("live-pill");
-    var auto = ROUTES[state.route] && ROUTES[state.route].poll;
-    pillEl.classList.toggle("on", kind === "ok" && auto);
+    var ms = pollMs();
+    pillEl.classList.toggle("on", kind === "ok" && ms > 0);
+    var label = "elle yenile";
+    if (ms) {
+      label = document.visibilityState === "visible"
+        ? "otomatik · " + Math.round(ms / 1000) + " sn"
+        : "duraklatıldı";
+    }
     pillEl.querySelector(".what").textContent =
       kind === "busy" ? "yükleniyor…" :
-      kind === "err" ? "hata" :
-      auto ? (document.visibilityState === "visible" ? "otomatik · 30 sn" : "duraklatıldı") : "elle yenile";
+      kind === "err" ? "hata" : label;
     pillEl.querySelector(".when").textContent = state.loadedAt ? " · " + clock() : "";
   }
 
   function schedule() {
     clearTimeout(state.timer);
-    if (!ROUTES[state.route] || !ROUTES[state.route].poll) return;
+    var ms = pollMs();
+    if (!ms) return;
     state.timer = setTimeout(function () {
-      if (document.visibilityState === "visible") load();
+      if (document.visibilityState === "visible") load({ quiet: true });
       else schedule();
-    }, POLL_MS);
+    }, ms);
   }
 
   document.addEventListener("visibilitychange", function () {
     if (!state.user || !state.route) return;
-    var auto = ROUTES[state.route].poll;
-    if (document.visibilityState === "visible" && auto && Date.now() - state.loadedAt > POLL_MS) load();
+    var ms = pollMs();
+    if (document.visibilityState === "visible" && ms && Date.now() - state.loadedAt > ms) load({ quiet: true });
     else setPill("ok");
   });
 
@@ -688,13 +724,14 @@
   function shell() {
     var r = state.route;
     var head = {
-      overview: ["Genel bakış", "İstanbul saati. Çevrimiçi = son 6 dakikada sinyal gelen ve uygulaması açık kurulum."],
-      live: ["Canlı", "Şu an uygulaması açık kurulumlar."],
-      users: ["Kullanıcılar", "Overlay kullanan Riot hesapları."],
-      sessions: ["Oturumlar", "Uygulama açılışları, son 30 gün."]
+      overview: ["Genel bakış", "İstanbul saati. Çevrimiçi = son 6 dakikada sinyal gelen ve uygulaması açık kurulum. Bu sayfa 30 saniyede bir yenilenir."],
+      live: ["Canlı", "Şu an uygulaması açık kurulumlar. Bu sayfa 30 saniyede bir yenilenir."],
+      queue: ["Sırada", "Oyun arayanlar. Bu sayfa açıkken 5 saniyede bir yenilenir. Sıraya giriş kaydı overlay'den hemen gelir."],
+      users: ["Kullanıcılar", "Overlay kullanan Riot hesapları. Liste elle yenilenir."],
+      sessions: ["Oturumlar", "Uygulama açılışları, son 30 gün. Liste elle yenilenir."]
     }[r];
     var tools = "";
-    if (r !== "overview") {
+    if (r !== "overview" && r !== "queue") {
       tools = '<div class="toolbar">' +
         '<input class="grow" id="local-q" placeholder="İsim veya PUUID ara" autocomplete="off" value="' + esc(state.q) + '">' +
         (r === "live" ? '<select id="phase">' + ['<option value="">Tüm durumlar</option>'].concat(PHASES.map(function (p) {
@@ -740,13 +777,14 @@
 
   var loaders = {};
 
-  function load() {
+  function load(opts) {
+    var quiet = !!(opts && opts.quiet);
     var route = state.route;
     var seq = ++state.seq;
     clearTimeout(state.timer);
-    setPill("busy");
+    if (!quiet) setPill("busy");
     var body = $("body");
-    if (body) body.classList.add("busy");
+    if (body && !quiet) body.classList.add("busy");
     return loaders[route]().then(function (html) {
       if (seq !== state.seq || route !== state.route) return;
       $("notice").innerHTML = "";
@@ -825,11 +863,13 @@
 
   function liveTable(rows, compact) {
     if (!rows.length) return '<div class="empty">Şu an kimse yok.</div>';
-    return '<div class="table-wrap"><table><thead><tr>' + th("Oyuncu") + th("Durum") + th("Ne yapıyor") +
+    return '<div class="table-wrap"><table><thead><tr>' + th("Oyuncu") + th("Durum") + th("Ne yapıyor") + th("Skor") +
       (compact ? "" : th("Sürüm") + th("Bölge")) + th("Son sinyal") + "</tr></thead><tbody>" +
       rows.map(function (r) {
+        var score = scoreText(r);
         return "<tr" + rowAttrs(r.puuid, r.install_id) + "><td>" + nameCell(r.riot_name) + "</td><td>" + pill(r.phase) +
-          "</td><td>" + esc(detail(r)) + "</td>" +
+          "</td><td>" + esc(detail(r)) + '</td><td class="mono">' +
+          (score ? esc(score) : '<span class="muted">—</span>') + "</td>" +
           (compact ? "" : '<td class="mono">' + esc(r.app_version || "—") + '</td><td class="mono">' + esc((r.region || "—").toUpperCase()) + "</td>") +
           '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
       }).join("") + "</tbody></table></div>";
@@ -842,6 +882,7 @@
       var maxH = Math.max.apply(null, hours.concat([1]));
       var phases = Object.keys(d.phases || {}).map(function (k) { return { k: k, n: d.phases[k] }; })
         .sort(function (a, b) { return PHASES.indexOf(a.k) - PHASES.indexOf(b.k); });
+      setQueueBadge((d.phases && d.phases.queue) || 0);
       var recent = d.recent || [];
       return '<div class="stats">' +
           stat("Şu an açık", num(d.online) + "<small>" + num(d.in_match) + " maçta</small>", "uygulaması açık kurulum") +
@@ -885,6 +926,39 @@
     }).then(function (d) {
       fillVersions(d.versions || []);
       return '<section class="panel">' + liveTable(d.rows || [], false) + pager(d.total || 0) + "</section>";
+    });
+  };
+
+  loaders.queue = function () {
+    return rpc("admin_live", {
+      p_phase: "queue",
+      p_version: null,
+      p_q: null,
+      p_offset: 0,
+      p_limit: 100
+    }).then(function (d) {
+      var rows = d.rows || [];
+      var total = d.total || rows.length;
+      setQueueBadge(total);
+      if (!rows.length) {
+        return '<section class="panel"><div class="empty">Şu an sırada kimse yok.</div></section>';
+      }
+      return '<section class="panel"><h2>' + num(total) + " kişi sırada</h2>" +
+        '<div class="table-wrap"><table><thead><tr>' +
+          th("Oyuncu") + th("Mod") + th("Parti") + th("Bölge") + th("Sürüm") + th("Son sinyal") +
+        "</tr></thead><tbody>" +
+        rows.map(function (r) {
+          var mode = modeLabel(r.mode_name) || modeLabel(r.queue_id) || "—";
+          var party = r.party_size > 1 ? r.party_size + " kişi" : (r.party_size === 1 ? "Tek" : "—");
+          return "<tr" + rowAttrs(r.puuid, r.install_id) + ">" +
+            "<td>" + nameCell(r.riot_name) + "</td>" +
+            "<td>" + esc(mode) + "</td>" +
+            "<td>" + esc(party) + "</td>" +
+            '<td class="mono">' + esc((r.region || "—").toUpperCase()) + "</td>" +
+            '<td class="mono">' + esc(r.app_version || "—") + "</td>" +
+            '<td class="muted" title="' + esc(fmt(r.last_seen)) + '">' + esc(ago(r.last_seen)) + "</td></tr>";
+        }).join("") +
+        "</tbody></table></div></section>";
     });
   };
 
@@ -1027,7 +1101,7 @@
     if (e.key !== "Enter") return;
     state.q = e.target.value.trim();
     state.page = 1;
-    if (state.route === "overview") go("users");
+    if (state.route === "overview" || state.route === "queue") go("users");
     else { var q = $("local-q"); if (q) q.value = state.q; load(); }
   });
   $("signout").onclick = function () { sb.auth.signOut(); };
@@ -1043,6 +1117,22 @@
     }).finally(function () { $("signin-btn").disabled = false; });
   };
 
+  var badgeTimer = null;
+  function scheduleBadge() {
+    clearTimeout(badgeTimer);
+    if (!state.user) return;
+    badgeTimer = setTimeout(function () {
+      if (!state.user) return;
+      if (state.route === "queue" || state.route === "overview" || document.visibilityState !== "visible") {
+        scheduleBadge();
+        return;
+      }
+      rpc("admin_live", { p_phase: "queue", p_offset: 0, p_limit: 1 }).then(function (d) {
+        if (state.route !== "queue" && state.route !== "overview") setQueueBadge(d.total || 0);
+      }).catch(function () {}).then(scheduleBadge);
+    }, 15000);
+  }
+
   function showApp(user) {
     if (state.user && state.user.id === user.id) return;
     state.user = user;
@@ -1050,12 +1140,14 @@
     $("app").classList.add("on");
     $("who").textContent = user.email || "";
     enter(routeFromHash());
+    scheduleBadge();
   }
 
   function showLogin() {
     state.user = null;
     state.route = null;
     clearTimeout(state.timer);
+    clearTimeout(badgeTimer);
     $("app").classList.remove("on");
     $("login-screen").style.display = "grid";
     closeDrawer();
