@@ -1033,6 +1033,12 @@
       if (seq !== drawerSeq) return;
       var u = d.user || {};
       var p = d.presence || null;
+      if (p && p.phase !== "ingame" && p.phase !== "pregame" && p.phase !== "closed") {
+        var party = String(p.party_state || "").toUpperCase();
+        if (party === "MATCHMAKING" || party === "STARTING_MATCHMAKING" || party === "MATCHMADE_GAME_STARTING") {
+          p.phase = "queue";
+        }
+      }
       var live = p && p.phase !== "closed" && Date.now() - new Date(p.last_seen).getTime() < 360000;
       var name = u.riot_name || (p && p.riot_name) || "İsimsiz";
       var id = u.puuid || puuid || "";

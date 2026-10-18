@@ -249,36 +249,135 @@ pub struct PresencesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Presence {
     pub puuid: String,
+    /// "valorant" or "league_of_legends". Missing on older local responses.
+    #[serde(default)]
+    pub product: Option<String>,
     pub private: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// One layer of private presence. Current clients nest the same keys under
+/// `matchPresenceData` / `partyPresenceData`; older clients leave them flat.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PresencePrivate {
+struct PresenceSlice {
     #[serde(default, deserialize_with = "lenient_opt")]
+    party_id: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    session_loop_state: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_owner_session_loop_state: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_owner_match_score_ally_team: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_owner_match_score_enemy_team: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    queue_id: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_state: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_size: Option<i32>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    provisioning_flow: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_owner_provisioning_flow: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    match_map: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    party_owner_match_map: Option<String>,
+    #[serde(default, deserialize_with = "lenient_opt")]
+    queue_entry_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPresencePrivate {
+    #[serde(flatten)]
+    flat: PresenceSlice,
+    #[serde(default)]
+    match_presence_data: Option<PresenceSlice>,
+    #[serde(default)]
+    party_presence_data: Option<PresenceSlice>,
+}
+
+fn first_text(parts: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    parts.into_iter().flatten().find(|s| !s.trim().is_empty())
+}
+
+fn first_int(parts: [Option<i32>; 3]) -> Option<i32> {
+    parts.into_iter().flatten().next()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", from = "RawPresencePrivate")]
+pub struct PresencePrivate {
     pub party_id: Option<String>,
     // Live match info exposed by the Riot client in our own presence. Used to
     // surface the round score (the GLZ match endpoints do not include it).
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub session_loop_state: Option<String>, // "MENUS" | "PREGAME" | "INGAME"
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_score_ally_team: Option<i32>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_score_enemy_team: Option<i32>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub queue_id: Option<String>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_state: Option<String>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_size: Option<i32>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub provisioning_flow: Option<String>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_provisioning_flow: Option<String>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub match_map: Option<String>,
-    #[serde(default, deserialize_with = "lenient_opt")]
     pub party_owner_match_map: Option<String>,
+    /// Riot sentinel `0001...` means not in queue. A real timestamp means searching.
+    pub queue_entry_time: Option<String>,
+}
+
+impl From<RawPresencePrivate> for PresencePrivate {
+    fn from(raw: RawPresencePrivate) -> Self {
+        let flat = raw.flat;
+        let match_data = raw.match_presence_data.unwrap_or_default();
+        let party = raw.party_presence_data.unwrap_or_default();
+        Self {
+            party_id: first_text([flat.party_id, party.party_id, match_data.party_id]),
+            session_loop_state: first_text([
+                flat.session_loop_state,
+                match_data.session_loop_state,
+                party.session_loop_state,
+                flat.party_owner_session_loop_state,
+                match_data.party_owner_session_loop_state,
+                party.party_owner_session_loop_state,
+            ]),
+            party_owner_match_score_ally_team: first_int([
+                flat.party_owner_match_score_ally_team,
+                match_data.party_owner_match_score_ally_team,
+                party.party_owner_match_score_ally_team,
+            ]),
+            party_owner_match_score_enemy_team: first_int([
+                flat.party_owner_match_score_enemy_team,
+                match_data.party_owner_match_score_enemy_team,
+                party.party_owner_match_score_enemy_team,
+            ]),
+            queue_id: first_text([flat.queue_id, match_data.queue_id, party.queue_id]),
+            party_state: first_text([flat.party_state, party.party_state, match_data.party_state]),
+            party_size: first_int([flat.party_size, party.party_size, match_data.party_size]),
+            provisioning_flow: first_text([
+                flat.provisioning_flow,
+                match_data.provisioning_flow,
+                party.provisioning_flow,
+            ]),
+            party_owner_provisioning_flow: first_text([
+                flat.party_owner_provisioning_flow,
+                match_data.party_owner_provisioning_flow,
+                party.party_owner_provisioning_flow,
+            ]),
+            match_map: first_text([flat.match_map, match_data.match_map, party.match_map]),
+            party_owner_match_map: first_text([
+                flat.party_owner_match_map,
+                match_data.party_owner_match_map,
+                party.party_owner_match_map,
+            ]),
+            queue_entry_time: first_text([
+                flat.queue_entry_time,
+                party.queue_entry_time,
+                match_data.queue_entry_time,
+            ]),
+        }
+    }
 }
 
 /// Parsed view of *our* Riot presence (session phase + live score).
@@ -292,6 +391,7 @@ pub struct MyPresence {
     pub party_state: Option<String>,
     pub party_size: Option<i32>,
     pub provisioning_flow: Option<String>,
+    pub queue_entry_time: Option<String>,
 }
 
 impl MyPresence {
@@ -1169,6 +1269,35 @@ mod tests {
         assert_eq!(pd.party_state.as_deref(), Some("DEFAULT"));
         assert_eq!(pd.party_size, Some(2));
         assert_eq!(pd.party_owner_match_map.as_deref(), Some("/Game/Maps/Jam/Jam"));
+    }
+
+    #[test]
+    fn presence_private_reads_nested_matchmaking() {
+        let raw = r#"{
+            "isValid": true,
+            "matchPresenceData": {
+                "sessionLoopState": "MENUS",
+                "queueId": "competitive",
+                "provisioningFlow": "Matchmaking"
+            },
+            "partyPresenceData": {
+                "partyState": "MATCHMAKING",
+                "partySize": 2,
+                "partyId": "party-1",
+                "queueEntryTime": "2026.10.18-12.00.00"
+            }
+        }"#;
+        let pd: PresencePrivate = serde_json::from_str(raw).expect("presence");
+        assert_eq!(pd.session_loop_state.as_deref(), Some("MENUS"));
+        assert_eq!(pd.queue_id.as_deref(), Some("competitive"));
+        assert_eq!(pd.party_state.as_deref(), Some("MATCHMAKING"));
+        assert_eq!(pd.party_size, Some(2));
+        assert_eq!(pd.party_id.as_deref(), Some("party-1"));
+        assert_eq!(pd.provisioning_flow.as_deref(), Some("Matchmaking"));
+        assert_eq!(
+            pd.queue_entry_time.as_deref(),
+            Some("2026.10.18-12.00.00")
+        );
     }
 
     #[test]

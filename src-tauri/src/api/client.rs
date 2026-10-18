@@ -85,6 +85,16 @@ fn nonempty_text(value: Option<String>) -> Option<String> {
     })
 }
 
+fn same_puuid(a: &str, b: &str) -> bool {
+    let norm = |s: &str| {
+        s.chars()
+            .filter(|c| *c != '-')
+            .flat_map(|c| c.to_lowercase())
+            .collect::<String>()
+    };
+    !a.is_empty() && norm(a) == norm(b)
+}
+
 impl ValorantAPI {
     pub fn new() -> Self {
         // 1. Standard client for Local API
@@ -1522,46 +1532,65 @@ impl ValorantAPI {
         };
 
         if let Ok(data) = resp.json::<PresencesResponse>().await {
+            let mut fallback = None;
             for p in data.presences {
-                if p.puuid != my_puuid {
+                if !same_puuid(&p.puuid, &my_puuid) {
                     continue;
                 }
-                if let Some(private_b64) = p.private {
-                    if let Ok(decoded) = STANDARD.decode(&private_b64) {
-                        if let Ok(json_str) = String::from_utf8(decoded) {
-                            if let Ok(pd) = serde_json::from_str::<PresencePrivate>(&json_str) {
-                                // Scores are only meaningful while actually INGAME.
-                                // In MENUS the client resets them to 0-0 — returning
-                                // those would make Discord show a fake "Map 0-0".
-                                let ingame = pd
-                                    .session_loop_state
-                                    .as_deref()
-                                    .is_some_and(|s| s.eq_ignore_ascii_case("INGAME"));
-                                let flow = nonempty_text(pd.provisioning_flow)
-                                    .or_else(|| nonempty_text(pd.party_owner_provisioning_flow));
-                                return Some(MyPresence {
-                                    session_loop_state: pd.session_loop_state,
-                                    ally_score: if ingame {
-                                        pd.party_owner_match_score_ally_team
-                                    } else {
-                                        None
-                                    },
-                                    enemy_score: if ingame {
-                                        pd.party_owner_match_score_enemy_team
-                                    } else {
-                                        None
-                                    },
-                                    queue_id: nonempty_text(pd.queue_id),
-                                    party_state: nonempty_text(pd.party_state),
-                                    party_size: pd.party_size.filter(|n| *n > 0),
-                                    provisioning_flow: flow,
-                                });
-                            }
-                        }
-                    }
+                // League shares the local presence list. Its private blob is not
+                // a Valorant session and must not hide the Valorant one.
+                if p.product
+                    .as_deref()
+                    .is_some_and(|prod| prod.eq_ignore_ascii_case("league_of_legends"))
+                {
+                    continue;
                 }
-                break;
+                let Some(private_b64) = p.private.as_deref().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                let Ok(decoded) = STANDARD.decode(private_b64) else {
+                    continue;
+                };
+                let Ok(json_str) = String::from_utf8(decoded) else {
+                    continue;
+                };
+                let Ok(pd) = serde_json::from_str::<PresencePrivate>(&json_str) else {
+                    continue;
+                };
+                // Scores are only meaningful while actually INGAME.
+                // In MENUS the client resets them to 0-0 — returning
+                // those would make Discord show a fake "Map 0-0".
+                let ingame = pd
+                    .session_loop_state
+                    .as_deref()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("INGAME"));
+                let flow = nonempty_text(pd.provisioning_flow)
+                    .or_else(|| nonempty_text(pd.party_owner_provisioning_flow));
+                let parsed = MyPresence {
+                    session_loop_state: pd.session_loop_state,
+                    ally_score: if ingame {
+                        pd.party_owner_match_score_ally_team
+                    } else {
+                        None
+                    },
+                    enemy_score: if ingame {
+                        pd.party_owner_match_score_enemy_team
+                    } else {
+                        None
+                    },
+                    queue_id: nonempty_text(pd.queue_id),
+                    party_state: nonempty_text(pd.party_state),
+                    party_size: pd.party_size.filter(|n| *n > 0),
+                    provisioning_flow: flow,
+                    queue_entry_time: nonempty_text(pd.queue_entry_time),
+                };
+                let product = p.product.as_deref().unwrap_or("");
+                if product.is_empty() || product.eq_ignore_ascii_case("valorant") {
+                    return Some(parsed);
+                }
+                fallback = Some(parsed);
             }
+            return fallback;
         }
         None
     }

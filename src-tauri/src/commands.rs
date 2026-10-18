@@ -713,9 +713,19 @@ fn first_nonempty<'a>(vals: impl IntoIterator<Item = Option<&'a str>>) -> Option
         .find(|s| !s.is_empty())
 }
 
-fn menu_activity(party_state: Option<&str>) -> Option<&'static str> {
-    let state = party_state?.trim();
+/// Riot writes `0001.01.01-00.00.00` (or an ISO year-1 timestamp) when the
+/// party is not searching. Anything else is a live queue entry.
+fn queue_entry_is_live(raw: Option<&str>) -> bool {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    !raw.starts_with("0001")
+}
+
+fn menu_activity(party_state: Option<&str>, queue_entry_time: Option<&str>) -> Option<&'static str> {
+    let state = party_state.unwrap_or("").trim();
     if state.eq_ignore_ascii_case("MATCHMAKING")
+        || state.eq_ignore_ascii_case("STARTING_MATCHMAKING")
         || state.eq_ignore_ascii_case("MATCHMADE_GAME_STARTING")
     {
         return Some("queue");
@@ -723,7 +733,50 @@ fn menu_activity(party_state: Option<&str>) -> Option<&'static str> {
     if state.to_ascii_uppercase().starts_with("CUSTOM_GAME") {
         return Some("custom");
     }
+    if queue_entry_is_live(queue_entry_time) {
+        return Some("queue");
+    }
     None
+}
+
+#[cfg(test)]
+mod menu_activity_tests {
+    use super::{menu_activity, queue_entry_is_live};
+
+    #[test]
+    fn matchmaking_states_are_queue() {
+        assert_eq!(menu_activity(Some("MATCHMAKING"), None), Some("queue"));
+        assert_eq!(
+            menu_activity(Some("STARTING_MATCHMAKING"), None),
+            Some("queue")
+        );
+        assert_eq!(
+            menu_activity(Some("matchmade_game_starting"), None),
+            Some("queue")
+        );
+        assert_eq!(
+            menu_activity(Some("CUSTOM_GAME_SETUP"), None),
+            Some("custom")
+        );
+        assert_eq!(menu_activity(Some("DEFAULT"), None), None);
+        assert_eq!(menu_activity(Some("LEAVING_MATCHMAKING"), None), None);
+    }
+
+    #[test]
+    fn live_queue_entry_time_counts_without_party_state() {
+        assert!(queue_entry_is_live(Some("2026.10.18-12.00.00")));
+        assert!(!queue_entry_is_live(Some("0001.01.01-00.00.00")));
+        assert!(!queue_entry_is_live(Some("0001-01-01T00:00:00Z")));
+        assert_eq!(
+            menu_activity(None, Some("2026.10.18-12.00.00")),
+            Some("queue")
+        );
+        assert_eq!(menu_activity(Some("DEFAULT"), Some("0001.01.01-00.00.00")), None);
+        assert_eq!(
+            menu_activity(Some("CUSTOM_GAME_SETUP"), Some("2026.10.18-12.00.00")),
+            Some("custom")
+        );
+    }
 }
 
 /// Mode we already showed for this same match. Agent select and the first
@@ -1538,7 +1591,12 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     *state.consecutive_menus_count.write() = 0;
     *state.last_full_game_state.write() = None;
 
-    let activity = menu_activity(my_presence.as_ref().and_then(|p| p.party_state.as_deref()));
+    let activity = menu_activity(
+        my_presence.as_ref().and_then(|p| p.party_state.as_deref()),
+        my_presence
+            .as_ref()
+            .and_then(|p| p.queue_entry_time.as_deref()),
+    );
     let queue_raw = my_presence.as_ref().and_then(|p| p.queue_id.clone());
     let report_mode = match activity {
         Some("custom") => Some(

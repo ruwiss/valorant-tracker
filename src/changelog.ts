@@ -9,8 +9,8 @@ export const changelogDevPreview = false;
 
 // changelog-notes:start
 export const changelogNotes: Record<Locale, string> = {
-  tr: "Güncelleme sonrası yenilikler kartı.\nMaç beklerken yeni DM uyarısı (anlık bildirim + ses).\nCanlı skor, iptal edilebilir agent kilidi ve oyuncu notları.\nSohbet yalnızca Riot Client açıkken de çalışır.\nDuraklatma: oyun yokken otomatik duraklama/devam ve daha az gereksiz bildirim.",
-  en: "One-time what's new card after updates.\nDM alerts while queueing (instant toast + sound).\nLive score, cancellable autolock, and player notes.\nChat works with Riot Client alone.\nPause UX: auto pause/resume when the game closes and fewer stray toasts.",
+  tr: "- Mesaj geldiğinde bildirim alırsınız\n- Oyunculara artık not alınabilir\n- Ajan kilitlemesi başladığında artık iptal edilebilir\n- Bazı sorunlar giderildi",
+  en: "- You’ll receive a notification when a message arrives\n- You can now add notes to players\n- You can now cancel agent locking once it starts\n\n\n- Fixed some issues",
 };
 // changelog-notes:end
 
