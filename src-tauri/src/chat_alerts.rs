@@ -1,14 +1,22 @@
-//! Riot Client chat socket. The overlay used to notice new messages by polling
-//! conversations every 2s (and WebView timers slip when the window is unfocused),
-//! so the sound landed late. This task hears `/chat/v6/messages` as Riot emits
-//! them and plays the clip + a Windows toast immediately.
+//! Message sound and Windows toast.
+//!
+//! F2 hides the overlay with WebView2 `SetIsVisible(false)`, which freezes
+//! renderer timers. The in-page poll then sits on the unread bump until the
+//! window is shown again, so the clip plays late. This task does not use those
+//! timers: a Riot chat socket plays as soon as the message arrives, and a Rust
+//! poll is the backup when that socket misses it. Both run while the overlay
+//! is hidden. While it is open, the page plays the clip itself and claims the
+//! same unread counts so opening the overlay later does not replay the sound.
 
+use crate::api::types::Conversation;
 use crate::api::ValorantAPI;
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use serde_json::Value;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -23,9 +31,32 @@ use tokio_tungstenite::{
 const MESSAGE_MP3: &[u8] = include_bytes!("../../src/assets/sounds/message.mp3");
 const FRESH_SECS: i64 = 8;
 const SOUND_HANDLED_MS: u64 = 4_000;
+/// Socket and poll both see the same message. The second one stays quiet.
+const SAME_CHAT_SOUND_MS: u64 = 3_000;
+const POLL_SECS: u64 = 1;
 
 static LIVE: AtomicBool = AtomicBool::new(false);
 static LAST_SOUND_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Unread counts already sounded or deliberately absorbed (startup, in-match,
+/// the moment the overlay closes). Shared with the page so F2 does not replay.
+struct AlertBook {
+    sounded: HashMap<String, i32>,
+    /// cid → ms when this chat last took the sound.
+    owned_at: HashMap<String, u64>,
+    /// First snapshot after launch or a disconnect is silent.
+    needs_arm: bool,
+    was_hidden: bool,
+}
+
+static BOOK: Lazy<Mutex<AlertBook>> = Lazy::new(|| {
+    Mutex::new(AlertBook {
+        sounded: HashMap::new(),
+        owned_at: HashMap::new(),
+        needs_arm: true,
+        was_hidden: false,
+    })
+});
 
 #[tauri::command]
 pub fn set_message_alerts(state: State<'_, AppState>, enabled: bool, locale: String) {
@@ -44,7 +75,7 @@ pub fn message_alerts_live() -> bool {
     LIVE.load(Ordering::Relaxed)
 }
 
-/// True if the socket just played the clip, so the 2s poll must not play it again.
+/// True if the socket just played the clip, so the page poll must not play it again.
 #[tauri::command]
 pub fn message_sound_handled() -> bool {
     let last = LAST_SOUND_MS.load(Ordering::Relaxed);
@@ -54,11 +85,218 @@ pub fn message_sound_handled() -> bool {
     now_ms().saturating_sub(last) < SOUND_HANDLED_MS
 }
 
+/// Claim these unread counts for the page. False when Rust already sounded them
+/// while the overlay was hidden, so showing the window does not replay the clip.
+#[tauri::command]
+pub fn take_message_sound(counts: HashMap<String, i32>) -> bool {
+    let mut play = false;
+    for (cid, count) in counts {
+        if try_own(&cid, Some(count)) {
+            play = true;
+        }
+    }
+    play
+}
+
 pub fn start(app: AppHandle) {
+    let poll_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let api = poll_app.state::<AppState>().api.clone();
+        poll_unread(poll_app, api).await;
+    });
     tauri::async_runtime::spawn(async move {
         let api = app.state::<AppState>().api.clone();
         run(app, api).await;
     });
+}
+
+fn overlay_hidden(app: &AppHandle) -> bool {
+    !app
+        .state::<AppState>()
+        .webview_visible
+        .load(Ordering::Relaxed)
+}
+
+fn in_match(app: &AppHandle) -> bool {
+    let phase = app.state::<AppState>().last_known_state.read().clone();
+    phase == "pregame" || phase == "ingame"
+}
+
+fn keep_conversation(cid: &str, muted: bool) -> bool {
+    if cid.is_empty() || muted {
+        return false;
+    }
+    !is_live_cid(cid)
+}
+
+fn alertable_counts(conversations: &[Conversation]) -> HashMap<String, i32> {
+    let mut counts = HashMap::new();
+    for conv in conversations {
+        if keep_conversation(&conv.cid, conv.muted) {
+            counts.insert(conv.cid.clone(), conv.unread_count);
+        }
+    }
+    counts
+}
+
+fn absorb(book: &mut AlertBook, current: &HashMap<String, i32>) {
+    for (cid, count) in current {
+        let entry = book.sounded.entry(cid.clone()).or_insert(0);
+        if *count > *entry {
+            *entry = *count;
+        }
+    }
+}
+
+/// `unread` is the conversation's current count when the caller knows it.
+/// Returns true when this caller should play the clip.
+fn try_own(cid: &str, unread: Option<i32>) -> bool {
+    try_own_book(&mut BOOK.lock(), cid, unread)
+}
+
+fn try_own_book(book: &mut AlertBook, cid: &str, unread: Option<i32>) -> bool {
+    if cid.is_empty() {
+        return false;
+    }
+    let now = now_ms();
+    if let Some(unread) = unread {
+        let prev = book.sounded.get(cid).copied().unwrap_or(0);
+        if unread <= prev {
+            return false;
+        }
+        book.sounded.insert(cid.to_string(), unread);
+    }
+    if let Some(at) = book.owned_at.get(cid) {
+        if now.saturating_sub(*at) < SAME_CHAT_SOUND_MS {
+            return false;
+        }
+    }
+    book.owned_at.insert(cid.to_string(), now);
+    book.owned_at.retain(|_, at| now.saturating_sub(*at) < 30_000);
+    true
+}
+
+/// One hidden poll. `None` means stay quiet. `Some` is the cid to toast.
+fn poll_decision(
+    book: &mut AlertBook,
+    current: &HashMap<String, i32>,
+    hidden: bool,
+    allowed: bool,
+) -> Option<String> {
+    if !allowed || book.needs_arm {
+        absorb(book, current);
+        book.needs_arm = false;
+        book.was_hidden = hidden;
+        return None;
+    }
+    if book.was_hidden != hidden {
+        // Just closed: the page already played anything the player heard.
+        if hidden {
+            absorb(book, current);
+        }
+        book.was_hidden = hidden;
+        return None;
+    }
+    if !hidden {
+        return None;
+    }
+    let now = now_ms();
+    let mut toast_cid: Option<String> = None;
+    for (cid, count) in current {
+        let prev = book.sounded.get(cid).copied().unwrap_or(0);
+        if *count <= prev {
+            continue;
+        }
+        book.sounded.insert(cid.clone(), *count);
+        let recent = book
+            .owned_at
+            .get(cid)
+            .is_some_and(|at| now.saturating_sub(*at) < SAME_CHAT_SOUND_MS);
+        if recent {
+            continue;
+        }
+        book.owned_at.insert(cid.clone(), now);
+        if toast_cid.is_none() {
+            toast_cid = Some(cid.clone());
+        }
+    }
+    toast_cid
+}
+
+async fn poll_unread(app: AppHandle, api: Arc<ValorantAPI>) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(POLL_SECS));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        if !*api.connected.read() || api.local_basic_auth().is_none() {
+            BOOK.lock().needs_arm = true;
+            continue;
+        }
+        let Some(list) = api.get_conversations().await else {
+            continue;
+        };
+        let current = alertable_counts(&list.conversations);
+        let hidden = overlay_hidden(&app);
+        let allowed = !in_match(&app);
+        let toast_cid = {
+            let mut book = BOOK.lock();
+            poll_decision(&mut book, &current, hidden, allowed)
+        };
+        let Some(cid) = toast_cid else {
+            continue;
+        };
+        let locale = app.state::<AppState>().chat_alert_locale.read().clone();
+        let (title, body) = match latest_incoming(&api, &cid).await {
+            Some((name, tag, text)) => notification_text(&locale, &name, &tag, &text),
+            None => notification_text(&locale, "", "", ""),
+        };
+        tracing::info!("[ChatAlert] {title}");
+        deliver(&app, &title, &body);
+    }
+}
+
+fn message_millis(time: &str) -> i64 {
+    if let Ok(ms) = time.parse::<i64>() {
+        return if ms > 10_000_000_000 {
+            ms
+        } else {
+            ms.saturating_mul(1000)
+        };
+    }
+    DateTime::parse_from_rfc3339(time)
+        .map(|t| t.timestamp_millis())
+        .unwrap_or(0)
+}
+
+async fn latest_incoming(api: &ValorantAPI, cid: &str) -> Option<(String, String, String)> {
+    let history = api.get_chat_history(Some(cid)).await?;
+    let self_puuid = api.puuid.read().clone();
+    let mut best: Option<(i64, String, String, String)> = None;
+    for msg in history.messages {
+        if !self_puuid.is_empty() && msg.puuid.eq_ignore_ascii_case(&self_puuid) {
+            continue;
+        }
+        if msg.read || msg.body.trim().is_empty() {
+            continue;
+        }
+        let stamp = message_millis(&msg.time);
+        let replace = match &best {
+            Some((prev, _, _, _)) => stamp >= *prev,
+            None => true,
+        };
+        if replace {
+            best = Some((stamp, msg.game_name, msg.game_tag, msg.body));
+        }
+    }
+    best.map(|(_, name, tag, body)| (name, tag, body))
+}
+
+fn deliver(app: &AppHandle, title: &str, body: &str) {
+    play_clip();
+    LAST_SOUND_MS.store(now_ms(), Ordering::Relaxed);
+    if let Err(err) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!("[ChatAlert] toast failed: {err}");
+    }
 }
 
 async fn run(app: AppHandle, api: Arc<ValorantAPI>) {
@@ -223,27 +461,18 @@ fn on_frame(
                 if started.elapsed() < Duration::from_millis(500) {
                     continue;
                 }
-                if !app
-                    .state::<AppState>()
-                    .chat_alerts_enabled
-                    .load(Ordering::Relaxed)
-                {
+                // The page plays the clip while the overlay is on screen. While it is
+                // hidden the renderer is frozen, so the socket has to play here.
+                if in_match(app) || !overlay_hidden(app) {
+                    continue;
+                }
+                if !try_own(&msg.cid, None) {
                     continue;
                 }
                 let locale = app.state::<AppState>().chat_alert_locale.read().clone();
                 let (title, body) = notification_text(&locale, &msg.game_name, &msg.game_tag, &msg.body);
                 tracing::info!("[ChatAlert] {}", title);
-                play_clip();
-                LAST_SOUND_MS.store(now_ms(), Ordering::Relaxed);
-                if let Err(err) = app
-                    .notification()
-                    .builder()
-                    .title(title)
-                    .body(body)
-                    .show()
-                {
-                    tracing::warn!("[ChatAlert] toast failed: {err}");
-                }
+                deliver(app, &title, &body);
             }
         }
         Frame::Ignore => {}
@@ -264,13 +493,17 @@ fn play_clip() {
             let path = path.display().to_string();
             // Restart so a second message isn't stuck behind a long clip.
             if mci("status vtoMsg mode") != 0 {
-                let open = format!("open \"{path}\" type mpegvideo alias vtoMsg");
+                // `wait` blocks until the device is ready; playing immediately
+                // after open otherwise fails for mpegvideo.
+                let open = format!("open \"{path}\" type mpegvideo alias vtoMsg wait");
                 if mci(&open) != 0 {
                     tracing::warn!("[ChatAlert] could not open message sound");
                     return;
                 }
             }
             let _ = mci("seek vtoMsg to start");
+            // 0–1000. Matches the in-page clip (volume 0.4).
+            let _ = mci("setaudio vtoMsg volume to 400");
             if mci("play vtoMsg") != 0 {
                 tracing::warn!("[ChatAlert] could not play message sound");
             }
@@ -341,7 +574,8 @@ fn parse_frame(text: &str) -> Frame {
     let data = payload.get("data").cloned().unwrap_or(Value::Null);
 
     if uri.contains("/chat/v6/messages") || name.contains("chat_v6_messages") {
-        if event != "Create" {
+        // Some client builds emit Update for a new message, not Create.
+        if event == "Delete" {
             return Frame::Ignore;
         }
         return Frame::Messages(extract_messages(&data));
@@ -527,6 +761,7 @@ fn notification_text(locale: &str, name: &str, tag: &str, body: &str) -> (String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn sample(time: &str) -> String {
         format!(
@@ -567,6 +802,69 @@ mod tests {
         let mut live = messages;
         live[0].cid = "ares-parties-room".into();
         assert!(!should_notify(&live[0], "me", false, now));
+    }
+
+    #[test]
+    fn hidden_poll_sounds_a_new_unread_and_not_the_backlog() {
+        let mut book = AlertBook {
+            sounded: HashMap::new(),
+            owned_at: HashMap::new(),
+            needs_arm: true,
+            was_hidden: false,
+        };
+        let mut counts = HashMap::from([("dm".into(), 2)]);
+        assert!(poll_decision(&mut book, &counts, true, true).is_none());
+        counts.insert("dm".into(), 3);
+        assert_eq!(
+            poll_decision(&mut book, &counts, true, true).as_deref(),
+            Some("dm")
+        );
+        assert!(poll_decision(&mut book, &counts, true, true).is_none());
+    }
+
+    #[test]
+    fn opening_the_overlay_does_not_replay_a_sounded_unread() {
+        let mut book = AlertBook {
+            sounded: HashMap::new(),
+            owned_at: HashMap::new(),
+            needs_arm: false,
+            was_hidden: true,
+        };
+        book.sounded.insert("dm".into(), 1);
+        let counts = HashMap::from([("dm".into(), 4)]);
+        assert_eq!(
+            poll_decision(&mut book, &counts, true, true).as_deref(),
+            Some("dm")
+        );
+        // Player presses F2. The page asks to claim the same count.
+        assert!(!try_own_book(&mut book, "dm", Some(4)));
+    }
+
+    #[test]
+    fn closing_the_overlay_does_not_replay_what_the_page_already_heard() {
+        let mut book = AlertBook {
+            sounded: HashMap::new(),
+            owned_at: HashMap::new(),
+            needs_arm: false,
+            was_hidden: false,
+        };
+        let counts = HashMap::from([("dm".into(), 3)]);
+        assert!(poll_decision(&mut book, &counts, false, true).is_none());
+        assert!(poll_decision(&mut book, &counts, true, true).is_none());
+        assert!(poll_decision(&mut book, &counts, true, true).is_none());
+    }
+
+    #[test]
+    fn a_match_absorbs_unreads_without_a_sound() {
+        let mut book = AlertBook {
+            sounded: HashMap::new(),
+            owned_at: HashMap::new(),
+            needs_arm: false,
+            was_hidden: true,
+        };
+        let counts = HashMap::from([("dm".into(), 6)]);
+        assert!(poll_decision(&mut book, &counts, true, false).is_none());
+        assert!(poll_decision(&mut book, &counts, true, true).is_none());
     }
 
     #[test]

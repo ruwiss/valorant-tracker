@@ -55,6 +55,11 @@ fn disable_browser_accelerator_keys(webview: &tauri::webview::PlatformWebview) {
 /// painting and throttles timers; the native window hide/minimize alone
 /// leaves it rendering in the background.
 pub fn set_webview_visible(window: &tauri::WebviewWindow, visible: bool) {
+    if let Some(state) = window.try_state::<AppState>() {
+        state
+            .webview_visible
+            .store(visible, std::sync::atomic::Ordering::Relaxed);
+    }
     #[cfg(windows)]
     {
         let _ = window.with_webview(move |webview| unsafe {
@@ -151,6 +156,7 @@ pub fn run() -> RunResult {
             chat_alerts::set_message_alerts,
             chat_alerts::message_alerts_live,
             chat_alerts::message_sound_handled,
+            chat_alerts::take_message_sound,
             commands::get_cached_image,
             commands::get_recent_form,
             commands::get_peak_rank,

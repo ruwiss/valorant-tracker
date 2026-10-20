@@ -50,40 +50,29 @@ export function useIncomingMessageAlert() {
       // A failed fetch leaves the same array. Don't burn the silent baseline on it.
       if (after === before) return;
 
-      const { baseline, delta } = diffUnread(baselineRef.current, after);
+      const previous = baselineRef.current;
+      const { baseline, delta } = diffUnread(previous, after);
       baselineRef.current = baseline;
       if (delta <= 0) return;
       if (useChatStore.getState().isOpen) return;
       useChatStore.getState().addAlert(delta);
 
-      // The Riot socket plays the clip as soon as the message arrives. This poll
-      // is the fallback when that socket misses it. If the socket is up, wait
-      // a beat so a fetch that already includes the new unread doesn't double
-      // the sound.
-      let live = false;
+      // Rust already played this unread while the overlay was hidden (the page
+      // timers were frozen). Claiming it here keeps F2 from playing it again.
+      const counts: Record<string, number> = {};
+      for (const cid of Object.keys(baseline)) {
+        if (baseline[cid] > (previous?.[cid] ?? 0)) counts[cid] = baseline[cid];
+      }
+      let play = true;
       try {
-        live =
-          (await invokeCommand<boolean>("message_alerts_live", undefined, {
+        play =
+          (await invokeCommand<boolean>("take_message_sound", { counts }, {
             suppressErrorToast: true,
-          })) === true;
+          })) !== false;
       } catch {
-        live = false;
+        play = true;
       }
-      if (cancelled || useChatStore.getState().isOpen) return;
-      if (live) {
-        await new Promise((resolve) => window.setTimeout(resolve, 350));
-        if (cancelled || useChatStore.getState().isOpen) return;
-      }
-      let handled = false;
-      try {
-        handled =
-          (await invokeCommand<boolean>("message_sound_handled", undefined, {
-            suppressErrorToast: true,
-          })) === true;
-      } catch {
-        handled = false;
-      }
-      if (cancelled || handled || useChatStore.getState().isOpen) return;
+      if (cancelled || !play || useChatStore.getState().isOpen) return;
       playMessageSound();
     };
 

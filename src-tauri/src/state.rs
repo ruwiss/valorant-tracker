@@ -93,9 +93,14 @@ pub struct AppState {
     pub last_recent_form_lookup: RwLock<Option<std::time::Instant>>,
     pub recent_form_busy: AtomicBool,
 
-    /// Menus + chat panel closed. The chat socket plays sound and a toast only while this is set.
+    /// Page says the chat panel is closed and we are not in a match. The hidden
+    /// overlay does not trust this: WebView timers are frozen, so the flag goes
+    /// stale. Locale below is still updated from the page.
     pub chat_alerts_enabled: AtomicBool,
     pub chat_alert_locale: RwLock<String>,
+    /// False while F2 has hidden the overlay. WebView2 timers are frozen then,
+    /// so message sound and toasts have to come from the Rust side.
+    pub webview_visible: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -153,6 +158,7 @@ impl AppState {
             recent_form_busy: AtomicBool::new(false),
             chat_alerts_enabled: AtomicBool::new(false),
             chat_alert_locale: RwLock::new("tr".to_string()),
+            webview_visible: AtomicBool::new(true),
         }
     }
 }
