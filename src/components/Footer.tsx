@@ -9,6 +9,7 @@ export function Footer() {
   const autoLockAgent = useGameStore((s) => s.autoLockAgent);
   const mapAgentPreferences = useGameStore((s) => s.mapAgentPreferences);
   const gameState = useGameStore((s) => s.gameState);
+  const status = useGameStore((s) => s.status);
   const getAgentForMap = useGameStore((s) => s.getAgentForMap);
   const toggleAutoLock = useGameStore((s) => s.toggleAutoLock);
   const pausedAutoLockAgent = useGameStore((s) => s.pausedAutoLockAgent);
@@ -50,6 +51,10 @@ export function Footer() {
 
   const statusText = getAutoLockStatus();
   const isSwitchOn = !!autoLockAgent || (Object.keys(mapAgentPreferences).length > 0 && !pausedAutoLockAgent);
+  const shopOpen = isOpen && panelType === "shop";
+  // Store commands need a live game client. Keep the button only so an open
+  // shop can still be closed after the client drops.
+  const shopDisabled = status !== "CONNECTED" && !shopOpen;
 
   const handleSettingsClick = () => {
     if (isOpen && panelType === "settings") {
@@ -92,9 +97,18 @@ export function Footer() {
       
       <div className="flex items-center gap-2 shrink-0">
         <button
+          type="button"
           onClick={openShop}
-          className={`w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer border transition-all duration-300 shrink-0 ${isOpen && panelType === "shop" ? "text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]" : "text-secondary hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"}`}
-          title={t("header.shop")}
+          disabled={shopDisabled}
+          aria-disabled={shopDisabled}
+          className={`w-8 h-8 flex items-center justify-center rounded-lg border transition-all duration-300 shrink-0 ${
+            shopDisabled
+              ? "cursor-not-allowed text-secondary/35 bg-dark/40 border-white/5"
+              : shopOpen
+                ? "cursor-pointer text-white bg-accent-cyan border-accent-cyan shadow-[0_0_15px_rgba(0,212,170,0.4)]"
+                : "cursor-pointer text-secondary hover:text-white bg-dark/60 border-white/10 hover:border-white/20 hover:bg-white/5"
+          }`}
+          title={shopDisabled ? t("shop.notConnected") : t("header.shop")}
         >
           <ShoppingBag className="w-[16px] h-[16px]" />
         </button>

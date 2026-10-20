@@ -161,7 +161,7 @@ const weaponIconCache = new Map<string, WeaponInfo>();
 const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 
 export function PlayerPanel() {
-	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource } =
+	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource, noteFocusToken } =
 		usePanelStore();
 	const fromFriends = playerSource === "friends";
 	const { getAgentIcon } = useAssetsStore();
@@ -203,6 +203,7 @@ export function PlayerPanel() {
 	const [noteDraft, setNoteDraft] = useState(storedNote);
 	const noteDraftRef = useRef(noteDraft);
 	noteDraftRef.current = noteDraft;
+	const noteInputRef = useRef<HTMLInputElement>(null);
 
 	// Reset state when player changes
 	useEffect(() => {
@@ -253,6 +254,17 @@ export function PlayerPanel() {
 			setPlayerNote(id, noteDraftRef.current);
 		};
 	}, [selectedPlayer?.puuid, setPlayerNote]);
+	useEffect(() => {
+		if (!noteFocusToken || !selectedPlayer?.puuid) return;
+		const id = window.setTimeout(() => {
+			const el = noteInputRef.current;
+			if (!el) return;
+			el.focus();
+			const end = el.value.length;
+			el.setSelectionRange(end, end);
+		}, 60);
+		return () => window.clearTimeout(id);
+	}, [noteFocusToken, selectedPlayer?.puuid]);
 	useEffect(() => {
 		if (!selectedPlayer) {
 			fetchedRef.current = null;
@@ -1408,6 +1420,7 @@ export function PlayerPanel() {
 
 							{selectedPlayer.puuid && (
 								<input
+									ref={noteInputRef}
 									type="text"
 									value={noteDraft}
 									maxLength={140}

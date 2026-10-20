@@ -59,9 +59,15 @@ interface PanelStore {
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
   hoveredCrosshair: HoveredCrosshair | null;
+  /** Bumped when a last-match note button should focus the profile note field. */
+  noteFocusToken: number;
 
   openSettings: () => Promise<void>;
-  openPlayer: (player: PlayerData, source?: PlayerSource) => Promise<void>;
+  openPlayer: (
+    player: PlayerData,
+    source?: PlayerSource,
+    opts?: { focusNote?: boolean },
+  ) => Promise<void>;
   openStats: (player: PlayerData) => Promise<void>;
   openShop: () => Promise<void>;
   close: () => Promise<void>;
@@ -174,6 +180,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   hoveredWeapon: null,
   hoveredAgent: null,
   hoveredCrosshair: null,
+  noteFocusToken: 0,
 
   openSettings: async () => {
     const op = beginPanelOp();
@@ -215,30 +222,43 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     set({ isOpen: true, panelType: "shop", playerSource: "roster", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
   },
 
-  openPlayer: async (player, source = "roster") => {
+  openPlayer: async (player, source = "roster", opts) => {
     const { isOpen, panelType, selectedPlayer, playerSource } = get();
+    const focusNote = !!opts?.focusNote;
 
-    // Toggle: if same player from the same origin clicked again, close panel
-    if (isOpen && panelType === "player" && selectedPlayer?.puuid === player.puuid && playerSource === source) {
+    // Toggle: if same player from the same origin clicked again, close panel.
+    // A note request keeps the profile open and focuses the field instead.
+    const same =
+      isOpen &&
+      panelType === "player" &&
+      selectedPlayer?.puuid === player.puuid &&
+      playerSource === source;
+    if (same && !focusNote) {
       await get().close();
       return;
     }
 
-    const op = beginPanelOp();
-    if (!isOpen) {
-      await resizeWindow(true);
-      await waitForResize(EXPANDED_WIDTH);
+    if (!same) {
+      const op = beginPanelOp();
+      if (!isOpen) {
+        await resizeWindow(true);
+        await waitForResize(EXPANDED_WIDTH);
+      }
+      if (!isCurrentPanelOp(op)) return;
+      set({
+        isOpen: true,
+        panelType: "player",
+        playerSubView: source === "friends" ? "regulars" : "skins",
+        playerSource: source,
+        selectedPlayer: player,
+        hoveredWeapon: null,
+        hoveredAgent: null,
+      });
     }
-    if (!isCurrentPanelOp(op)) return;
-    set({
-      isOpen: true,
-      panelType: "player",
-      playerSubView: source === "friends" ? "regulars" : "skins",
-      playerSource: source,
-      selectedPlayer: player,
-      hoveredWeapon: null,
-      hoveredAgent: null,
-    });
+
+    if (focusNote) {
+      set((s) => ({ noteFocusToken: s.noteFocusToken + 1 }));
+    }
   },
 
   openStats: async (player) => {

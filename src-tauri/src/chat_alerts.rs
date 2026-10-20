@@ -64,6 +64,7 @@ pub fn set_message_alerts(state: State<'_, AppState>, enabled: bool, locale: Str
         .chat_alerts_enabled
         .store(enabled, Ordering::Relaxed);
     if !locale.is_empty() {
+        state.discord.set_locale(&locale);
         *state.chat_alert_locale.write() = locale;
     }
 }

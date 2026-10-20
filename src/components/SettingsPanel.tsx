@@ -23,11 +23,47 @@ import {
   Keyboard,
   Languages,
   Settings2,
+  Share2,
   SlidersHorizontal,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+
+const SHARE_URL = "https://valopanel.web.app";
+
+function formatLockDelay(seconds: number, locale: string) {
+  const text = Number.isInteger(seconds)
+    ? String(seconds)
+    : seconds.toLocaleString(locale === "tr" ? "tr-TR" : "en-US", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      });
+  return `${text}s`;
+}
+
+/** Bring an opened map card fully into the settings scroller. */
+function scrollOpenedMap(el: HTMLElement) {
+  const scroller = el.closest("[data-settings-scroll]") as HTMLElement | null;
+  if (!scroller) return;
+  const pad = 8;
+  const elRect = el.getBoundingClientRect();
+  const box = scroller.getBoundingClientRect();
+  const overflowTop = box.top + pad - elRect.top;
+  const overflowBottom = elRect.bottom - (box.bottom - pad);
+  if (elRect.height >= box.height - pad * 2) {
+    const topDelta = elRect.top - (box.top + pad);
+    if (Math.abs(topDelta) > 1) {
+      scroller.scrollTo({ top: scroller.scrollTop + topDelta, behavior: "smooth" });
+    }
+    return;
+  }
+  if (overflowBottom > 1) {
+    scroller.scrollTo({ top: scroller.scrollTop + overflowBottom, behavior: "smooth" });
+  } else if (overflowTop > 1) {
+    scroller.scrollTo({ top: scroller.scrollTop - overflowTop, behavior: "smooth" });
+  }
+}
 
 const STANDALONE_KEYS = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Delete", "Home", "End", "PageUp", "PageDown", "Pause", "ScrollLock", "NumLock"];
 const BLOCKED_KEYS = ["Escape", "Tab", "CapsLock", "Enter", "Backspace", "Space"];
@@ -178,6 +214,7 @@ export function SettingsPanel() {
   const [appVersion, setAppVersion] = useState("...");
   const [installs, setInstalls] = useState<number | null>(null);
   const [expandedMap, setExpandedMap] = useState<CompetitiveMap | null>(null);
+  const mapCardRefs = useRef(new Map<string, HTMLDivElement>());
   const [hoveredAgents, setHoveredAgents] = useState<Record<string, string | null>>({});
   /** Debounce map-only restore so agent-to-agent moves don't flash the map title. */
   const mapOnlyRestoreRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,6 +230,20 @@ export function SettingsPanel() {
 
   const formattedInstalls =
     installs !== null ? installs.toLocaleString(locale === "tr" ? "tr-TR" : "en-US") : "";
+
+  useEffect(() => {
+    if (!expandedMap) return;
+    const el = mapCardRefs.current.get(expandedMap);
+    if (!el) return;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => scrollOpenedMap(el));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner) cancelAnimationFrame(inner);
+    };
+  }, [expandedMap]);
 
   // If a previous failed load left us with empty icons, retry when settings opens
   useEffect(() => {
@@ -353,7 +404,7 @@ export function SettingsPanel() {
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0 selection:bg-accent-cyan/30">
+      <div data-settings-scroll className="flex-1 overflow-y-auto min-h-0 selection:bg-accent-cyan/30">
         {activeTab === "autolock" ? (
           /* Agent Selection Tab - Map-based */
           <div className="flex flex-col h-full">
@@ -411,13 +462,15 @@ export function SettingsPanel() {
             <div className="px-4 py-3 bg-dark/40 border-b border-white/5">
               <div className="flex items-center justify-between mb-2">
                 <label className="section-title text-secondary">{t("settings.lockDelay")}</label>
-                <span className="text-[10px] font-black text-accent-green tabular-nums">{autoLockDelaySeconds}s</span>
+                <span className={`text-[10px] font-black tabular-nums ${autoLockDelaySeconds < 6 ? "text-warning" : "text-accent-green"}`}>
+                  {formatLockDelay(autoLockDelaySeconds, locale)}
+                </span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="10"
-                step="1"
+                step="0.5"
                 value={autoLockDelaySeconds}
                 onChange={(event) => setAutoLockDelaySeconds(Number(event.target.value))}
                 className="w-full accent-[#3fffbd] cursor-pointer"
@@ -427,6 +480,9 @@ export function SettingsPanel() {
                 <span>{t("settings.lockDelayDefault")}</span>
                 <span>10s</span>
               </div>
+              {autoLockDelaySeconds < 6 && (
+                <p className="mt-1.5 text-[9px] leading-snug text-warning">{t("settings.lockDelayWarn")}</p>
+              )}
             </div>
 
             {/* Map-Specific Section */}
@@ -452,6 +508,10 @@ export function SettingsPanel() {
                   return (
                     <div
                       key={map}
+                      ref={(node) => {
+                        if (node) mapCardRefs.current.set(map, node);
+                        else mapCardRefs.current.delete(map);
+                      }}
                       className={`group border rounded-2xl overflow-hidden transition-all duration-500 ${isExpanded ? "border-accent-cyan shadow-2xl shadow-accent-cyan/10" : "border-white/5 hover:border-white/20"}`}
                       onMouseEnter={() => handleMapHoverEnter(map, splash, mapColor)}
                       onMouseLeave={handleAgentHoverLeave}
@@ -730,6 +790,15 @@ export function SettingsPanel() {
                   }
                 />
               )}
+              <SettingsRow
+                icon={Share2}
+                label={t("settings.shareApp")}
+                desc={t("settings.shareAppDesc")}
+                onClick={() => {
+                  import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(SHARE_URL));
+                }}
+                control={<ExternalLink className="w-3.5 h-3.5 text-secondary shrink-0" />}
+              />
             </SettingsGroup>
           </div>
         )}

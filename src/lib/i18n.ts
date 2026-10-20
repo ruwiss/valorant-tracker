@@ -204,7 +204,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.defaultAgentDesc": "Fallback for all maps",
     "settings.reset": "Reset",
     "settings.lockDelay": "Lock Delay",
-    "settings.lockDelayDefault": "Default: 5s",
+    "settings.lockDelayDefault": "Default: 6s",
+    "settings.lockDelayWarn": "Are you sure? Lowering this can get you banned from the game.",
     "settings.mapPrefs": "Map-Specific Preferences",
     "settings.defaultTag": "Default",
     "settings.defaultTagShort": "Def.",
@@ -330,6 +331,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.installsHint": "{n} unique installs",
     "settings.openLogs": "View Logs",
     "settings.logsNote": "Opens app.log file for debugging",
+    "settings.shareApp": "Share this app",
+    "settings.shareAppDesc": "Opens valopanel.web.app",
 
     // Settings presets
     "presets.tab": "Presets",
@@ -442,6 +445,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "lastMatch.acs": "ACS",
     "lastMatch.copyName": "Copy name",
     "lastMatch.addFriend": "Add friend",
+    "lastMatch.note": "Add note",
     "lastMatch.friendSent": "Friend request sent",
     "lastMatch.friendFailed": "Could not send friend request",
     "lastMatch.alreadyFriend": "Already friends",
@@ -655,7 +659,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.defaultAgentDesc": "Tüm haritalar için geçerli seçim",
     "settings.reset": "Sıfırla",
     "settings.lockDelay": "Kilitleme Süresi",
-    "settings.lockDelayDefault": "Varsayılan: 5s",
+    "settings.lockDelayDefault": "Varsayılan: 6s",
+    "settings.lockDelayWarn": "Emin misin? Bu değeri azaltmak oyundan yasaklanmana yol açabilir.",
     "settings.mapPrefs": "Harita Bazlı Tercihler",
     "settings.defaultTag": "Varsayılan",
     "settings.defaultTagShort": "Var.",
@@ -780,6 +785,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "settings.installsHint": "{n} benzersiz kurulum",
     "settings.openLogs": "Logları Görüntüle",
     "settings.logsNote": "Hata ayıklama için app.log dosyasını açar",
+    "settings.shareApp": "Bu uygulamayı paylaş",
+    "settings.shareAppDesc": "valopanel.web.app sayfasını açar",
 
     // Settings presets
     "presets.tab": "Preset",
@@ -892,6 +899,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "lastMatch.acs": "ACS",
     "lastMatch.copyName": "İsmi kopyala",
     "lastMatch.addFriend": "Arkadaş ekle",
+    "lastMatch.note": "Not ekle",
     "lastMatch.friendSent": "Arkadaşlık isteği gönderildi",
     "lastMatch.friendFailed": "İstek gönderilemedi",
     "lastMatch.alreadyFriend": "Zaten arkadaş",

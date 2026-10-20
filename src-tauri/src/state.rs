@@ -119,7 +119,7 @@ impl AppState {
                 .build()
                 .unwrap_or_default(),
             auto_lock_agent: Arc::new(RwLock::new(None)),
-            auto_lock_delay_ms: Arc::new(RwLock::new(5000)),
+            auto_lock_delay_ms: Arc::new(RwLock::new(6000)),
             autolock_cancel: Arc::new(AtomicBool::new(false)),
             autolock_skip_match: Arc::new(RwLock::new(None)),
             cached_parties: RwLock::new(HashMap::new()),

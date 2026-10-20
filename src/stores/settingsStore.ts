@@ -71,6 +71,8 @@ interface SettingsState {
   hasSeenWelcome: boolean;
   /** App version whose changelog card was dismissed. Null until the first launch records it. */
   lastSeenChangelogVersion: string | null;
+  /** 1 after the untouched 5s lock-delay default moved to 6s. */
+  lockDelayDefaultRev: number;
 }
 
 interface SettingsStore extends SettingsState {
@@ -101,11 +103,14 @@ interface SettingsStore extends SettingsState {
   requestChangelogPreview: () => void;
 }
 
-const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 5;
+const DEFAULT_AUTO_LOCK_DELAY_SECONDS = 6;
+const LOCK_DELAY_DEFAULT_REV = 1;
 
+/** 1s–10s, in half-second steps. */
 const clampAutoLockDelay = (seconds: number) => {
   if (!Number.isFinite(seconds)) return DEFAULT_AUTO_LOCK_DELAY_SECONDS;
-  return Math.min(10, Math.max(1, Math.round(seconds)));
+  const snapped = Math.round(seconds * 2) / 2;
+  return Math.min(10, Math.max(1, snapped));
 };
 
 export interface ContactInfo {
@@ -260,6 +265,7 @@ export const useSettingsStore = create<SettingsStore>()(
       minimizeToTray: true,
       hasSeenWelcome: false,
       lastSeenChangelogVersion: null,
+      lockDelayDefaultRev: LOCK_DELAY_DEFAULT_REV,
       changelogPreviewTick: 0,
 
       markWelcomeSeen: () => {
@@ -541,16 +547,24 @@ export const useSettingsStore = create<SettingsStore>()(
         minimizeToTray: state.minimizeToTray,
         hasSeenWelcome: state.hasSeenWelcome,
         lastSeenChangelogVersion: state.lastSeenChangelogVersion,
+        lockDelayDefaultRev: state.lockDelayDefaultRev,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SettingsState>;
+        let autoLockDelaySeconds = clampAutoLockDelay(
+          p.autoLockDelaySeconds ?? current.autoLockDelaySeconds,
+        );
+        let lockDelayDefaultRev = p.lockDelayDefaultRev ?? 0;
+        // The old untouched default was 5. Move that once; a chosen 5 stays.
+        if (lockDelayDefaultRev < LOCK_DELAY_DEFAULT_REV) {
+          if (p.autoLockDelaySeconds === 5) autoLockDelaySeconds = DEFAULT_AUTO_LOCK_DELAY_SECONDS;
+          lockDelayDefaultRev = LOCK_DELAY_DEFAULT_REV;
+        }
         return {
           ...current,
           ...p,
-          // Always clamp so a corrupt / legacy value cannot break the slider.
-          autoLockDelaySeconds: clampAutoLockDelay(
-            p.autoLockDelaySeconds ?? current.autoLockDelaySeconds,
-          ),
+          autoLockDelaySeconds,
+          lockDelayDefaultRev,
           // Legacy saves without this key keep the default (tray).
           minimizeToTray: p.minimizeToTray ?? current.minimizeToTray,
         };

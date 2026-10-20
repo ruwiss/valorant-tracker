@@ -6,7 +6,7 @@ import { useAssetsStore } from "../stores/assetsStore";
 import { useChatStore } from "../stores/chatStore";
 import { usePanelStore } from "../stores/panelStore"; 
 import { useI18n } from "../lib/i18n";
-import { MessageSquare, Minus, PanelLeftClose, RefreshCw, X } from "lucide-react";
+import { ChevronLeft, MessageSquare, RefreshCw, X } from "lucide-react";
 
 export function Header() {
   const region = useGameStore((s) => s.region);
@@ -124,7 +124,7 @@ export function Header() {
         </button>
 
         <button onClick={hideWindow} className="icon-btn" title={`${t("header.hide")} (${hotkey})`}>
-          {windowStyle === "docked" ? <PanelLeftClose className="w-[15px] h-[15px]" /> : <Minus className="w-[15px] h-[15px]" />}
+          <ChevronLeft className="w-[15px] h-[15px]" strokeWidth={2.5} />
         </button>
 
         <div className="w-[1px] h-3.5 bg-white/10 mx-0.5 shrink-0" />

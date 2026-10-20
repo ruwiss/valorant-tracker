@@ -763,6 +763,17 @@ mod menu_activity_tests {
     }
 
     #[test]
+    fn lock_delay_snaps_to_half_seconds() {
+        assert_eq!(super::snap_lock_delay_ms(6.0), 6000);
+        assert_eq!(super::snap_lock_delay_ms(5.5), 5500);
+        assert_eq!(super::snap_lock_delay_ms(6.5), 6500);
+        assert_eq!(super::snap_lock_delay_ms(5.2), 5000);
+        assert_eq!(super::snap_lock_delay_ms(0.2), 1000);
+        assert_eq!(super::snap_lock_delay_ms(12.0), 10000);
+        assert_eq!(super::snap_lock_delay_ms(f64::NAN), 6000);
+    }
+
+    #[test]
     fn live_queue_entry_time_counts_without_party_state() {
         assert!(queue_entry_is_live(Some("2026.10.18-12.00.00")));
         assert!(!queue_entry_is_live(Some("0001.01.01-00.00.00")));
@@ -1957,14 +1968,23 @@ pub fn get_auto_lock(state: State<'_, AppState>) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn set_auto_lock_delay(state: State<'_, AppState>, seconds: u64) {
-    let clamped_seconds = seconds.clamp(1, 10);
-    *state.auto_lock_delay_ms.write() = clamped_seconds * 1000;
+/// 1.0–10.0 seconds, snapped to 0.5s. Non-finite input falls back to 6s.
+pub(crate) fn snap_lock_delay_ms(seconds: f64) -> u64 {
+    let seconds = if seconds.is_finite() { seconds } else { 6.0 };
+    let snapped = (seconds * 2.0).round() / 2.0;
+    let clamped = snapped.clamp(1.0, 10.0);
+    (clamped * 1000.0).round() as u64
 }
 
 #[tauri::command]
-pub fn get_auto_lock_delay(state: State<'_, AppState>) -> u64 {
-    (*state.auto_lock_delay_ms.read() / 1000).clamp(1, 10)
+pub fn set_auto_lock_delay(state: State<'_, AppState>, seconds: f64) {
+    *state.auto_lock_delay_ms.write() = snap_lock_delay_ms(seconds);
+}
+
+#[tauri::command]
+pub fn get_auto_lock_delay(state: State<'_, AppState>) -> f64 {
+    let ms = *state.auto_lock_delay_ms.read() as f64;
+    (ms / 1000.0).clamp(1.0, 10.0)
 }
 
 /// Stop the in-flight autolock for this match. The saved agent preference stays on.

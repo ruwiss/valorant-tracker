@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { CachedImage } from "./CachedImage";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useLastMatchStore } from "../stores/lastMatchStore";
@@ -11,7 +12,7 @@ import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
-import { Check, ChevronDown, Clock, StickyNote, UserPlus } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clock, LoaderCircle, StickyNote, UserPlus } from "lucide-react";
 import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
 function parseRiotId(name: string): { gameName: string; gameTag: string } | null {
@@ -113,12 +114,35 @@ function LastMatchPlayerRow({
   const addFriend = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canAdd || !riotId || adding) return;
-    setAdding(true);
+    // Paint the spinner before the Riot request, which can block the next frame.
+    flushSync(() => setAdding(true));
     try {
       await sendFriendRequest(riotId.gameName, riotId.gameTag, player.puuid);
     } finally {
       setAdding(false);
     }
+  };
+
+  const openNote = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!player.puuid) return;
+    void openPlayer(
+      {
+        puuid: player.puuid,
+        name: rawName || displayName,
+        agent: player.agent,
+        locked: true,
+        party: player.party,
+        is_me: player.is_me,
+        rank_tier: player.rank_tier,
+        rank_rr: 0,
+        level: player.level,
+        player_card_id: player.player_card_id,
+        name_from_history: fromHistory,
+      },
+      "roster",
+      { focusNote: true },
+    );
   };
 
   const viewPlayer = () => {
@@ -209,6 +233,7 @@ function LastMatchPlayerRow({
         className="shrink-0 flex items-center"
         style={{ marginLeft: "auto", gap: 4 }}
       >
+        <div className="flex items-center" style={{ gap: 1 }}>
         <div className="flex items-center justify-center" style={{ width: 20 }}>
           {!player.is_me && riotId ? (
             <button
@@ -228,22 +253,38 @@ function LastMatchPlayerRow({
                   : isPending
                     ? "text-accent-gold/45 cursor-default"
                     : adding
-                      ? "text-accent-cyan/70 cursor-wait"
+                      ? "text-accent-cyan cursor-wait"
                       : "text-secondary/80 hover:text-accent-cyan hover:bg-accent-cyan/15 hover:ring-1 hover:ring-accent-cyan/40 cursor-pointer"
               }`}
               style={{ width: 18, height: 18 }}
             >
-              {isFriend ? (
+              {adding ? (
+                <LoaderCircle className="w-3.5 h-3.5 animate-spin" strokeWidth={2.4} />
+              ) : isFriend ? (
                 <Check className="w-3 h-3" strokeWidth={2.4} />
               ) : isPending ? (
                 <Clock className="w-3 h-3" />
-              ) : adding ? (
-                <span className="block w-2.5 h-2.5 rounded-full border border-current border-t-transparent animate-spin" />
               ) : (
                 <UserPlus className="w-3 h-3" />
               )}
             </button>
           ) : null}
+        </div>
+        {player.puuid && (
+          <button
+            type="button"
+            onClick={openNote}
+            title={note ? note : t("lastMatch.note")}
+            className={`flex items-center justify-center rounded-full cursor-pointer transition-colors ${
+              note
+                ? "text-accent-gold/90 hover:bg-accent-gold/15"
+                : "text-secondary/80 hover:text-accent-gold hover:bg-accent-gold/15"
+            }`}
+            style={{ width: 18, height: 18 }}
+          >
+            <StickyNote className="w-3 h-3" />
+          </button>
+        )}
         </div>
         <span
           className="text-right text-[10px] font-medium tabular-nums text-primary/55"
@@ -276,7 +317,7 @@ function LastMatchPlayerRow({
   );
 }
 
-export function LastMatchCard() {
+export function LastMatchCard({ overlay = false }: { overlay?: boolean }) {
   const { t } = useI18n();
   const status = useGameStore((s) => s.status);
   const { match, loading, refreshing, pending, error, expanded, fetchLastMatch, setExpanded } =
@@ -353,9 +394,11 @@ export function LastMatchCard() {
 
   return (
     <div
-      className={`shrink-0 flex flex-col rounded-lg border border-white/[0.04] bg-black/20 overflow-hidden ${
-        pending ? "opacity-70" : ""
-      }`}
+      className={`shrink-0 flex flex-col rounded-lg border overflow-hidden ${
+        overlay
+          ? "border-white/10 bg-card shadow-[0_12px_32px_rgba(0,0,0,0.55)]"
+          : "border-white/[0.04] bg-black/20"
+      } ${pending ? "opacity-70" : ""}`}
       style={{ width: "100%", alignSelf: "stretch" }}
     >
       <button
@@ -439,7 +482,9 @@ export function LastMatchCard() {
 
       {expanded && (
         <div
-          className="relative z-10 max-h-[220px] overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1 border-t border-white/[0.03]"
+          className={`relative z-10 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1 border-t border-white/[0.03] ${
+            overlay ? "max-h-[420px]" : "max-h-[220px]"
+          }`}
           style={{ width: "100%" }}
         >
           {match.is_ffa ? (
@@ -477,6 +522,52 @@ export function LastMatchCard() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Small hook above the footer during a match. The card floats over the roster. */
+export function LastMatchPeek() {
+  const { t } = useI18n();
+  const status = useGameStore((s) => s.status);
+  const match = useLastMatchStore((s) => s.match);
+  const fetchLastMatch = useLastMatchStore((s) => s.fetchLastMatch);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (status === "CONNECTED" && !match) {
+      void fetchLastMatch(false);
+    }
+  }, [status, match, fetchLastMatch]);
+
+  if (!match) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col items-stretch">
+      {open && (
+        <div className="pointer-events-auto px-1 pb-1">
+          <LastMatchCard overlay />
+        </div>
+      )}
+      <div className="flex justify-center pb-1">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen((v) => {
+              if (!v) useLastMatchStore.getState().setExpanded(false);
+              return !v;
+            });
+          }}
+          aria-expanded={open}
+          className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-card/95 px-2 py-0.5 text-secondary shadow-sm hover:border-white/20 hover:text-primary"
+        >
+          <ChevronUp
+            className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`}
+            strokeWidth={2.5}
+          />
+          <span className="text-[9px] font-semibold tracking-wide">{t("lastMatch.title")}</span>
+        </button>
+      </div>
     </div>
   );
 }

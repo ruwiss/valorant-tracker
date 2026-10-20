@@ -1,6 +1,7 @@
 import { Header } from "./components/Header";
 import { Footer } from "./components/Footer";
 import { WaitingState } from "./components/WaitingState";
+import { LastMatchPeek } from "./components/LastMatchCard";
 import { PregameState } from "./components/PregameState";
 import { IngameState } from "./components/IngameState";
 import { SidePanel } from "./components/SidePanel";
@@ -299,7 +300,10 @@ function App() {
             </span>
           </div>
         )}
-        {renderContent()}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {renderContent()}
+          {(gameState.state === "pregame" || gameState.state === "ingame") && <LastMatchPeek />}
+        </div>
         <Footer />
 
         {/* Weapon hover overlay */}

@@ -33,6 +33,8 @@ struct DiscordState {
     enabled: bool,
     /// Dedup: the last activity signature we pushed, to avoid spamming IPC.
     last_signature: String,
+    /// Overlay language (`tr` or `en`). Drives the paused status line.
+    locale: String,
     /// When we last successfully pushed (unix secs). Drives the heartbeat that
     /// re-pushes an unchanged activity so a silently-dropped IPC socket (which
     /// happens when the game goes fullscreen) self-heals instead of vanishing.
@@ -55,6 +57,7 @@ impl DiscordPresence {
                 last_signature: String::new(),
                 last_push_secs: 0,
                 session_start: None,
+                locale: "tr".to_string(),
             }),
         }
     }
@@ -80,6 +83,25 @@ impl DiscordPresence {
 
     pub fn is_enabled(&self) -> bool {
         self.inner.lock().enabled
+    }
+
+    /// Overlay UI language. Clears the last signature so the next push
+    /// rewrites a paused line that was already on screen.
+    pub fn set_locale(&self, locale: &str) {
+        if locale.is_empty() {
+            return;
+        }
+        let next = if locale.to_ascii_lowercase().starts_with("en") {
+            "en"
+        } else {
+            "tr"
+        };
+        let mut st = self.inner.lock();
+        if st.locale == next {
+            return;
+        }
+        st.locale = next.to_string();
+        st.last_signature.clear();
     }
 
     /// Ensure we have a live IPC connection. Returns false if Discord is not
@@ -111,7 +133,8 @@ impl DiscordPresence {
         }
 
         // Build details/state/image for the current state.
-        let (details, state_line, image_key) = render(gs, conn_status);
+        let locale = st.locale.clone();
+        let (details, state_line, image_key) = render(gs, conn_status, &locale);
 
         // One clock for the whole RPC session. Omitting the timestamp, or
         // minting a new one when the map/score text changes, makes Discord
@@ -262,11 +285,19 @@ fn now_secs() -> i64 {
 
 /// Map a GameState + connection status to Discord activity fields.
 /// Returns (details, state, large_image_key).
-fn render(gs: &GameState, conn_status: &str) -> (String, String, String) {
+fn paused_label(locale: &str) -> &'static str {
+    if locale.to_ascii_lowercase().starts_with("en") {
+        "Waiting"
+    } else {
+        "Bekliyor"
+    }
+}
+
+fn render(gs: &GameState, conn_status: &str, locale: &str) -> (String, String, String) {
     // Connection problems take precedence over a stale game state.
     if conn_status == "paused" {
         return (
-            "İzleme duraklatıldı".into(),
+            paused_label(locale).into(),
             String::new(),
             DEFAULT_LARGE_IMAGE.into(),
         );
@@ -317,5 +348,19 @@ fn map_image_key(map_name: &str) -> String {
         DEFAULT_LARGE_IMAGE.to_string()
     } else {
         key
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paused_presence_follows_overlay_language() {
+        let gs = GameState::default();
+        assert_eq!(render(&gs, "paused", "tr").0, "Bekliyor");
+        assert_eq!(render(&gs, "paused", "tr-TR").0, "Bekliyor");
+        assert_eq!(render(&gs, "paused", "en").0, "Waiting");
+        assert_eq!(render(&gs, "paused", "en-US").0, "Waiting");
     }
 }
