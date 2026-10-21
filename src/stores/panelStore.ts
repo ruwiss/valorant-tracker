@@ -59,8 +59,10 @@ interface PanelStore {
   hoveredWeapon: HoveredWeapon | null;
   hoveredAgent: HoveredAgent | null;
   hoveredCrosshair: HoveredCrosshair | null;
-  /** Bumped when a last-match note button should focus the profile note field. */
+  /** Bumped only by the last-match note icon, together with noteFocusPuuid. */
   noteFocusToken: number;
+  /** Player whose note field should be focused. Cleared for every other open. */
+  noteFocusPuuid: string | null;
 
   openSettings: () => Promise<void>;
   openPlayer: (
@@ -181,6 +183,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   hoveredAgent: null,
   hoveredCrosshair: null,
   noteFocusToken: 0,
+  noteFocusPuuid: null,
 
   openSettings: async () => {
     const op = beginPanelOp();
@@ -245,7 +248,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         await waitForResize(EXPANDED_WIDTH);
       }
       if (!isCurrentPanelOp(op)) return;
-      set({
+      set((s) => ({
         isOpen: true,
         panelType: "player",
         playerSubView: source === "friends" ? "regulars" : "skins",
@@ -253,11 +256,14 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         selectedPlayer: player,
         hoveredWeapon: null,
         hoveredAgent: null,
-      });
-    }
-
-    if (focusNote) {
-      set((s) => ({ noteFocusToken: s.noteFocusToken + 1 }));
+        noteFocusPuuid: focusNote ? player.puuid : null,
+        noteFocusToken: focusNote ? s.noteFocusToken + 1 : s.noteFocusToken,
+      }));
+    } else if (focusNote) {
+      set((s) => ({
+        noteFocusPuuid: player.puuid,
+        noteFocusToken: s.noteFocusToken + 1,
+      }));
     }
   },
 

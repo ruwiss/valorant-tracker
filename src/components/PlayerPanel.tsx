@@ -161,7 +161,7 @@ const weaponIconCache = new Map<string, WeaponInfo>();
 const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 
 export function PlayerPanel() {
-	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource, noteFocusToken } =
+	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource, noteFocusToken, noteFocusPuuid } =
 		usePanelStore();
 	const fromFriends = playerSource === "friends";
 	const { getAgentIcon } = useAssetsStore();
@@ -255,16 +255,23 @@ export function PlayerPanel() {
 		};
 	}, [selectedPlayer?.puuid, setPlayerNote]);
 	useEffect(() => {
-		if (!noteFocusToken || !selectedPlayer?.puuid) return;
+		// Only the last-match note icon sets noteFocusPuuid. Any other open
+		// clears it. The input stays mounted across players, so drop focus too.
+		const el = noteInputRef.current;
+		if (!noteFocusToken || !noteFocusPuuid || noteFocusPuuid !== selectedPlayer?.puuid) {
+			if (el && document.activeElement === el) el.blur();
+			return;
+		}
 		const id = window.setTimeout(() => {
-			const el = noteInputRef.current;
-			if (!el) return;
-			el.focus();
-			const end = el.value.length;
-			el.setSelectionRange(end, end);
+			const field = noteInputRef.current;
+			if (!field) return;
+			if (usePanelStore.getState().noteFocusPuuid !== selectedPlayer?.puuid) return;
+			field.focus();
+			const end = field.value.length;
+			field.setSelectionRange(end, end);
 		}, 60);
 		return () => window.clearTimeout(id);
-	}, [noteFocusToken, selectedPlayer?.puuid]);
+	}, [noteFocusToken, noteFocusPuuid, selectedPlayer?.puuid]);
 	useEffect(() => {
 		if (!selectedPlayer) {
 			fetchedRef.current = null;
