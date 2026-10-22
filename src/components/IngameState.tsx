@@ -31,11 +31,6 @@ export function IngameState() {
           {isRange ? t("ingame.range") : t("ingame.live")}
         </span>
         <div className="flex items-center gap-2 min-w-0">
-          {!isRange && gameState.ally_score != null && gameState.enemy_score != null && (
-            <span className="font-display text-[13px] font-bold tabular-nums tracking-wide text-primary shrink-0">
-              {gameState.ally_score}–{gameState.enemy_score}
-            </span>
-          )}
           {gameState.map_name && (
             <span className="font-display text-[13px] font-semibold tracking-wide text-primary/85 truncate">
               {isRange ? t("ingame.rangeMap") : gameState.map_name}
