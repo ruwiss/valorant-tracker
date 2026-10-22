@@ -9,8 +9,8 @@ export const changelogDevPreview = false;
 
 // changelog-notes:start
 export const changelogNotes: Record<Locale, string> = {
-  tr: "- Mesaj geldiğinde bildirim alırsınız\n- Oyunculara artık not alınabilir\n- Ajan kilitlemesi başladığında artık iptal edilebilir\n- Bazı sorunlar giderildi",
-  en: "- You’ll receive a notification when a message arrives\n- You can now add notes to players\n- You can now cancel agent locking once it starts\n\n\n- Fixed some issues",
+  tr: "",
+  en: "",
 };
 // changelog-notes:end
 
