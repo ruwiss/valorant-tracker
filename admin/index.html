@@ -468,8 +468,9 @@
   // Ücretsiz kota: Realtime yok. Tüm sayımlar sunucuda (admin_* RPC).
   // Genel bakış ve Canlı, sekme görünürken 30 sn'de bir yenilenir.
   // Sırada sekmesi görünürken 5 sn. Kullanıcılar / Oturumlar elle.
-  // Overlay sıraya girince (faz değişince) kaydı hemen yazar; 5 dk'lık
-  // nabız yalnızca aynı durumda kalınca devreye girer.
+  // Overlay sıraya girince kaydı hemen yazar ve sırada kaldıkça 15 sn'de
+  // bir yeniler. Sırada sayılmak için son sinyal 45 sn'den yeni olmalı;
+  // maç çoğu zaman ~20 sn'de bulunur.
   // ------------------------------------------------------------------
 
   var cfg = window.TELEMETRY_CONFIG;
@@ -522,6 +523,12 @@
     if (!/[ÃÄÅ]/.test(s)) return s;
     MOJIBAKE.forEach(function (p) { s = s.split(p[0]).join(p[1]); });
     return s;
+  }
+  // supabase.tl_live_phase ile aynı pencere. 1 dk'lık sinyal artık sıra değil.
+  var QUEUE_FRESH_MS = 45000;
+  function queueFresh(iso) {
+    var t = new Date(iso).getTime();
+    return !isNaN(t) && Date.now() - t < QUEUE_FRESH_MS;
   }
   function ago(iso) {
     if (!iso) return "—";
@@ -937,8 +944,9 @@
       p_offset: 0,
       p_limit: 100
     }).then(function (d) {
-      var rows = d.rows || [];
-      var total = d.total || rows.length;
+      var raw = d.rows || [];
+      var rows = raw.filter(function (r) { return queueFresh(r.last_seen); });
+      var total = raw.length >= (d.total || 0) ? rows.length : (d.total || rows.length);
       setQueueBadge(total);
       if (!rows.length) {
         return '<section class="panel"><div class="empty">Şu an sırada kimse yok.</div></section>';
@@ -1035,9 +1043,9 @@
       var p = d.presence || null;
       if (p && p.phase !== "ingame" && p.phase !== "pregame" && p.phase !== "closed") {
         var party = String(p.party_state || "").toUpperCase();
-        if (party === "MATCHMAKING" || party === "STARTING_MATCHMAKING" || party === "MATCHMADE_GAME_STARTING") {
-          p.phase = "queue";
-        }
+        var searching = party === "MATCHMAKING" || party === "STARTING_MATCHMAKING" || party === "MATCHMADE_GAME_STARTING";
+        if ((p.phase === "queue" || searching) && queueFresh(p.last_seen)) p.phase = "queue";
+        else if (p.phase === "queue") p.phase = "idle";
       }
       var live = p && p.phase !== "closed" && Date.now() - new Date(p.last_seen).getTime() < 360000;
       var name = u.riot_name || (p && p.riot_name) || "İsimsiz";

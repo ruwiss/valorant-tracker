@@ -235,6 +235,23 @@ as $$
   end
 $$;
 
+-- Sıra maçı çoğu zaman ~20 sn. Faz hâlâ queue yazsa bile son sinyal
+-- 45 sn'den eskiyse oyuncu çoktan maça girmiş ya da sıradan çıkmıştır.
+-- 6 dk'lık çevrimiçi penceresi bu yüzden Sırada listesine uygulanmaz.
+create or replace function public.tl_live_phase(p_phase text, p_party text, p_seen timestamptz)
+returns text
+language sql
+stable
+as $$
+  select case
+    when shown <> 'queue' then shown
+    when p_seen >= now() - interval '45 seconds' then 'queue'
+    when p_phase = 'queue' then 'idle'
+    else p_phase
+  end
+  from (select public.tl_show_phase(p_phase, p_party) as shown) s
+$$;
+
 create or replace function public.tl_uuid(t text)
 returns uuid
 language plpgsql
@@ -369,6 +386,7 @@ revoke all on function public.tl_json_int(jsonb, integer, integer) from public, 
 revoke all on function public.tl_puuid(text) from public, anon, authenticated;
 revoke all on function public.tl_phase(text) from public, anon, authenticated;
 revoke all on function public.tl_show_phase(text, text) from public, anon, authenticated;
+revoke all on function public.tl_live_phase(text, text, timestamptz) from public, anon, authenticated;
 revoke all on function public.tl_uuid(text) from public, anon, authenticated;
 revoke all on function public.tl_write_presence(uuid, uuid, text, text, text, text, text, text, text, text, text, integer, integer, integer, text) from public, anon, authenticated;
 revoke all on function public.tl_write_user(text, text, text, uuid) from public, anon, authenticated;
@@ -627,7 +645,7 @@ begin
     'phases', (
       select coalesce(jsonb_object_agg(phase, n), '{}'::jsonb)
       from (
-        select public.tl_show_phase(phase, party_state) as phase, count(*) as n
+        select public.tl_live_phase(phase, party_state, last_seen) as phase, count(*) as n
         from public.presence
         where last_seen >= v_live and phase <> 'closed'
         group by 1
@@ -637,7 +655,7 @@ begin
       select coalesce(jsonb_agg(to_jsonb(x)), '[]'::jsonb)
       from (
         select install_id, puuid, riot_name,
-               public.tl_show_phase(phase, party_state) as phase,
+               public.tl_live_phase(phase, party_state, last_seen) as phase,
                map_name, mode_name,
                ally_score, enemy_score, agent, party_size, app_version, last_seen
         from public.presence
@@ -687,7 +705,7 @@ begin
   return (
     with base as (
       select install_id, puuid, riot_name,
-             public.tl_show_phase(phase, party_state) as phase,
+             public.tl_live_phase(phase, party_state, last_seen) as phase,
              map_name, mode_name, queue_id, party_state, party_size,
              ally_score, enemy_score, agent, region, app_version, last_seen
       from public.presence
@@ -760,7 +778,7 @@ begin
     select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb)
     from (
       select u.puuid, u.riot_name, u.app_version, u.install_id, u.first_seen, u.last_seen,
-             (select public.tl_show_phase(p.phase, p.party_state) from public.presence p
+             (select public.tl_live_phase(p.phase, p.party_state, p.last_seen) from public.presence p
                where p.install_id = u.install_id and p.puuid = u.puuid
                  and p.last_seen >= $1 and p.phase <> 'closed') as live_phase
       from (
@@ -960,6 +978,7 @@ alter function public.tl_json_int(jsonb, integer, integer) set search_path = pub
 alter function public.tl_puuid(text) set search_path = public;
 alter function public.tl_phase(text) set search_path = public;
 alter function public.tl_show_phase(text, text) set search_path = public;
+alter function public.tl_live_phase(text, text, timestamptz) set search_path = public;
 alter function public.tl_uuid(text) set search_path = public;
 alter function public.tl_like(text) set search_path = public;
 alter function public.tl_write_presence(uuid, uuid, text, text, text, text, text, text, text, text, text, integer, integer, integer, text) set search_path = public;

@@ -9,6 +9,9 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 use tokio::sync::Notify;
 
 const HEARTBEAT: Duration = Duration::from_secs(300);
+/// Admin drops a queue row 45s after the last signal. A long queue has to
+/// refresh inside that window or the Sırada page hides someone still waiting.
+const QUEUE_HEARTBEAT: Duration = Duration::from_secs(15);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(4);
 const NAME_RETRY: Duration = Duration::from_secs(300);
 /// Round score changes about once a minute. A short hold keeps the admin
@@ -177,18 +180,21 @@ pub async fn run(app: AppHandle, bridge: Bridge) {
 
     flush(&app, &bridge, &client, &install_id, &gate, &mut state, Wake::Launch).await;
 
-    let mut interval = tokio::time::interval_at(
-        tokio::time::Instant::now() + HEARTBEAT,
-        HEARTBEAT,
-    );
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
     loop {
+        let wait = heartbeat_wait(state.phase.as_deref());
         let wake = tokio::select! {
-            _ = interval.tick() => Wake::Heartbeat,
+            _ = tokio::time::sleep(wait) => Wake::Heartbeat,
             _ = bridge.notify.notified() => Wake::Event,
         };
         flush(&app, &bridge, &client, &install_id, &gate, &mut state, wake).await;
+    }
+}
+
+fn heartbeat_wait(phase: Option<&str>) -> Duration {
+    if phase == Some("queue") {
+        QUEUE_HEARTBEAT
+    } else {
+        HEARTBEAT
     }
 }
 
@@ -823,6 +829,14 @@ mod tests {
             roster_fingerprint(&[hex_id(1)]),
             roster_fingerprint(&[hex_id(1), hex_id(2)])
         );
+    }
+
+    #[test]
+    fn queue_heartbeat_is_inside_the_admin_window() {
+        assert_eq!(heartbeat_wait(Some("queue")), QUEUE_HEARTBEAT);
+        assert!(QUEUE_HEARTBEAT < Duration::from_secs(45));
+        assert_eq!(heartbeat_wait(Some("idle")), HEARTBEAT);
+        assert_eq!(heartbeat_wait(None), HEARTBEAT);
     }
 
     #[test]
