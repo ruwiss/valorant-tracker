@@ -38,6 +38,8 @@ export interface PlayerData {
   player_card_id?: string | null;
   /** Riot hid this identity; `name` was recalled from a previous match. */
   name_from_history?: boolean;
+  /** Finished matches shared with this player. Live roster excludes the current match. */
+  times_seen?: number;
 }
 
 export interface FrequentAgentPick {
@@ -92,6 +94,8 @@ export interface LastMatchPlayer {
   acs: number;
   /** Riot hid this identity; `name` was recalled from a previous match. */
   name_from_history?: boolean;
+  /** Finished matches shared with this player, including this recap once it has been counted. */
+  times_seen?: number;
 }
 
 export interface LastMatch {

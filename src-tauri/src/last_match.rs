@@ -389,6 +389,11 @@ fn to_last_match_player(
         score,
         acs,
         name_from_history: false,
+        times_seen: if p.subject == my_puuid {
+            0
+        } else {
+            crate::seen_names::encounter_count(&p.subject)
+        },
     }
 }
 

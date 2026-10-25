@@ -8,6 +8,7 @@ import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } f
 import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
+import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users } from "lucide-react";
@@ -1374,6 +1375,9 @@ export function PlayerPanel() {
 								>
 									{selectedPlayer.name}
 								</button>
+								{!selectedPlayer.is_me && (
+									<EncounterCount count={selectedPlayer.times_seen} />
+								)}
 								{isAuthor && (
 									<AuthorCrown
 										className="w-3 h-3 text-accent-gold drop-shadow-[0_0_5px_rgba(236,178,46,0.75)]"

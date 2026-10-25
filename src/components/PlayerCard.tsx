@@ -7,6 +7,7 @@ import { usePanelStore } from "../stores/panelStore";
 import { usePlayerStatsStore } from "../stores/playerStatsStore";
 import { useState, useEffect } from "react";
 import { AuthorCrown } from "./AuthorCrown";
+import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 import { ChartColumn, History, LoaderCircle, StickyNote } from "lucide-react";
@@ -196,11 +197,9 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
       </div>
 
       {/* Name — recalled ids stay visually distinct from a live Riot ID */}
-      <span
-        className="relative z-10 flex-1 min-w-0 flex items-center gap-0.5"
-        title={nameTitle}
-      >
+      <span className="relative z-10 flex-1 min-w-0 flex items-center gap-0.5">
         <span
+          title={nameTitle}
           className={`min-w-0 text-xs truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
             isAuthor
               ? "font-bold text-accent-gold"
@@ -219,6 +218,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
         >
           {displayName}
         </span>
+        {!player.is_me && <EncounterCount count={player.times_seen} />}
         {isAuthor && <AuthorCrown className="w-2.5 h-2.5 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]" title={t("player.authorHint")} />}
         {isOverlayUser && <OverlayUserMark title={t("player.overlayUserHint")} />}
         {fromHistory && (

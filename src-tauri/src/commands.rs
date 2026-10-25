@@ -1023,35 +1023,59 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
     {
         let mut last_id_guard = state.current_match_id.write();
         if let Some(ref last_id) = *last_id_guard {
-            if last_id != &current_id && current_id != "idle" {
+            if last_id != &current_id {
                 let was_real_match = *state.current_match_seen_ingame.read();
+                let leaving_real = was_real_match && last_id != "idle";
 
-                if was_real_match {
-                    // Match changed after reaching coregame. Push previous match players to history.
-                    let players = state.current_match_players.read().clone();
-                    if !players.is_empty() {
-                        let mut history = state.match_history.write();
-                        history.push_front(players);
-                        if history.len() > 2 {
-                            history.pop_back();
-                        }
+                // Count once when a match that reached coregame ends, including
+                // the idle scoreboard. The next match id must not count again.
+                if leaving_real && !*state.current_match_tallied.read() {
+                    let ids: Vec<String> = state
+                        .current_match_players
+                        .read()
+                        .keys()
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        crate::seen_names::note_encounters(ids.iter().map(String::as_str));
                         tracing::info!(
-                            "[Encounter] Pushed match {} to history. History size: {}",
-                            last_id,
-                            history.len()
+                            "[Encounter] Counted {} players from match {}",
+                            ids.len(),
+                            last_id
                         );
                     }
-                } else {
-                    tracing::debug!(
-                        "[Encounter] Ignored pregame-only match id change from {} to {}",
-                        last_id,
-                        current_id
-                    );
+                    *state.current_match_tallied.write() = true;
                 }
 
-                state.current_match_players.write().clear();
-                *last_id_guard = Some(current_id.clone());
-                *state.current_match_seen_ingame.write() = current_is_ingame;
+                if current_id != "idle" {
+                    if leaving_real {
+                        // Match changed after reaching coregame. Push previous match players to history.
+                        let players = state.current_match_players.read().clone();
+                        if !players.is_empty() {
+                            let mut history = state.match_history.write();
+                            history.push_front(players);
+                            if history.len() > 2 {
+                                history.pop_back();
+                            }
+                            tracing::info!(
+                                "[Encounter] Pushed match {} to history. History size: {}",
+                                last_id,
+                                history.len()
+                            );
+                        }
+                    } else {
+                        tracing::debug!(
+                            "[Encounter] Ignored pregame-only match id change from {} to {}",
+                            last_id,
+                            current_id
+                        );
+                    }
+
+                    state.current_match_players.write().clear();
+                    *last_id_guard = Some(current_id.clone());
+                    *state.current_match_seen_ingame.write() = current_is_ingame;
+                    *state.current_match_tallied.write() = false;
+                }
             }
         } else if current_id != "idle" {
             *last_id_guard = Some(current_id.clone());
@@ -1182,6 +1206,11 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             previous_encounter_was_enemy,
                             player_card_id,
                             name_from_history,
+                            times_seen: if p.subject == my_puuid {
+                                0
+                            } else {
+                                crate::seen_names::encounter_count(&p.subject)
+                            },
                         });
                     }
 
@@ -1396,6 +1425,11 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
                             previous_encounter_was_enemy,
                             player_card_id,
                             name_from_history,
+                            times_seen: if p.subject == my_puuid {
+                                0
+                            } else {
+                                crate::seen_names::encounter_count(&p.subject)
+                            },
                         };
 
                         if p.team_id == my_team {
@@ -1783,6 +1817,11 @@ async fn build_range_game_state(
             previous_encounter_was_enemy: None,
             player_card_id,
             name_from_history,
+            times_seen: if p.subject == my_puuid || puuids.len() == 1 {
+                0
+            } else {
+                crate::seen_names::encounter_count(&p.subject)
+            },
         });
     }
 
@@ -1804,6 +1843,7 @@ async fn build_range_game_state(
             previous_encounter_was_enemy: None,
             player_card_id: None,
             name_from_history: false,
+            times_seen: 0,
         });
     }
 

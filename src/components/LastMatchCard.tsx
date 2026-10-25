@@ -10,6 +10,7 @@ import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/con
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
+import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
 import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
 import { Check, ChevronDown, ChevronUp, Clock, LoaderCircle, StickyNote, UserPlus } from "lucide-react";
@@ -139,6 +140,7 @@ function LastMatchPlayerRow({
         level: player.level,
         player_card_id: player.player_card_id,
         name_from_history: fromHistory,
+        times_seen: player.times_seen,
       },
       "roster",
       { focusNote: true },
@@ -159,6 +161,7 @@ function LastMatchPlayerRow({
       level: player.level,
       player_card_id: player.player_card_id,
       name_from_history: fromHistory,
+      times_seen: player.times_seen,
     });
   };
 
@@ -215,6 +218,7 @@ function LastMatchPlayerRow({
         >
           {copied ? t("player.copied") : shortName}
         </button>
+        {!player.is_me && <EncounterCount count={player.times_seen} />}
         {isAuthor && (
           <AuthorCrown
             className="w-2.5 h-2.5 shrink-0 text-accent-gold drop-shadow-[0_0_4px_rgba(236,178,46,0.7)]"

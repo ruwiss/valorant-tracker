@@ -420,6 +420,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.recentEncounterShort2": "2 MATCHES AGO",
     "player.encounterEnemySuffix": " (enemy)",
     "player.previousAgent": "Played {agent} in that match",
+    "player.timesSeenOne": "Met once",
+    "player.timesSeen": "Met {n} times",
 
     // Last match recap
     "lastMatch.title": "Last Match",
@@ -874,6 +876,8 @@ const translations: Record<Locale, Record<string, string>> = {
     "player.recentEncounterShort2": "2 MAÇ ÖNCE",
     "player.encounterEnemySuffix": " (rakip)",
     "player.previousAgent": "O maçta {agent} oynadı",
+    "player.timesSeenOne": "1 kez denk geldin",
+    "player.timesSeen": "{n} kez denk geldin",
 
     // Last match recap
     "lastMatch.title": "Son Maç",

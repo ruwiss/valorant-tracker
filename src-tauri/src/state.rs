@@ -69,6 +69,9 @@ pub struct AppState {
     pub current_match_id: RwLock<Option<String>>,
     pub current_match_players: RwLock<HashMap<String, EncounterPlayer>>,
     pub current_match_seen_ingame: RwLock<bool>,
+    /// Lifetime encounter counts for this match were already written.
+    /// Stops a second bump when the next match id arrives after idle.
+    pub current_match_tallied: RwLock<bool>,
 
     // Settings presets store. Lazy-initialized in setup() once app_data_dir is known.
     pub presets: RwLock<Option<Arc<crate::presets::PresetStore>>>,
@@ -145,6 +148,7 @@ impl AppState {
             current_match_id: RwLock::new(None),
             current_match_players: RwLock::new(HashMap::new()),
             current_match_seen_ingame: RwLock::new(false),
+            current_match_tallied: RwLock::new(false),
 
             presets: RwLock::new(None),
             armed_preset: RwLock::new(None),

@@ -238,6 +238,10 @@ pub struct PlayerData {
     /// Riot hid this identity; `name` was filled from a previous match we stored.
     #[serde(default)]
     pub name_from_history: bool,
+    /// Finished matches this install has shared with this player. The live roster
+    /// does not include the match currently being played.
+    #[serde(default)]
+    pub times_seen: u32,
 }
 
 // Presence types for party detection
@@ -702,6 +706,9 @@ pub struct LastMatchPlayer {
     /// Riot hid this identity; `name` was filled from a previous match we stored.
     #[serde(default)]
     pub name_from_history: bool,
+    /// Finished matches shared with this player, including the one this card recaps.
+    #[serde(default)]
+    pub times_seen: u32,
 }
 
 // Loadout types
