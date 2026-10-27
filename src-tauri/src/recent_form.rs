@@ -213,12 +213,7 @@ pub fn decide_scan(
 }
 
 fn agent_name(character_id: &str) -> String {
-    for (name, uuid) in crate::constants::AGENTS.iter() {
-        if uuid.eq_ignore_ascii_case(character_id) {
-            return (*name).to_string();
-        }
-    }
-    String::new()
+    crate::agents::name_for_uuid(character_id).unwrap_or_default()
 }
 
 fn adjusted_peak_tier(season_id: &str, tier: u32) -> u32 {

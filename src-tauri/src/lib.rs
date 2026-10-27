@@ -1,3 +1,4 @@
+mod agents;
 mod api;
 mod auto_update;
 mod chat_alerts;
@@ -217,6 +218,20 @@ pub fn run() -> RunResult {
                 let client = app.state::<AppState>().http_client.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = crate::usage::report(&handle, &client).await;
+                });
+            }
+
+            // Keep the agent roster in sync with valorant-api so a newly
+            // shipped agent shows up without a code change. Seeds from the
+            // bundled list first, then refreshes hourly-ish in the background.
+            {
+                let client = app.state::<AppState>().http_client.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::agents::ensure_loaded(&client).await;
+                    loop {
+                        tokio::time::sleep(crate::agents::REFRESH_INTERVAL).await;
+                        crate::agents::refresh(&client).await;
+                    }
                 });
             }
 

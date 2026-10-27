@@ -1,6 +1,6 @@
 use crate::api::types::*;
 use crate::api::{MatchProbe, RemoteResult};
-use crate::constants::{map_label, resolve_match_mode, AGENTS, QUEUE_NAMES};
+use crate::constants::{map_label, resolve_match_mode, QUEUE_NAMES};
 use crate::state::{AppState, EncounterPlayer};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -510,10 +510,7 @@ pub fn start_supervisor(app: tauri::AppHandle) {
                                 let agent_id = if agent_name.len() > 20 {
                                     agent_name.clone()
                                 } else {
-                                    AGENTS
-                                        .get(agent_name.to_lowercase().as_str())
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_default()
+                                    crate::agents::uuid_for_name(&agent_name).unwrap_or_default()
                                 };
 
                                 if !agent_id.is_empty() {
@@ -2112,12 +2109,7 @@ pub fn get_connection_status(state: State<'_, AppState>) -> ConnectionEvent {
 }
 
 fn get_agent_name(agent_id: &str) -> String {
-    for (name, id) in AGENTS.iter() {
-        if id.eq_ignore_ascii_case(agent_id) {
-            return name.to_string();
-        }
-    }
-    String::new()
+    crate::agents::name_for_uuid(agent_id).unwrap_or_default()
 }
 
 const SPRAY_ITEM_TYPE_ID: &str = "d5f120f8-ff8c-4aac-92ea-f2b5acbe9475";
@@ -3680,8 +3672,12 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_app_constants() -> crate::constants::AppConstants {
-    crate::constants::APP_CONSTANTS.clone()
+pub async fn get_app_constants(
+    state: State<'_, AppState>,
+) -> Result<crate::constants::AppConstants, String> {
+    // Pick up a freshly shipped agent before the frontend builds its lists.
+    crate::agents::ensure_loaded(&state.http_client).await;
+    Ok(crate::agents::app_constants())
 }
 
 #[derive(serde::Serialize, Clone)]

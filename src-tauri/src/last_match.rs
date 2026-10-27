@@ -1,6 +1,6 @@
 use crate::api::types::*;
 use crate::api::ValorantAPI;
-use crate::constants::{AGENTS, MAP_NAMES};
+use crate::constants::MAP_NAMES;
 use crate::state::AppState;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager};
@@ -446,12 +446,7 @@ fn map_display_name(map_id: &str) -> String {
 }
 
 fn get_agent_name(agent_id: &str) -> String {
-    for (name, id) in AGENTS.iter() {
-        if id.eq_ignore_ascii_case(agent_id) {
-            return name.to_string();
-        }
-    }
-    String::new()
+    crate::agents::name_for_uuid(agent_id).unwrap_or_default()
 }
 
 fn capitalize_first(s: &str) -> String {
