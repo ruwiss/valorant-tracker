@@ -16,6 +16,12 @@ interface ChatStore {
   activeTab: Tab;
   conversations: Conversation[];
   messages: ChatMessage[];
+  /** Conversation `messages` belongs to; the composer stays locked until it matches `activeCid`. */
+  messagesCid: string | null;
+  /** Unsent text per conversation, so a draft never follows you into another chat. */
+  drafts: Record<string, string>;
+  /** A friend → DM lookup is in flight. */
+  dmPending: boolean;
   friends: Friend[];
   outgoingRequests: FriendRequest[];
   cancellingPuuid: string | null;
@@ -34,6 +40,7 @@ interface ChatStore {
   addAlert: (delta: number) => void;
   setActiveCid: (cid: string | null) => void;
   setActiveTab: (tab: Tab) => void;
+  setDraft: (cid: string, text: string) => void;
 
   fetchConversations: () => Promise<void>;
   fetchMessages: (reload?: boolean) => Promise<void>;
@@ -43,11 +50,16 @@ interface ChatStore {
   cancelOutgoingRequest: (puuid: string) => Promise<boolean>;
 
   loadMoreMessages: () => Promise<void>;
-  sendMessage: (message: string, type: string) => Promise<boolean>;
-  startDm: (friendPuuid: string) => Promise<void>;
+  /** `cid` is the conversation the user was looking at when they hit send. */
+  sendMessage: (cid: string, message: string, type: string) => Promise<boolean>;
+  /** Resolves true only when this call actually became the active conversation. */
+  startDm: (friendPuuid: string) => Promise<boolean>;
 }
 
 const PAGE_SIZE = 50;
+
+/** Bumped on every conversation switch so a slow `get_dm_cid` can't override a newer click. */
+let dmGen = 0;
 
 /** Bumped on every outgoing-request fetch/cancel so stale in-flight polls are dropped. */
 let outgoingFetchGen = 0;
@@ -84,6 +96,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   activeTab: "FRIENDS",
   conversations: [],
   messages: [],
+  messagesCid: null,
+  drafts: {},
+  dmPending: false,
   friends: [],
   outgoingRequests: [],
   cancellingPuuid: null,
@@ -95,6 +110,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   hasMore: false,
 
   setActiveTab: (tab) => set({ activeTab: tab }),
+
+  setDraft: (cid, text) =>
+    set((state) => {
+      const drafts = { ...state.drafts };
+      if (text) drafts[cid] = text;
+      else delete drafts[cid];
+      return { drafts };
+    }),
 
   setIsOpen: (isOpen) => {
     if (isOpen && !get().activeCid) {
@@ -110,10 +133,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   setActiveCid: (cid) => {
+    // Any DM lookup still in flight belongs to an older click — invalidate it.
+    dmGen += 1;
     set({
       activeCid: cid,
+      dmPending: false,
+      loading: false,
       page: 0,
       messages: [],
+      messagesCid: null,
       hasMore: true,
       // Opening a conversation always lands on the DM tab.
       ...(cid ? { activeTab: "DM" as Tab } : {}),
@@ -263,49 +291,41 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   fetchMessages: async (reload = false) => {
-    const { activeCid, messages } = get();
-    if (!activeCid) return;
+    const cid = get().activeCid;
+    if (!cid) return;
 
     try {
       // Always fetch latest on poll/reload
       const result = await invokeCommand<PaginatedMessages>("get_paginated_chat_messages", {
-        cid: activeCid,
+        cid,
         page: 0,
         pageSize: PAGE_SIZE
       }, { suppressErrorToast: true });
 
       if (!result) return;
+      // User switched conversation while this request was in flight — these
+      // messages belong to the old chat and must not leak into the new one.
+      if (get().activeCid !== cid) return;
 
-      if (reload) {
-        // Complete reset
+      if (reload || get().messagesCid !== cid) {
         set({
-           messages: result.messages,
-           hasMore: result.has_next,
-           page: 0
+          messages: result.messages,
+          messagesCid: cid,
+          hasMore: result.has_next,
+          page: 0
         });
-      } else {
-        // Merge logic (Polling)
-        // Combine new latest messages with existing messages
-        // Deduplicate by ID
-        const existingIds = new Set(messages.map(m => m.id));
+        return;
+      }
 
-        // Actually Set.has is O(1).
-        const uniqueNew = result.messages.filter(m => !existingIds.has(m.id));
+      // Merge logic (Polling): read the list *after* the await so we never merge into a stale snapshot.
+      const current = get().messages;
+      const existingIds = new Set(current.map(m => m.id));
+      const uniqueNew = result.messages.filter(m => !existingIds.has(m.id));
 
-        if (uniqueNew.length > 0) {
-            // We have new messages!
-            // Append them to the list (since result.messages is Oldest->Newest, and 'messages' is Oldest->Newest)
-            // But wait, if we fetched Page 0, these are the *latest* messages.
-            // If we have messages 1..100. Page 0 might have 90..110?
-            // We should merge everything and resort to be safe.
-
-            const combined = [...messages, ...uniqueNew];
-            // Dedupe again just in case (though uniqueNew filtered already)
-            // Sort by time
-            combined.sort((a, b) => Number(a.time) - Number(b.time));
-
-            set({ messages: combined, hasMore: result.has_next || get().hasMore });
-        }
+      if (uniqueNew.length > 0) {
+        const combined = [...current, ...uniqueNew];
+        combined.sort((a, b) => Number(a.time) - Number(b.time));
+        set({ messages: combined, hasMore: result.has_next || get().hasMore });
       }
     } catch (e) {
       console.error("Failed to fetch messages", e);
@@ -313,17 +333,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   loadMoreMessages: async () => {
-      const { activeCid, page, messages, hasMore, loading } = get();
-      if (!activeCid || !hasMore || loading) return;
+      const { activeCid: cid, page, hasMore, loading } = get();
+      if (!cid || !hasMore || loading) return;
 
       set({ loading: true });
       try {
           const nextPage = page + 1;
           const result = await invokeCommand<PaginatedMessages>("get_paginated_chat_messages", {
-            cid: activeCid,
+            cid,
             page: nextPage,
             pageSize: PAGE_SIZE
           }); // Let error toast show for manual load more action
+
+          // Conversation changed mid-flight: setActiveCid already reset `loading`.
+          if (get().activeCid !== cid) return;
 
           if (!result) {
               set({ loading: false });
@@ -331,7 +354,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
 
           // Prepend older messages
-          // Dedupe just in case
+          const messages = get().messages;
           const existingIds = new Set(messages.map(m => m.id));
           const uniqueOld = result.messages.filter(m => !existingIds.has(m.id));
 
@@ -346,8 +369,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                   loading: false
               });
           } else {
-              // No new unique messages found, so we probably have everything or are overlapping heavily.
-              // Stop further pagination to prevent infinite loops / scroll jumping.
+              // Nothing new: we have everything, stop paginating to avoid loops / scroll jumping.
               set({
                   hasMore: false,
                   loading: false
@@ -356,17 +378,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       } catch (e) {
           console.error("Failed to load more messages", e);
-          set({ loading: false });
+          if (get().activeCid === cid) set({ loading: false });
       }
   },
 
-  sendMessage: async (message, type) => {
-    const { activeCid } = get();
-    if (!activeCid) return false;
+  sendMessage: async (cid, message, type) => {
+    // Hard guard: only send to the conversation that is open right now, and only
+    // once its history has loaded — i.e. the one the user is actually looking at.
+    const state = get();
+    if (!cid || state.activeCid !== cid || state.messagesCid !== cid) return false;
 
     try {
       const success = await invokeCommand<boolean>("send_message", {
-        cid: activeCid,
+        cid,
         message,
         messageType: type
       }, {
@@ -376,8 +400,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (success) {
         // Wait a bit for the message to be processed by the server
         await new Promise(resolve => setTimeout(resolve, 300));
-        // Reload messages to show the sent message
-        await get().fetchMessages(true);
+        // Reload the thread we sent to (no-op if the user already moved on).
+        if (get().activeCid === cid) await get().fetchMessages(true);
       }
 
       return success || false;
@@ -388,16 +412,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   startDm: async (friendPuuid: string) => {
+      const gen = ++dmGen;
+      set({ dmPending: true });
       try {
           const cid = await invokeCommand<string>("get_dm_cid", { friendPuuid }, {
               errorMessage: "DM başlatılamadı. Arkadaş bulunamadı veya çevrimdışı."
           });
-          if (cid) {
-              get().setActiveCid(cid);
-              get().fetchConversations();
-          }
+          // A newer click (or a manual conversation switch) won; drop this result.
+          if (gen !== dmGen) return false;
+          set({ dmPending: false });
+          if (!cid) return false;
+          get().setActiveCid(cid);
+          get().fetchConversations();
+          return true;
       } catch (e) {
           console.error("Failed to start DM", e);
+          if (gen === dmGen) set({ dmPending: false });
+          return false;
       }
   },
 

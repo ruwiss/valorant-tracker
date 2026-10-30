@@ -59,6 +59,10 @@ export function ChatPanel() {
     startDm,
     hasMore,
     loading,
+    messagesCid,
+    drafts,
+    setDraft,
+    dmPending,
   } = useChatStore();
   const openPlayer = usePanelStore((s) => s.openPlayer);
   const status = useGameStore((s) => s.status);
@@ -71,7 +75,11 @@ export function ChatPanel() {
     status === "WAITING_FOR_GAME" || (chatLinkOk === false && !linking);
   const { hideWindow, isWindowVisible, windowStyle } = useSettingsStore();
   const { t } = useI18n();
-  const [inputValue, setInputValue] = useState("");
+  // Drafts live per conversation: text typed for one player can never be sent to another.
+  const inputValue = activeCid ? (drafts[activeCid] ?? "") : "";
+  const setInputValue = (text: string) => {
+    if (activeCid) setDraft(activeCid, text);
+  };
   const [friendSearch, setFriendSearch] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
   const friendListRef = useRef<HTMLDivElement>(null);
@@ -270,27 +278,31 @@ export function ChatPanel() {
   // Send Message Logic with Type Safety
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !activeCid) return;
+    // Not ready: the open thread isn't the one whose history is on screen yet.
+    if (!inputValue.trim() || !activeCid || messagesCid !== activeCid) return;
 
-    const activeConv = conversations.find((c) => c.cid === activeCid);
+    // Pin the target now; everything below uses this, never the live store value.
+    const targetCid = activeCid;
+    const activeConv = conversations.find((c) => c.cid === targetCid);
 
     // Fallback to "chat" (DM) if conversation not found in list.
     // This happens when starting a new DM from friends list that isn't active yet.
     const type = activeConv?.type === "groupchat" ? "groupchat" : "chat";
 
     const messageToSend = inputValue;
-    setInputValue(""); // Clear immediately for better UX
+    setDraft(targetCid, ""); // Clear immediately for better UX
 
-    const success = await sendMessage(messageToSend, type);
+    const success = await sendMessage(targetCid, messageToSend, type);
     if (success) {
-      isNearBottomRef.current = true;
-      forceScrollBottomRef.current = true;
-      // Force immediate message fetch to show the sent message
-      await fetchMessages(true);
-      scrollToBottom("smooth");
+      // Only touch the view if the user is still in the thread we sent to.
+      if (useChatStore.getState().activeCid === targetCid) {
+        isNearBottomRef.current = true;
+        forceScrollBottomRef.current = true;
+        scrollToBottom("smooth");
+      }
     } else {
-      // Restore message on failure
-      setInputValue(messageToSend);
+      // Restore into the draft of the chat it came from, not whichever is open now.
+      if (!useChatStore.getState().drafts[targetCid]) setDraft(targetCid, messageToSend);
       console.error("Failed to send message");
     }
   };
@@ -390,23 +402,27 @@ export function ChatPanel() {
   };
 
   const handleFriendClick = async (puuid: string) => {
-    await startDm(puuid);
-    setActiveTab("DM");
-    setFriendSearch("");
+    // Switches to the DM tab itself, and only if no newer click superseded this one.
+    if (await startDm(puuid)) setFriendSearch("");
   };
 
-  // Handle Tab Switch with Smart Selection
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
 
-    // Auto-select logic based on tab
+    // Never silently swap the open chat: keep it if it's still valid, otherwise
+    // fall back to the first friend DM so the user isn't typing into a blank view.
+    // (Only when nothing is open.)
     if (tab === "DM") {
-      const preferred =
-        conversations.find((c) => !isLiveConversation(c)) ||
-        null;
-      setActiveCid(preferred ? preferred.cid : null);
+      // A fresh DM started from the friends list may not be in `conversations` yet — still valid.
+      if (activeCid || dmPending) return;
+      const preferred = conversations.find((c) => !isLiveConversation(c));
+      if (preferred) setActiveCid(preferred.cid);
     }
   };
+
+  const activeConv = conversations.find((c) => c.cid === activeCid);
+  const recipientName = activeConv ? conversationLabel(activeConv) : "";
+  const threadReady = !!activeCid && messagesCid === activeCid;
 
   if (!isOpen) return null;
 
@@ -653,7 +669,7 @@ export function ChatPanel() {
                   </div>
                 )}
 
-                {messages.length === 0 ? (
+                {!threadReady || messages.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center opacity-20">
                     <MessagesSquare className="w-16 h-16 mb-4 text-white" strokeWidth={1} />
                     <span className="font-display tracking-[0.2em] text-xs">{t("chat.no_messages")}</span>
@@ -733,21 +749,23 @@ export function ChatPanel() {
                 {/* Subtle top glow */}
                 <div className="absolute top-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-accent-red/30 to-transparent" />
 
-                {/* Input Field */}
+                {/* Input Field — keyed by conversation so focus/IME state never carries over */}
                 <input
+                  key={activeCid ?? "none"}
                   type="text"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={t("chat.placeholder")}
-                  disabled={!activeCid}
+                  placeholder={recipientName ? `${t("chat.placeholder")} → ${recipientName}` : t("chat.placeholder")}
+                  title={recipientName}
+                  disabled={!threadReady}
                   className="flex-1 bg-white/5 border border-white/10 rounded-sm px-5 py-3 text-sm text-white placeholder-dim/30 hover:bg-white/10 hover:border-white/20 focus:border-accent-red/50 focus:bg-white/10 focus:outline-none transition-all disabled:opacity-30 disabled:cursor-not-allowed font-bold"
                 />
 
                 {/* Send Button (Tactical Geometric) */}
                 <button
                   type="submit"
-                  disabled={!inputValue.trim()}
-                  className={clsx("w-13 rounded-sm flex items-center justify-center transition-all border", inputValue.trim() ? "bg-accent-red/20 border-accent-red/50 text-accent-red shadow-[0_0_15px_rgba(255,70,85,0.2)] hover:bg-accent-red hover:text-white" : "bg-white/5 border-white/10 text-dim")}
+                  disabled={!inputValue.trim() || !threadReady}
+                  className={clsx("w-13 rounded-sm flex items-center justify-center transition-all border", inputValue.trim() && threadReady ? "bg-accent-red/20 border-accent-red/50 text-accent-red shadow-[0_0_15px_rgba(255,70,85,0.2)] hover:bg-accent-red hover:text-white" : "bg-white/5 border-white/10 text-dim")}
                 >
                   <SendHorizontal className="w-5 h-5" />
                 </button>
