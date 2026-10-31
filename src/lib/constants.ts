@@ -8,6 +8,10 @@ export const AGENTS = [
 /** Overlay author's Valorant PUUID — crown + bold name in match lists. */
 export const AUTHOR_PUUID = "f0d30b16-3bd9-590b-b8ef-76fb751b93f7";
 
+/** Gold shimmer text for the tracker author's name in player lists. */
+export const AUTHOR_NAME_CLASS =
+  "font-bold bg-linear-to-r from-accent-gold via-[#fff4cf] to-accent-gold bg-clip-text text-transparent";
+
 export const AGENT_COLORS: Record<string, string> = {
   jett: "#7de8e0",      // cyan/teal - rüzgar
   reyna: "#bd3fff",     // parlak mor - vampir

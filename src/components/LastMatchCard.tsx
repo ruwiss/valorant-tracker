@@ -6,7 +6,7 @@ import { useLastMatchStore } from "../stores/lastMatchStore";
 import { useGameStore } from "../stores/gameStore";
 import { useChatStore } from "../stores/chatStore";
 import { usePanelStore } from "../stores/panelStore";
-import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/constants";
+import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID, AUTHOR_NAME_CLASS } from "../lib/constants";
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
@@ -208,7 +208,7 @@ function LastMatchPlayerRow({
           title={nameTitle}
           className={`min-w-0 truncate text-[11px] text-left ${
             isAuthor
-              ? "font-bold text-accent-gold"
+              ? AUTHOR_NAME_CLASS
               : fromHistory
                 ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/25 ${
                     player.is_me ? "text-accent-gold/70" : "text-secondary/90 hover:text-secondary"

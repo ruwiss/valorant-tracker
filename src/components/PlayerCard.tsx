@@ -1,6 +1,6 @@
 import type { PlayerData } from "../lib/types";
 import { CachedImage } from "./CachedImage";
-import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID } from "../lib/constants";
+import { AGENT_COLORS, RANK_TIERS, PARTY_COLORS, AUTHOR_PUUID, AUTHOR_NAME_CLASS } from "../lib/constants";
 import { getLocalizedRank, useI18n } from "../lib/i18n";
 import { useAssetsStore } from "../stores/assetsStore";
 import { usePanelStore } from "../stores/panelStore";
@@ -202,7 +202,7 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
           title={nameTitle}
           className={`min-w-0 text-xs truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] ${
             isAuthor
-              ? "font-bold text-accent-gold"
+              ? AUTHOR_NAME_CLASS
               : fromHistory
                 ? `italic font-medium underline decoration-dotted underline-offset-2 decoration-white/30 ${
                     player.is_me ? "text-accent-gold/75" : "text-secondary"

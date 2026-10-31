@@ -5,7 +5,7 @@ import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useI18n, SKIN_API_LOCALES, getLocalizedRank } from "../lib/i18n";
 import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } from "../lib/types";
-import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID } from "../lib/constants";
+import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID, AUTHOR_NAME_CLASS } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
 import { EncounterCount } from "./EncounterCount";
@@ -931,7 +931,7 @@ export function PlayerPanel() {
 												<div
 													className={`flex min-w-0 items-center gap-1 truncate text-[11px] ${
 														mateIsAuthor
-															? "font-bold text-accent-gold"
+															? AUTHOR_NAME_CLASS
 															: "font-semibold text-primary"
 													}`}
 												>
@@ -1367,7 +1367,7 @@ export function PlayerPanel() {
 									}
 									className={`text-[13px] truncate text-left max-w-30 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors ${
 										isAuthor
-											? "font-bold text-accent-gold hover:text-accent-gold/80"
+											? AUTHOR_NAME_CLASS
 											: selectedPlayer.name_from_history
 												? "italic font-semibold text-secondary underline decoration-dotted underline-offset-2 decoration-white/30 hover:text-secondary/80"
 												: "font-bold text-primary hover:text-accent-cyan"
