@@ -9,7 +9,7 @@ import { useState, useEffect } from "react";
 import { AuthorCrown } from "./AuthorCrown";
 import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
-import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { isHiddenName, useTrackerUserMark } from "../stores/overlayUsersStore";
 import { ChartColumn, History, LoaderCircle, StickyNote } from "lucide-react";
 import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
@@ -21,7 +21,6 @@ interface Props {
 
 export function PlayerCard({ player, slotIndex = 1 }: Props) {
   const { t, locale } = useI18n();
-  const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
   const { getAgentIcon } = useAssetsStore();
   const { openPlayer, openStats, selectedPlayer, panelType } = usePanelStore();
   const { getStats, fetchStats, isLoading, retryAfter } = usePlayerStatsStore();
@@ -61,9 +60,10 @@ export function PlayerCard({ player, slotIndex = 1 }: Props) {
   // `name_from_history` means Riot hid the id but we recalled it from a past match.
   const fromHistory = !!player.name_from_history;
   const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
-  const normalizedPuuid = normalizePuuid(player.puuid);
-  const isOverlayUser =
-    !isAuthor && normalizedPuuid != null && overlayPuuids.includes(normalizedPuuid);
+  const isOverlayUser = useTrackerUserMark(
+    player.puuid,
+    isHiddenName(player.name, fromHistory),
+  );
   const displayName = (() => {
     const raw = (player.name || "").trim();
     if (raw) return raw;

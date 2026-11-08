@@ -10,7 +10,12 @@ import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
 import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
-import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import {
+	isHiddenName,
+	showTrackerUserMark,
+	useOverlayUsersStore,
+	useViewerIsAuthor,
+} from "../stores/overlayUsersStore";
 import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users } from "lucide-react";
 import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
@@ -171,6 +176,7 @@ export function PlayerPanel() {
 	const inMatch = gameState.state === "ingame" || gameState.state === "pregame";
 	const { t, locale } = useI18n();
 	const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
+	const viewerIsAuthor = useViewerIsAuthor();
 	const [skins, setSkins] = useState<WeaponSkin[]>([]);
 	const [expressions, setExpressions] = useState<EquippedExpression[]>([]);
 	const [skinMeta, setSkinMeta] = useState<Map<string, SkinInfo>>(new Map());
@@ -888,11 +894,12 @@ export function PlayerPanel() {
 									const canCopy = !!mate.name;
 									const isCopied = regularsCopied === mate.name;
 									const mateIsAuthor = mate.puuid.toLowerCase() === AUTHOR_PUUID;
-									const matePuuid = normalizePuuid(mate.puuid);
-									const mateIsOverlayUser =
-										!mateIsAuthor &&
-										matePuuid != null &&
-										overlayPuuids.includes(matePuuid);
+									const mateIsOverlayUser = showTrackerUserMark(
+										overlayPuuids,
+										viewerIsAuthor,
+										mate.puuid,
+										isHiddenName(mate.name),
+									);
 									return (
 										<button
 											key={mate.puuid}
@@ -1024,9 +1031,12 @@ export function PlayerPanel() {
 		? `https://media.valorant-api.com/playercards/${selectedPlayer.player_card_id}/wideart.png`
 		: null;
 	const isAuthor = selectedPlayer.puuid.toLowerCase() === AUTHOR_PUUID;
-	const selectedPuuid = normalizePuuid(selectedPlayer.puuid);
-	const isOverlayUser =
-		!isAuthor && selectedPuuid != null && overlayPuuids.includes(selectedPuuid);
+	const isOverlayUser = showTrackerUserMark(
+		overlayPuuids,
+		viewerIsAuthor,
+		selectedPlayer.puuid,
+		isHiddenName(selectedPlayer.name, selectedPlayer.name_from_history),
+	);
 
 	// Group skins by category - lowercase keys for case-insensitive matching
 	const skinsByWeaponId = new Map(

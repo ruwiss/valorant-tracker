@@ -12,7 +12,7 @@ import type { LastMatchPlayer } from "../lib/types";
 import { AuthorCrown } from "./AuthorCrown";
 import { EncounterCount } from "./EncounterCount";
 import { OverlayUserMark } from "./OverlayUserMark";
-import { normalizePuuid, useOverlayUsersStore } from "../stores/overlayUsersStore";
+import { isHiddenName, useTrackerUserMark } from "../stores/overlayUsersStore";
 import { Check, ChevronDown, ChevronUp, Clock, LoaderCircle, StickyNote, UserPlus } from "lucide-react";
 import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
@@ -61,7 +61,6 @@ function LastMatchPlayerRow({
   showPlacement?: boolean;
 }) {
   const { t, locale } = useI18n();
-  const overlayPuuids = useOverlayUsersStore((s) => s.puuids);
   const getAgentIcon = useAssetsStore((s) => s.getAgentIcon);
   const openPlayer = usePanelStore((s) => s.openPlayer);
   const friends = useChatStore((s) => s.friends);
@@ -82,9 +81,7 @@ function LastMatchPlayerRow({
   const rawName = (player.name || "").trim();
   const fromHistory = !!player.name_from_history;
   const isAuthor = player.puuid.toLowerCase() === AUTHOR_PUUID;
-  const normalizedPuuid = normalizePuuid(player.puuid);
-  const isOverlayUser =
-    !isAuthor && normalizedPuuid != null && overlayPuuids.includes(normalizedPuuid);
+  const isOverlayUser = useTrackerUserMark(player.puuid, isHiddenName(rawName, fromHistory));
   const displayName = rawName || t("player.anonymousSlot", { n: slotIndex });
   const shortName = displayName.includes("#") ? displayName.split("#")[0] : displayName;
   const nameTitle = isAuthor
