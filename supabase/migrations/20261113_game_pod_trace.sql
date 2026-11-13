@@ -2,6 +2,39 @@
 BEGIN;
 ALTER TABLE public.presence ADD COLUMN IF NOT EXISTS game_pod_id text;
 
+create or replace function public.tl_show_phase(p_phase text, p_party text)
+returns text
+language sql
+immutable
+set search_path = public
+as $$
+  select case
+    when p_phase in ('ingame', 'pregame', 'closed') then p_phase
+    when upper(btrim(coalesce(p_party, ''))) in (
+      'MATCHMAKING', 'STARTING_MATCHMAKING', 'MATCHMADE_GAME_STARTING'
+    ) then 'queue'
+    else p_phase
+  end
+$$;
+
+-- Sıra maçı çoğu zaman ~20 sn. Faz hâlâ queue yazsa bile son sinyal
+-- 45 sn'den eskiyse oyuncu çoktan maça girmiş ya da sıradan çıkmıştır.
+-- 6 dk'lık çevrimiçi penceresi bu yüzden Sırada listesine uygulanmaz.
+create or replace function public.tl_live_phase(p_phase text, p_party text, p_seen timestamptz)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when shown <> 'queue' then shown
+    when p_seen >= now() - interval '45 seconds' then 'queue'
+    when p_phase = 'queue' then 'idle'
+    else p_phase
+  end
+  from (select public.tl_show_phase(p_phase, p_party) as shown) s
+$$;
+
 create or replace function public.report_telemetry(payload jsonb)
 returns void
 language plpgsql
