@@ -1222,6 +1222,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                     let gs = GameState {
                         state: "pregame".into(),
+                        game_pod_id: match_data.game_pod_id,
                         match_id: Some(match_id),
                         map_name: Some(map_name),
                         mode_name: Some(mode_name),
@@ -1463,6 +1464,7 @@ pub async fn get_game_state_internal(state: &AppState) -> Result<GameState, Stri
 
                     let gs = GameState {
                         state: "ingame".into(),
+                        game_pod_id: match_data.game_pod_id,
                         match_id: Some(match_id),
                         map_name: Some(map_name),
                         mode_name: None,
@@ -1850,6 +1852,7 @@ async fn build_range_game_state(
         state: "ingame".into(),
         match_id: Some(match_id.to_string()),
         map_name: Some(RANGE_MAP_NAME.into()),
+        game_pod_id: match_data.game_pod_id,
         mode_name: Some(RANGE_MAP_NAME.into()),
         side: None,
         allies,

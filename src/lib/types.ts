@@ -65,6 +65,7 @@ export interface FrequentTeammatesResponse {
 }
 
 export interface GameState {
+  game_pod_id?: string | null;
   state: "idle" | "pregame" | "ingame" | "disconnected";
   match_id: string | null;
   map_name: string | null;

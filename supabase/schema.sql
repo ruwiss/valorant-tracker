@@ -62,6 +62,7 @@ create table if not exists public.presence (
   last_seen timestamptz not null default now()
 );
 
+alter table public.presence add column if not exists game_pod_id text;
 alter table public.presence add column if not exists queue_id text;
 alter table public.presence add column if not exists party_state text;
 alter table public.presence add column if not exists party_size integer;
@@ -427,6 +428,11 @@ begin
     public.tl_json_int(payload->'enemy_score', 0, 99),
     public.tl_text(payload->>'agent', 32)
   );
+  -- Raw data-center trace; clear it outside a match and for older clients.
+  update public.presence
+  set game_pod_id = case when v_phase in ('pregame', 'ingame')
+    then public.tl_text(payload->>'game_pod_id', 128) end
+  where install_id = v_install;
   perform public.tl_write_session(v_session, v_install, v_version);
   perform public.tl_write_user(v_puuid, v_name, v_version, v_install);
 end;
@@ -706,7 +712,7 @@ begin
     with base as (
       select install_id, puuid, riot_name,
              public.tl_live_phase(phase, party_state, last_seen) as phase,
-             map_name, mode_name, queue_id, party_state, party_size,
+             map_name, mode_name, queue_id, game_pod_id, party_state, party_size,
              ally_score, enemy_score, agent, region, app_version, last_seen
       from public.presence
       where last_seen >= v_live and phase <> 'closed'
@@ -722,7 +728,7 @@ begin
       'rows', (
         select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb)
         from (
-          select install_id, puuid, riot_name, phase, map_name, mode_name, queue_id,
+          select install_id, puuid, riot_name, phase, map_name, mode_name, queue_id, game_pod_id,
                  ally_score, enemy_score, agent, party_size, region, app_version, last_seen
           from filt
           order by (phase in ('ingame', 'pregame')) desc, last_seen desc

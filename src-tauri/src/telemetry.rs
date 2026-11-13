@@ -50,6 +50,7 @@ struct Live {
     game_state: String,
     map_name: Option<String>,
     mode_name: Option<String>,
+    game_pod_id: Option<String>,
     queue_id: Option<String>,
     activity: Option<String>,
     party_state: Option<String>,
@@ -89,6 +90,7 @@ struct TaskState {
     phase: Option<String>,
     map: Option<String>,
     mode: Option<String>,
+    game_pod_id: Option<String>,
     queue_id: Option<String>,
     party_state: Option<String>,
     party_size: Option<i32>,
@@ -163,6 +165,7 @@ pub async fn run(app: AppHandle, bridge: Bridge) {
         phase: None,
         map: None,
         mode: None,
+        game_pod_id: None,
         queue_id: None,
         party_state: None,
         party_size: None,
@@ -232,6 +235,7 @@ fn subscribe(app: &AppHandle, bridge: &Bridge) {
                 slot.game_state = gs.state;
                 slot.map_name = blank_to_none(gs.map_name);
                 slot.mode_name = blank_to_none(gs.report_mode).or_else(|| blank_to_none(gs.mode_name));
+                slot.game_pod_id = blank_to_none(gs.game_pod_id);
                 slot.queue_id = blank_to_none(gs.queue_id);
                 slot.activity = blank_to_none(gs.activity);
                 slot.party_state = blank_to_none(gs.party_state);
@@ -265,6 +269,7 @@ struct Core {
     phase: &'static str,
     map: Option<String>,
     mode: Option<String>,
+    game_pod_id: Option<String>,
     queue_id: Option<String>,
     party_state: Option<String>,
     party_size: Option<i32>,
@@ -275,6 +280,7 @@ fn remember(state: &mut TaskState, core: &Core, scores: Option<(Option<i32>, Opt
     state.phase = Some(core.phase.to_string());
     state.map = core.map.clone();
     state.mode = core.mode.clone();
+    state.game_pod_id = core.game_pod_id.clone();
     state.queue_id = core.queue_id.clone();
     state.party_state = core.party_state.clone();
     state.party_size = core.party_size;
@@ -300,6 +306,10 @@ async fn flush(
         phase: phase_label(&snap.game_state, &snap.conn_status, snap.activity.as_deref()),
         map: snap.map_name.clone(),
         mode: snap.mode_name.clone(),
+        game_pod_id: snap
+            .game_pod_id
+            .clone()
+            .filter(|_| matches!(snap.game_state.as_str(), "pregame" | "ingame")),
         queue_id: snap.queue_id.clone(),
         party_state: snap.party_state.clone(),
         party_size: snap.party_size,
@@ -312,6 +322,7 @@ async fn flush(
     let core_changed = state.phase.as_deref() != Some(core.phase)
         || state.map != core.map
         || state.mode != core.mode
+        || state.game_pod_id != core.game_pod_id
         || state.queue_id != core.queue_id
         || state.party_state != core.party_state
         || state.party_size != core.party_size
@@ -388,6 +399,7 @@ async fn flush(
             phase: core.phase,
             map_name: core.map,
             mode_name: core.mode,
+            game_pod_id: core.game_pod_id,
             queue_id: core.queue_id,
             party_state: core.party_state,
             party_size: core.party_size,
@@ -439,6 +451,7 @@ pub fn report_closed(app: &AppHandle) {
             phase: "closed",
             map_name: None,
             mode_name: None,
+            game_pod_id: None,
             queue_id: None,
             party_state: None,
             party_size: None,
@@ -599,6 +612,7 @@ struct ReportBody<'a> {
     phase: &'a str,
     map_name: Option<String>,
     mode_name: Option<String>,
+    game_pod_id: Option<String>,
     queue_id: Option<String>,
     party_state: Option<String>,
     party_size: Option<i32>,

@@ -477,6 +477,7 @@
     if (mode && (inMatch(r) || r.phase === "queue" || r.phase === "custom")) bits.push(mode);
     var map = mapLabel(r);
     if (map) bits.push(map);
+    if (inMatch(r) && r.game_pod_id) bits.push("Veri merkezi: " + r.game_pod_id);
     if (r.agent && inMatch(r)) bits.push(r.agent);
     if (r.party_size > 1) bits.push(r.party_size + " kişilik parti");
     return bits.length ? bits.join(" · ") : "—";
@@ -964,6 +965,7 @@
           rows += kv("Ajan", esc(p.agent || "—"));
           if (p.phase === "ingame") rows += kv("Skor", esc(scoreText(p) || "—"));
         }
+        if (inMatch(p) && p.game_pod_id) rows += kv("Veri merkezi (trace)", esc(p.game_pod_id));
         if (p.mode_name) rows += kv("Mod", esc(modeLabel(p.mode_name)));
         if (p.party_size) rows += kv("Parti", esc(p.party_size > 1 ? p.party_size + " kişi" : "Tek"));
       }

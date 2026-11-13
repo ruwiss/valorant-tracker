@@ -53,6 +53,8 @@ pub struct PregamePlayer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PregameMatch {
+    #[serde(default, rename = "GamePodID")]
+    pub game_pod_id: Option<String>,
     #[serde(rename = "MapID")]
     pub map_id: String,
     #[serde(rename = "QueueID")]
@@ -105,6 +107,8 @@ pub struct CoregamePlayer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CoregameMatch {
+    #[serde(default, rename = "GamePodID")]
+    pub game_pod_id: Option<String>,
     #[serde(rename = "MapID")]
     pub map_id: String,
     /// Not in the public schema, but present on some shards. Empty when absent.
@@ -192,6 +196,9 @@ pub struct ConnectionStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GameState {
+    /// Raw Riot data-center identifier, retained for admin diagnostics.
+    #[serde(default)]
+    pub game_pod_id: Option<String>,
     pub state: String, // "idle" | "pregame" | "ingame"
     pub match_id: Option<String>,
     pub map_name: Option<String>,
@@ -1211,6 +1218,31 @@ mod tests {
 
     fn parse_coregame(json: &str) -> CoregameMatch {
         serde_json::from_str(json).expect("coregame json")
+    }
+
+    #[test]
+    fn game_pod_trace_reads_both_match_phases_and_accepts_missing_fields() {
+        let pod = "aresriot.aws-euc1-prod.eu-gp-frankfurt-1";
+        let raw = serde_json::json!({
+            "MapID": "/Game/Maps/Ascent/Ascent", "QueueID": "competitive",
+            "Players": [], "GamePodID": pod
+        });
+        let core: CoregameMatch = serde_json::from_value(raw.clone()).unwrap();
+        let pre: PregameMatch = serde_json::from_value(raw).unwrap();
+        assert_eq!(core.game_pod_id.as_deref(), Some(pod));
+        assert_eq!(pre.game_pod_id.as_deref(), Some(pod));
+        let state = GameState {
+            game_pod_id: core.game_pod_id,
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(state).unwrap()["game_pod_id"], pod);
+        let legacy = parse_coregame(r#"{"MapID":"Ascent","Players":[]}"#);
+        assert!(legacy.game_pod_id.is_none());
+        let legacy_pre: PregameMatch = serde_json::from_str(
+            r#"{"MapID":"Ascent","QueueID":"competitive"}"#,
+        )
+        .unwrap();
+        assert!(legacy_pre.game_pod_id.is_none());
     }
 
     #[test]
