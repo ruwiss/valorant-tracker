@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { currentMonitor, monitorFromPoint, getCurrentWindow, LogicalSize, PhysicalPosition } from "@tauri-apps/api/window";
+import { useChatStore } from "./chatStore";
+import { useSettingsStore } from "./settingsStore";
+import { BASE_WIDTH, planWindowLayout, type ExpansionSide } from "../lib/windowLayout";
 import type { PlayerData, CrosshairLayer } from "../lib/types";
 
 type PanelType = "settings" | "player" | "stats" | "shop" | null;
@@ -7,8 +10,6 @@ export type SettingsSubView = "main" | "presets";
 export type PlayerSubView = "skins" | "regulars";
 export type PlayerSource = "roster" | "friends";
 
-const BASE_WIDTH = 380;
-const PANEL_WIDTH = 260;
 const WINDOW_HEIGHT = 800;
 
 export interface HoveredWeapon {
@@ -47,6 +48,11 @@ export interface HoveredCrosshair {
 }
 
 interface PanelStore {
+  settingsReady: boolean;
+  expansionSide: ExpansionSide;
+  expansionWidth: number;
+  chatInline: boolean;
+  dismissForChat: () => void;
   isOpen: boolean;
   panelType: PanelType;
   /** Nested view when panelType is "settings". */
@@ -74,7 +80,7 @@ interface PanelStore {
   openShop: () => Promise<void>;
   close: () => Promise<void>;
   /** Match window width to panel content: keep a real pane, collapse an empty one. */
-  syncWindowToState: () => Promise<void>;
+  syncWindowToState: (options?: { reposition?: boolean; restore?: boolean }) => Promise<void>;
   setSettingsSubView: (view: SettingsSubView) => void;
   setPlayerSubView: (view: PlayerSubView) => void;
   setHoveredWeapon: (weapon: HoveredWeapon | null) => void;
@@ -82,12 +88,8 @@ interface PanelStore {
   setHoveredCrosshair: (crosshair: HoveredCrosshair | null) => void;
 }
 
-const EXPANDED_WIDTH = BASE_WIDTH + PANEL_WIDTH;
-
-/** Invalidates in-flight open/close so a hide during resize cannot leave a ghost panel. */
-let panelOpId = 0;
-
 const CLOSED_PANEL = {
+  settingsReady: false,
   isOpen: false,
   panelType: null as PanelType,
   settingsSubView: "main" as SettingsSubView,
@@ -98,15 +100,6 @@ const CLOSED_PANEL = {
   hoveredAgent: null,
   hoveredCrosshair: null,
 };
-
-function beginPanelOp() {
-  panelOpId += 1;
-  return panelOpId;
-}
-
-function isCurrentPanelOp(op: number) {
-  return op === panelOpId;
-}
 
 function hasRenderablePanel(state: {
   isOpen: boolean;
@@ -120,59 +113,79 @@ function hasRenderablePanel(state: {
   return true;
 }
 
-async function currentLogicalWidth(): Promise<number | null> {
-  try {
-    const win = getCurrentWindow();
-    const factor = await win.scaleFactor().catch(() => 1);
-    const size = await win.innerSize();
-    return size.width / factor;
-  } catch {
-    return null;
-  }
-}
+// Native mutations run in order and always read the latest requested UI state.
+// Rapid open/close/hide calls cannot let an old resize win over a newer selection.
+let layoutQueue: Promise<void> = Promise.resolve();
+let appliedLeftWidth = 0;
+let appliedPane = "none";
 
-async function resizeWindow(expanded: boolean) {
-  try {
-    const win = getCurrentWindow();
-    const width = expanded ? EXPANDED_WIDTH : BASE_WIDTH;
-    await win.setSize(new LogicalSize(width, WINDOW_HEIGHT));
-  } catch (error) {
-    console.error("Failed to resize window:", error);
-  }
-}
-
-async function waitForResize(targetLogicalWidth: number) {
+export async function mainOverlayPosition() {
+  await layoutQueue;
   const win = getCurrentWindow();
-  const startTime = Date.now();
-
-  // Get scale factor to convert logical target to physical pixels
-  // Fallback to 1 if fails, though unlikely
-  const factor = await win.scaleFactor().catch(() => 1);
-  const targetPhysicalWidth = targetLogicalWidth * factor;
-
-  while (Date.now() - startTime < 300) { // Max 300ms timeout
-    const size = await win.innerSize(); // Returns physical pixels
-
-    // Check if we are close enough (allow generous margin for float/rounding errors)
-    // Compare physical actual size vs physical target size
-    if (Math.abs(size.width - targetPhysicalWidth) < 4) {
-      return;
-    }
-    await new Promise(r => setTimeout(r, 10)); // Check every 10ms
-  }
+  const [pos, scale] = await Promise.all([win.outerPosition(), win.scaleFactor()]);
+  return { x: pos.x + Math.round(appliedLeftWidth * scale), y: pos.y };
 }
 
-async function ensureWindowWidth(expanded: boolean) {
-  const target = expanded ? EXPANDED_WIDTH : BASE_WIDTH;
-  const current = await currentLogicalWidth();
-  if (current !== null && Math.abs(current - target) < 4) return;
-  await resizeWindow(expanded);
-  if (expanded) {
-    await waitForResize(target);
-  }
+export async function positionMainOverlay(x: number, y: number) {
+  await layoutQueue;
+  const win = getCurrentWindow();
+  const scale = await win.scaleFactor();
+  await win.setPosition(new PhysicalPosition(x - Math.round(appliedLeftWidth * scale), y));
+}
+
+function syncLayout(options?: { reposition?: boolean; restore?: boolean }) {
+  layoutQueue = layoutQueue.catch(() => {}).then(async () => {
+    const state = usePanelStore.getState();
+    const inlineChat = useChatStore.getState().isOpen && useSettingsStore.getState().chatSidePanel;
+    const pane = inlineChat ? "chat" : hasRenderablePanel(state) ? "side" : "none";
+    const win = getCurrentWindow();
+    const [size, scale, pos] = await Promise.all([win.innerSize(), win.scaleFactor(), win.outerPosition()]);
+    const expectedWidth = BASE_WIDTH + state.expansionWidth;
+    // In particular, do not reposition a hidden docked window off its slide path.
+    if (!options?.restore && appliedPane === pane && Math.abs(size.width / scale - expectedWidth) < 2) {
+      if (!options?.reposition || !(await win.isVisible()) || await win.isMinimized()) {
+        if (pane === "side" && state.panelType === "settings") {
+          usePanelStore.setState({ settingsReady: true });
+        }
+        return;
+      }
+    }
+    const anchorX = pos.x + Math.round(appliedLeftWidth * scale);
+    const monitor = await monitorFromPoint(anchorX + BASE_WIDTH * scale / 2, pos.y + size.height / 2)
+      ?? await currentMonitor();
+    if (!monitor) throw new Error("Cannot determine overlay monitor");
+    const bounds = monitor.workArea;
+    const layout = planWindowLayout(anchorX, scale, { x: bounds.position.x, width: bounds.size.width }, pane);
+    const leftWidth = layout.side === "left" ? layout.panelWidth : 0;
+    if (options?.restore || Math.abs(size.width / scale - layout.width) >= 1) {
+      await win.setSize(new LogicalSize(layout.width, WINDOW_HEIGHT));
+    }
+    // Record the native offset immediately, including if positioning later fails.
+    appliedLeftWidth = leftWidth;
+    if (Math.abs(layout.x - pos.x) >= 1) {
+      await win.setPosition(new PhysicalPosition(layout.x, pos.y));
+    }
+    appliedPane = pane;
+    usePanelStore.setState({
+      expansionSide: layout.side, expansionWidth: layout.panelWidth, chatInline: inlineChat,
+      settingsReady: pane === "side" && state.panelType === "settings",
+    });
+  }).catch((error) => {
+    console.error("Failed to synchronize overlay layout:", error);
+  });
+  return layoutQueue;
+}
+
+function closeChatForPanel() {
+  useChatStore.setState({ isOpen: false });
 }
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
+  settingsReady: false,
+  expansionSide: "right",
+  expansionWidth: 0,
+  chatInline: false,
+  dismissForChat: () => set({ ...CLOSED_PANEL }),
   isOpen: false,
   panelType: null,
   settingsSubView: "main",
@@ -186,22 +199,18 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   noteFocusPuuid: null,
 
   openSettings: async () => {
-    const op = beginPanelOp();
-    const wasOpen = get().isOpen;
-    if (!wasOpen) {
-      await resizeWindow(true);
-      await waitForResize(EXPANDED_WIDTH);
-    }
-    if (!isCurrentPanelOp(op)) return;
+    closeChatForPanel();
     set({
       isOpen: true,
       panelType: "settings",
+      settingsReady: false,
       settingsSubView: "main",
       playerSource: "roster",
       selectedPlayer: null,
       hoveredWeapon: null,
       hoveredAgent: null,
     });
+    await syncLayout();
   },
 
   setSettingsSubView: (view) => set({ settingsSubView: view }),
@@ -216,13 +225,9 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       return;
     }
 
-    const op = beginPanelOp();
-    if (!isOpen) {
-      await resizeWindow(true);
-      await waitForResize(EXPANDED_WIDTH);
-    }
-    if (!isCurrentPanelOp(op)) return;
+    closeChatForPanel();
     set({ isOpen: true, panelType: "shop", playerSource: "roster", selectedPlayer: null, hoveredWeapon: null, hoveredAgent: null });
+    await syncLayout();
   },
 
   openPlayer: async (player, source = "roster", opts) => {
@@ -242,12 +247,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     }
 
     if (!same) {
-      const op = beginPanelOp();
-      if (!isOpen) {
-        await resizeWindow(true);
-        await waitForResize(EXPANDED_WIDTH);
-      }
-      if (!isCurrentPanelOp(op)) return;
+      closeChatForPanel();
       set((s) => ({
         isOpen: true,
         panelType: "player",
@@ -259,6 +259,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
         noteFocusPuuid: focusNote ? player.puuid : null,
         noteFocusToken: focusNote ? s.noteFocusToken + 1 : s.noteFocusToken,
       }));
+      await syncLayout();
     } else if (focusNote) {
       set((s) => ({
         noteFocusPuuid: player.puuid,
@@ -276,36 +277,17 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
       return;
     }
 
-    const op = beginPanelOp();
-    if (!isOpen) {
-      await resizeWindow(true);
-      await waitForResize(EXPANDED_WIDTH);
-    }
-    if (!isCurrentPanelOp(op)) return;
+    closeChatForPanel();
     set({ isOpen: true, panelType: "stats", selectedPlayer: player, hoveredWeapon: null, hoveredAgent: null });
+    await syncLayout();
   },
 
   close: async () => {
-    const op = beginPanelOp();
     set({ ...CLOSED_PANEL });
-    // Wait for exit animation or state update to clear
-    await new Promise(resolve => setTimeout(resolve, 300));
-    if (!isCurrentPanelOp(op)) return;
-    await resizeWindow(false);
+    await syncLayout();
   },
 
-  syncWindowToState: async () => {
-    const state = get();
-    if (!hasRenderablePanel(state)) {
-      if (state.isOpen) {
-        beginPanelOp();
-        set({ ...CLOSED_PANEL });
-      }
-      await ensureWindowWidth(false);
-      return;
-    }
-    await ensureWindowWidth(true);
-  },
+  syncWindowToState: syncLayout,
 
   setHoveredWeapon: (weapon) => {
     set({ hoveredWeapon: weapon });

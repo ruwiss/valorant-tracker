@@ -13,6 +13,7 @@ import { PresetsTab } from "./PresetsTab";
 import { invokeCommand } from "../utils/ipc";
 import {
   AppWindow,
+  MessagesSquare,
   ArrowDownToLine,
   ChevronDown,
   ChevronRight,
@@ -201,7 +202,7 @@ function Segmented<T extends string>({
 
 export function SettingsPanel() {
   const { autoLockAgent, setAutoLock, mapAgentPreferences } = useGameStore();
-  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, minimizeToTray, setMinimizeToTray } = useSettingsStore();
+  const { hotkey, setHotkey, pauseHotkey, resumeHotkey, windowStyle, setWindowStyle, autoLockDelaySeconds, setAutoLockDelaySeconds, discordRpcEnabled, setDiscordRpcEnabled, minimizeToTray, setMinimizeToTray, chatSidePanel, setChatSidePanel } = useSettingsStore();
   const { getAgentIcon, getAgentAsset, getMapSplash, loadAssets, agents: assetAgents } = useAssetsStore();
   const { locale, setLocale, t } = useI18n();
   const { constants } = useConstantsStore();
@@ -220,13 +221,14 @@ export function SettingsPanel() {
   const mapOnlyRestoreRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    getVersion().then(setAppVersion);
+    if (activeTab !== "general") return;
+    getVersion().then(setAppVersion).catch(() => {});
     invokeCommand<number | null>("get_install_count", undefined, { suppressErrorToast: true })
       .then((n) => {
         if (typeof n === "number" && Number.isFinite(n)) setInstalls(n);
       })
       .catch(() => {});
-  }, []);
+  }, [activeTab]);
 
   const formattedInstalls =
     installs !== null ? installs.toLocaleString(locale === "tr" ? "tr-TR" : "en-US") : "";
@@ -416,9 +418,7 @@ export function SettingsPanel() {
                   <div className="h-3 flex items-center">
                     {hoveredAgents["global"] ? (
                       <span className="text-[9px] text-accent-cyan font-black animate-in fade-in slide-in-from-left-1 duration-200">➔ {hoveredAgents["global"].toUpperCase()}</span>
-                    ) : (
-                      <span className="text-[9px] text-secondary">{t("settings.defaultAgentDesc")}</span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
                 {autoLockAgent && (
@@ -451,7 +451,7 @@ export function SettingsPanel() {
                           : "border-white/[0.04] grayscale opacity-50 hover:grayscale-0 hover:opacity-100 hover:border-white/25 hover:bg-white/5 active:scale-95"
                       }`}
                     >
-                      {icon ? <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] font-black">{agentData.name[0].toUpperCase()}</div>}
+                      {icon ? <CachedImage animate={false} loading="eager" src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" /> : <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] font-black">{agentData.name[0].toUpperCase()}</div>}
                       {isSelected && <div className="absolute inset-0 bg-accent-cyan/10 pointer-events-none" />}
                     </button>
                   );
@@ -526,7 +526,7 @@ export function SettingsPanel() {
                         {/* Background Splash — darken center so splash art agents don't fight the badge */}
                         <div className={`absolute inset-0 transition-all duration-700 ${isExpanded ? "scale-105" : "group-hover:scale-110"}`}>
                           {splash ? (
-                            <CachedImage
+                            <CachedImage animate={false} loading="lazy"
                               src={splash}
                               alt=""
                               className={`w-full h-full object-cover object-left transition-all duration-700 ${isExpanded ? "grayscale-0 brightness-[0.65]" : "grayscale-[0.4] brightness-[0.35]"}`}
@@ -561,7 +561,7 @@ export function SettingsPanel() {
                           isMapOverride ? (
                             <div className="absolute bottom-1.5 right-2.5 z-10 flex items-center gap-1.5 pl-0.5 pr-2 py-0.5 rounded-full bg-black/50 backdrop-blur-md border border-accent-cyan/35 shadow-[0_4px_14px_rgba(0,0,0,0.35)] pointer-events-none animate-in fade-in zoom-in-95 duration-300">
                               {displayIcon ? (
-                                <CachedImage
+                                <CachedImage animate={false} loading="eager"
                                   src={displayIcon}
                                   alt={displayAgent.name}
                                   className="w-5 h-5 rounded-full object-cover ring-1 ring-accent-cyan/45"
@@ -581,7 +581,7 @@ export function SettingsPanel() {
                               title={t("settings.defaultOf", { agent: displayAgent.name })}
                             >
                               {displayIcon ? (
-                                <CachedImage
+                                <CachedImage animate={false} loading="eager"
                                   src={displayIcon}
                                   alt={displayAgent.name}
                                   className="w-6 h-6 rounded-full object-cover opacity-55 ring-1 ring-white/15 shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
@@ -634,7 +634,7 @@ export function SettingsPanel() {
                                   }
                                 >
                                   {icon ? (
-                                    <CachedImage src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" />
+                                    <CachedImage animate={false} loading="eager" src={icon} alt={agentData.name} className="w-full h-full object-cover pointer-events-none" />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center bg-white/5 text-[10px] font-black">
                                       {agentData.name[0].toUpperCase()}
@@ -691,6 +691,12 @@ export function SettingsPanel() {
                     ]}
                   />
                 }
+              />
+              <SettingsRow
+                icon={MessagesSquare}
+                label={t("settings.chatSidePanel")}
+                desc={t("settings.chatSidePanelDesc")}
+                control={<Toggle checked={chatSidePanel} onChange={setChatSidePanel} label={t("settings.chatSidePanel")} />}
               />
               <SettingsRow
                 icon={ArrowDownToLine}

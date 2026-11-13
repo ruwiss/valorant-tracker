@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invokeCommand } from "../utils/ipc";
-import { ChatMessage, Conversation, PaginatedMessages, Friend, FriendRequest } from "../lib/types";
+import type { ChatMessage, Conversation, PaginatedMessages, Friend, FriendRequest } from "../lib/types";
+import { usePanelStore } from "./panelStore";
 import { useI18n } from "../lib/i18n";
 
 export type Tab = "DM" | "FRIENDS";
@@ -120,11 +121,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }),
 
   setIsOpen: (isOpen) => {
-    if (isOpen && !get().activeCid) {
-      set({ isOpen: true, activeTab: "FRIENDS", alertCount: 0 });
-      return;
-    }
-    set(isOpen ? { isOpen, alertCount: 0 } : { isOpen });
+    if (isOpen) usePanelStore.getState().dismissForChat();
+    set(isOpen ? {
+      isOpen, alertCount: 0,
+      ...(!get().activeCid ? { activeTab: "FRIENDS" as Tab } : {}),
+    } : { isOpen });
+    void usePanelStore.getState().syncWindowToState();
   },
 
   addAlert: (delta) => {

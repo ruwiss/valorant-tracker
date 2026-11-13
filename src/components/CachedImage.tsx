@@ -68,6 +68,8 @@ const processNext = () => {
 
 export interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> {
   src: string;
+  /** Skip reveal filters/transforms for dense, frequently opened grids. */
+  animate?: boolean;
   fallbackSrc?: string;
   /** If true, only read disk cache — do not download. */
   checkOnly?: boolean;
@@ -84,6 +86,7 @@ export interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElemen
 
 export const CachedImage = memo(function CachedImage({
   src,
+  animate = true,
   alt = "",
   className,
   style,
@@ -97,6 +100,9 @@ export const CachedImage = memo(function CachedImage({
   const cached = memoryCache.get(src);
   const [displaySrc, setDisplaySrc] = useState<string | null>(cached || null);
   const [error, setError] = useState(false);
+  // Cached pixels should paint immediately when a panel remounts. Only a new
+  // load needs the reveal effect; replaying it looks like another download.
+  const [reveal, setReveal] = useState(!cached);
 
   useEffect(() => {
     if (!src) return;
@@ -106,17 +112,20 @@ export const CachedImage = memo(function CachedImage({
     // Local / already-resolved sources skip the queue.
     if (src.startsWith("data:") || src.startsWith("file:") || src.startsWith("/")) {
       setDisplaySrc(src);
+      setReveal(false);
       setError(false);
       return;
     }
 
     if (memoryCache.has(src)) {
       setDisplaySrc(memoryCache.get(src)!);
+      setReveal(false);
       setError(false);
       return;
     }
 
     setDisplaySrc(null);
+    setReveal(true);
     setError(false);
 
     // checkOnly: one-shot cache probe (no download queue).
@@ -176,7 +185,9 @@ export const CachedImage = memo(function CachedImage({
   }
 
   const isSoft = typeof softOpacity === "number";
-  const animationStyle: CSSProperties = isSoft
+  const animationStyle: CSSProperties = !animate || !reveal
+    ? { ...style, ...(isSoft ? { opacity: softOpacity } : {}), willChange: "auto" }
+    : isSoft
     ? {
         ...style,
         ["--soft-opacity" as string]: String(softOpacity),
@@ -190,6 +201,7 @@ export const CachedImage = memo(function CachedImage({
   return (
     <img
       src={displaySrc}
+      decoding="async"
       alt={alt}
       className={clsx(className, !isSoft && loadedClassName)}
       style={animationStyle}

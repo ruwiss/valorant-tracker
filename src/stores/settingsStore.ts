@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
-import { register, unregister, type ShortcutEvent } from "@tauri-apps/plugin-global-shortcut";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { availableMonitors } from "@tauri-apps/api/window";
 import { invokeCommand } from "../utils/ipc";
-import { usePanelStore } from "./panelStore";
+import { onOverlayHotkey as onHotkey, setOverlayHotkeyAction } from "../lib/overlayHotkey";
+import { BASE_WIDTH } from "../lib/windowLayout";
+import { usePanelStore, mainOverlayPosition, positionMainOverlay } from "./panelStore";
 
 /**
  * Zustand persist writes on EVERY set(), including before rehydrate finishes.
@@ -59,6 +61,7 @@ interface WindowPosition {
 export type WindowStyle = "free" | "docked";
 
 interface SettingsState {
+  chatSidePanel: boolean;
   hotkey: string;
   windowPosition: WindowPosition | null;
   contactInfo: ContactInfo | null;
@@ -76,6 +79,7 @@ interface SettingsState {
 }
 
 interface SettingsStore extends SettingsState {
+  setChatSidePanel: (enabled: boolean) => void;
   isHotkeyPaused: boolean;
   setHotkey: (key: string) => Promise<boolean>;
   setWindowPosition: (pos: WindowPosition) => void;
@@ -121,6 +125,12 @@ export interface ContactInfo {
 }
 
 let isToggling = false;
+
+/** Focus/move events from our own slide must not reposition the window. */
+export function isWindowTransitioning() {
+  return isToggling;
+}
+
 // Re-entrancy guard for hotkey (re)registration (StrictMode double-invoke safe).
 let isRegisteringHotkey = false;
 
@@ -133,8 +143,8 @@ async function positionOffScreen(win: any) {
     const winSize = await win.outerSize();
     const screenHeight = monitor.size.height;
 
-    const y = Math.round((screenHeight - winSize.height) / 2);
-    const x = -winSize.width; // Just outside left edge
+    const y = monitor.position.y + Math.round((screenHeight - winSize.height) / 2);
+    const x = monitor.workArea.position.x - winSize.width; // Just outside left edge
 
     await win.setPosition(new PhysicalPosition(x, y));
   } catch (e) {
@@ -151,11 +161,11 @@ async function slideWindow(win: any, direction: "in" | "out") {
     const winSize = await win.outerSize();
     const screenHeight = monitor.size.height;
 
-    const y = Math.round((screenHeight - winSize.height) / 2);
+    const y = monitor.position.y + Math.round((screenHeight - winSize.height) / 2);
     
     // Left side logic
-    const dockedX = 0;
-    const offScreenX = -winSize.width;
+    const dockedX = monitor.workArea.position.x;
+    const offScreenX = dockedX - winSize.width;
     
     let startX: number;
     let endX: number;
@@ -235,25 +245,20 @@ async function revealWindow(
     await positionOffScreen(win);
   }
   await win.show();
-  await win.setFocus();
   if (windowStyle === "docked") {
     await slideWindow(win, "in");
   }
-}
-
-/**
- * The plugin fires the handler on both key-down and key-up. Toggling on both
- * re-shows the window right after a fast hide (floating + tray), so react to
- * key-down only.
- */
-function onHotkey(event: ShortcutEvent) {
-  if (event.state !== "Pressed") return;
-  void useSettingsStore.getState().toggleWindow();
+  await win.setFocus();
 }
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
+      chatSidePanel: true,
+      setChatSidePanel: (enabled) => {
+        set({ chatSidePanel: enabled });
+        void usePanelStore.getState().syncWindowToState();
+      },
       hotkey: "F2",
       windowPosition: null,
       isHotkeyPaused: false,
@@ -414,15 +419,23 @@ export const useSettingsStore = create<SettingsStore>()(
           try {
             const win = getCurrentWindow();
 
-            // Self-healing: If position is off-screen (e.g. due to minimize bug), reset to center
-            if (windowPosition.x < -100 || windowPosition.y < -100) {
-               console.warn("Detected off-screen position, resetting to center");
-               await win.center();
-               set({ windowPosition: null });
-               return;
+            // Negative coordinates are valid on monitors left/above the primary.
+            // Only reset when the main overlay misses every connected work area.
+            const monitors = await availableMonitors();
+            const onScreen = monitors.some((monitor) => {
+              const { position, size } = monitor.workArea;
+              return windowPosition.x + BASE_WIDTH * monitor.scaleFactor > position.x
+                && windowPosition.x < position.x + size.width
+                && windowPosition.y + 800 * monitor.scaleFactor > position.y
+                && windowPosition.y < position.y + size.height;
+            });
+            if (monitors.length > 0 && !onScreen) {
+              await win.center();
+              set({ windowPosition: null });
+              return;
             }
 
-            await win.setPosition(new PhysicalPosition(windowPosition.x, windowPosition.y));
+            await positionMainOverlay(windowPosition.x, windowPosition.y);
           } catch (error) {
             console.error("Failed to restore window position:", error);
           }
@@ -441,7 +454,7 @@ export const useSettingsStore = create<SettingsStore>()(
 
           if (isMaximized || isMinimized) return;
 
-          const pos = await win.outerPosition();
+          const pos = await mainOverlayPosition();
 
           // Guard against off-screen coordinates (windows minimize behavior)
           if (pos.x < -10000 || pos.y < -10000) return;
@@ -490,9 +503,12 @@ export const useSettingsStore = create<SettingsStore>()(
             // Free mode reopens where the user last dragged it.
             const { windowPosition } = get();
             if (windowStyle === "free" && !minimized && windowPosition) {
-              await win.setPosition(new PhysicalPosition(windowPosition.x, windowPosition.y));
+              await positionMainOverlay(windowPosition.x, windowPosition.y);
             }
             await revealWindow(win, windowStyle, minimized);
+            // WebView2/native bounds may change during show/unminimize. Restore
+            // the open pane after the window is visible, bypassing cached geometry.
+            await usePanelStore.getState().syncWindowToState({ restore: true });
             set({ isWindowVisible: true });
           }
         } catch (error) {
@@ -523,12 +539,13 @@ export const useSettingsStore = create<SettingsStore>()(
           const winSize = await win.outerSize();
 
           // ALWAYS LEFT
-          const x = 0;
+          const x = monitor.workArea.position.x;
 
           // Center vertically
-          const y = Math.round((screenHeight - winSize.height) / 2);
+          const y = monitor.position.y + Math.round((screenHeight - winSize.height) / 2);
 
-          await win.setPosition(new PhysicalPosition(x, y));
+          await positionMainOverlay(x, y);
+          await usePanelStore.getState().syncWindowToState({ reposition: true });
         } catch (error) {
           console.error("Failed to dock window:", error);
         }
@@ -538,6 +555,7 @@ export const useSettingsStore = create<SettingsStore>()(
       name: "valorant-tracker-settings-v3", // Version bumped to clear old state
       storage: createJSONStorage(() => hydrationSafeStorage),
       partialize: (state): SettingsState => ({
+        chatSidePanel: state.chatSidePanel,
         hotkey: state.hotkey,
         windowPosition: state.windowPosition,
         contactInfo: state.contactInfo,
@@ -581,13 +599,6 @@ export const useSettingsStore = create<SettingsStore>()(
   )
 );
 
-// Dev HMR re-creates this store, but the native hotkey stays bound to the old
-// module's handler (stale settings, e.g. still "docked"). Rebind it here.
-if (import.meta.hot) {
-  if (import.meta.hot.data.hotkeyBound) {
-    void useSettingsStore.getState().registerHotkey();
-  }
-  import.meta.hot.dispose((data) => {
-    data.hotkeyBound = true;
-  });
-}
+// Updating the store updates the action used by an already registered native
+// callback too. It must never keep a previous panel/chat store alive after HMR.
+setOverlayHotkeyAction(() => useSettingsStore.getState().toggleWindow());

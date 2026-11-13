@@ -4,7 +4,6 @@ import { useGameStore } from "../stores/gameStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useChatStore } from "../stores/chatStore";
-import { usePanelStore } from "../stores/panelStore"; 
 import { useI18n } from "../lib/i18n";
 import { ChevronLeft, MessageSquare, RefreshCw, X } from "lucide-react";
 
@@ -20,7 +19,6 @@ export function Header() {
   const getMapSplash = useAssetsStore((s) => s.getMapSplash);
   const setIsOpen = useChatStore((s) => s.setIsOpen);
   const alertCount = useChatStore((s) => s.alertCount);
-  const closeSidePanel = usePanelStore((s) => s.close);
   const { t } = useI18n();
 
   const mapSplash = gameState.map_name ? getMapSplash(gameState.map_name) : null;
@@ -53,9 +51,8 @@ export function Header() {
     }
   };
 
-  const handleOpenChat = async () => {
-    await closeSidePanel();
-    setIsOpen(true);
+  const handleOpenChat = () => {
+    setIsOpen(!useChatStore.getState().isOpen);
   };
 
   return (

@@ -10,6 +10,9 @@ import { X } from "lucide-react";
 
 export function SidePanel() {
   const { isOpen, panelType, settingsSubView, playerSubView, playerSource, selectedPlayer, close } = usePanelStore();
+  const settingsReady = usePanelStore((s) => s.settingsReady);
+  const expansionWidth = usePanelStore((s) => s.expansionWidth);
+  const expansionSide = usePanelStore((s) => s.expansionSide);
   const { t } = useI18n();
   const gameState = useGameStore((s) => s.gameState);
   const prevMatchState = useRef(gameState.state);
@@ -87,7 +90,7 @@ export function SidePanel() {
   };
 
   return (
-    <div className="w-65 min-w-65 max-w-65 h-full bg-[#0a0e13]/95 backdrop-blur-md border-l border-accent-cyan/20 flex flex-col shadow-[-15px_0_30px_-10px_rgba(0,0,0,0.5)] animate-slide-enter-right relative overflow-hidden flex-none z-20">
+    <div style={{ width: expansionWidth || 260 }} className={`h-full bg-[#0a0e13]/95 backdrop-blur-md ${expansionSide === "left" ? "border-r" : "border-l"} border-accent-cyan/20 flex flex-col shadow-[-15px_0_30px_-10px_rgba(0,0,0,0.5)] animate-panel-enter relative overflow-hidden flex-none z-20`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-gradient-to-r from-white/5 to-transparent">
         <div className="flex items-center gap-2">
@@ -105,7 +108,8 @@ export function SidePanel() {
 
       {/* Content */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>*]:overflow-hidden">
-        {panelType === "settings" && <SettingsPanel />}
+        {/* Let the native expansion finish before mounting the image-heavy settings. */}
+        {panelType === "settings" && settingsReady && <SettingsPanel />}
         {panelType === "player" && <PlayerPanel />}
         {panelType === "stats" && <PlayerStatsPanel />}
         {panelType === "shop" && <ShopPanel />}

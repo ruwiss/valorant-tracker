@@ -1,8 +1,9 @@
+import { createListenerScope } from "../lib/listenerScope";
 import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useGameStore } from "../stores/gameStore";
-import { setWebviewVisible, useSettingsStore } from "../stores/settingsStore";
+import { isWindowTransitioning, setWebviewVisible, useSettingsStore } from "../stores/settingsStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useConstantsStore } from "../stores/constantsStore";
@@ -40,6 +41,7 @@ export function useGameLoop() {
   const { registerHotkey, restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc } = useSettingsStore();
   const { loadAssets } = useAssetsStore();
   const { loadConstants } = useConstantsStore();
+  const syncPanelLayout = usePanelStore((s) => s.syncWindowToState);
   const waitingSinceRef = useRef<number | null>(null);
 
   // No game/Riot for 5 minutes → pause match watching only (chat can come back
@@ -101,6 +103,12 @@ export function useGameLoop() {
     };
   }, [status, autoPausedNoGame]);
 
+  // The native shortcut registration survives React/module refreshes. Bind it
+  // to the current dispatcher whenever this store instance changes.
+  useEffect(() => {
+    void registerHotkey();
+  }, [registerHotkey]);
+
   useEffect(() => {
     // 1. One-time setup: assets, constants, window, hotkey, autolock delay.
     // React StrictMode mounts twice in dev — only bootstrap once per page load.
@@ -110,7 +118,6 @@ export function useGameLoop() {
       loadConstants();
       restoreWindowPosition();
       void usePanelStore.getState().syncWindowToState();
-      registerHotkey();
       syncAutoLockDelay();
       syncDiscordRpc();
 
@@ -138,18 +145,24 @@ export function useGameLoop() {
         if (!(await win.isVisible())) await win.show();
         if (await win.isMinimized()) await win.unminimize();
         await win.setFocus();
+        await usePanelStore.getState().syncWindowToState({ restore: true });
         useSettingsStore.setState({ isWindowVisible: true });
       });
 
     const setupVisibilityListener = async () => {
       const win = getCurrentWindow();
       const sync = async () => {
+        if (isWindowTransitioning()) return;
         const visible = await win.isVisible();
         const minimized = await win.isMinimized();
         useSettingsStore.setState({ isWindowVisible: visible && !minimized });
       };
       const unlistenFocus = await win.onFocusChanged(async ({ payload: focused }) => {
+        if (isWindowTransitioning()) return;
         if (focused) {
+          if (!useSettingsStore.getState().isWindowVisible) {
+            await usePanelStore.getState().syncWindowToState({ restore: true });
+          }
           useSettingsStore.setState({ isWindowVisible: true });
           return;
         }
@@ -160,8 +173,15 @@ export function useGameLoop() {
       let moveTimer: number | undefined;
       const unlistenMove = await win.onMoved(() => {
         window.clearTimeout(moveTimer);
+        if (isWindowTransitioning()) return;
         moveTimer = window.setTimeout(() => {
-          void useSettingsStore.getState().saveCurrentPosition();
+          void (async () => {
+            if (isWindowTransitioning()) return;
+            const win = getCurrentWindow();
+            if (!(await win.isVisible()) || await win.isMinimized()) return;
+            await usePanelStore.getState().syncWindowToState({ reposition: true });
+            await useSettingsStore.getState().saveCurrentPosition();
+          })().catch(console.error);
         }, 400);
       });
       return () => {
@@ -209,42 +229,30 @@ export function useGameLoop() {
       }
     };
 
-    let unlistenConnection: (() => void) | undefined;
-    let unlistenState: (() => void) | undefined;
-    let unlistenShowOverlay: (() => void) | undefined;
-    let unlistenVisibility: (() => void) | undefined;
-    let unlistenLastMatch: (() => void) | undefined;
-    let unlistenOverlayUsers: (() => void) | undefined;
-    let unlistenAutolock: (() => void) | undefined;
-
-    setupConnectionListener().then((u) => { unlistenConnection = u; });
-    setupStateListener().then((u) => { unlistenState = u; });
-    setupOverlayListener().then((u) => { unlistenShowOverlay = u; }).catch((e) =>
+    const listeners = createListenerScope();
+    void listeners.add(setupConnectionListener()).catch(console.error);
+    void listeners.add(setupStateListener()).catch(console.error);
+    void listeners.add(setupOverlayListener()).catch((e) =>
       console.error("[GameLoop] Failed to setup show-overlay listener:", e)
     );
-    setupVisibilityListener().then((u) => { unlistenVisibility = u; }).catch((e) =>
+    void listeners.add(setupVisibilityListener()).catch((e) =>
       console.error("[GameLoop] Failed to setup visibility listener:", e)
     );
-    setupLastMatchListener().then((u) => { unlistenLastMatch = u; }).catch((e) =>
+    void listeners.add(setupLastMatchListener()).catch((e) =>
       console.error("[GameLoop] Failed to setup last-match listener:", e)
     );
-    setupOverlayUsersListener().then((u) => { unlistenOverlayUsers = u; }).catch((e) =>
+    void listeners.add(setupOverlayUsersListener()).catch((e) =>
       console.error("[GameLoop] Failed to setup overlay-users listener:", e)
     );
-    setupAutolockListener().then((u) => { unlistenAutolock = u; }).catch((e) =>
+    void listeners.add(setupAutolockListener()).catch((e) =>
       console.error("[GameLoop] Failed to setup autolock listener:", e)
     );
     initialSync();
 
-    return () => {
-      if (unlistenConnection) unlistenConnection();
-      if (unlistenState) unlistenState();
-      if (unlistenShowOverlay) unlistenShowOverlay();
-      if (unlistenVisibility) unlistenVisibility();
-      if (unlistenLastMatch) unlistenLastMatch();
-      if (unlistenOverlayUsers) unlistenOverlayUsers();
-      if (unlistenAutolock) unlistenAutolock();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => listeners.dispose();
+  }, [
+    setGameState, applyConnectionEvent, pushSettingsToBackend,
+    restoreWindowPosition, syncAutoLockDelay, syncDiscordRpc,
+    loadAssets, loadConstants, syncPanelLayout,
+  ]);
 }

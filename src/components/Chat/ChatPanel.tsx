@@ -7,7 +7,7 @@ import { usePanelStore } from "../../stores/panelStore";
 import { useI18n } from "../../lib/i18n";
 import type { Friend } from "../../lib/types";
 import clsx from "clsx";
-import { ArrowDown, ChevronDown, MessagesSquare, Minus, Search, SendHorizontal, UserRound, Users } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronLeft, ChevronRight, MessagesSquare, Minus, Search, SendHorizontal, UserRound, Users } from "lucide-react";
 
 /** Stable per-name hue so each friend keeps the same avatar colour. */
 function avatarHue(name: string): number {
@@ -64,6 +64,9 @@ export function ChatPanel() {
     setDraft,
     dmPending,
   } = useChatStore();
+  const chatInline = usePanelStore((s) => s.chatInline);
+  const expansionSide = usePanelStore((s) => s.expansionSide);
+  const expansionWidth = usePanelStore((s) => s.expansionWidth);
   const openPlayer = usePanelStore((s) => s.openPlayer);
   const status = useGameStore((s) => s.status);
   const selfPuuid = useGameStore((s) => s.selfPuuid);
@@ -73,7 +76,7 @@ export function ChatPanel() {
   // Offline hint only when the stack is gone — not during connect/reinit blink.
   const showRiotRequired =
     status === "WAITING_FOR_GAME" || (chatLinkOk === false && !linking);
-  const { hideWindow, isWindowVisible, windowStyle } = useSettingsStore();
+  const { hideWindow, isWindowVisible, windowStyle, chatSidePanel } = useSettingsStore();
   const { t } = useI18n();
   // Drafts live per conversation: text typed for one player can never be sent to another.
   const inputValue = activeCid ? (drafts[activeCid] ?? "") : "";
@@ -245,6 +248,15 @@ export function ChatPanel() {
     prevFirstMessageIdRef.current = null;
     forceScrollBottomRef.current = true;
   }, [activeCid]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, setIsOpen]);
 
   // Handle Outside Click
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -424,11 +436,14 @@ export function ChatPanel() {
   const recipientName = activeConv ? conversationLabel(activeConv) : "";
   const threadReady = !!activeCid && messagesCid === activeCid;
 
-  if (!isOpen) return null;
+  if (!isOpen || (chatSidePanel && !chatInline)) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-md animate-fade-in flex justify-end" onClick={handleBackdropClick}>
-      <div className={clsx("w-[450px] h-full bg-dark/95 border-l border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden transform transition-transform duration-300 ease-out", isOpen ? "translate-x-0" : "translate-x-full")} onClick={(e) => e.stopPropagation()}>
+    <div data-chat-layout={chatInline ? "side" : "overlay"}
+      className={chatInline ? "relative z-30 h-full min-h-0 shrink-0 overflow-hidden" : "fixed inset-0 z-50 overflow-hidden bg-black/50 backdrop-blur-md animate-fade-in flex justify-end"}
+      style={chatInline ? { width: expansionWidth } : undefined}
+      onClick={chatInline ? undefined : handleBackdropClick}>
+      <div className={clsx("w-full max-w-[450px] h-full bg-dark/95 border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden", chatInline && expansionSide === "left" ? "border-r" : "border-l")} onClick={(e) => e.stopPropagation()}>
         {/* HEADER */}
         <div
           className={clsx(
@@ -442,15 +457,26 @@ export function ChatPanel() {
           <h2 className="text-lg font-bold text-white font-display tracking-widest uppercase pointer-events-none">{t("chat.title")}</h2>
 
           <div className="flex items-center gap-1">
-            {/* Minimize Button */}
-            {/* Minimize Button */}
-            <button onClick={hideWindow} className="text-dim hover:text-white transition-colors p-2 hover:bg-white/5 rounded-lg group cursor-pointer" title={t("chat.hide")}>
-              <Minus className="w-4 h-4" />
-            </button>
-            {/* Close Button */}
-            <button onClick={() => setIsOpen(false)} className="text-dim hover:text-accent-red transition-colors p-2 hover:bg-accent-red/10 rounded-lg group cursor-pointer" title={t("chat.close")}>
-              <ChevronDown className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
-            </button>
+            {chatInline ? (
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="text-dim hover:text-white transition-colors p-2 hover:bg-white/5 rounded-lg cursor-pointer"
+                title={t("chat.close")}
+                aria-label={t("chat.close")}
+              >
+                {expansionSide === "right" ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </button>
+            ) : (
+              <>
+                <button onClick={hideWindow} className="text-dim hover:text-white transition-colors p-2 hover:bg-white/5 rounded-lg group cursor-pointer" title={t("chat.hide")}>
+                  <Minus className="w-4 h-4" />
+                </button>
+                <button onClick={() => setIsOpen(false)} className="text-dim hover:text-accent-red transition-colors p-2 hover:bg-accent-red/10 rounded-lg group cursor-pointer" title={t("chat.close")}>
+                  <ChevronDown className="w-4 h-4 group-hover:translate-y-0.5 transition-transform duration-300" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 

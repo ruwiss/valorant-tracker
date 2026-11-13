@@ -9,6 +9,7 @@ import { WeaponOverlay } from "./components/WeaponOverlay";
 import { AgentOverlay } from "./components/AgentOverlay";
 import { CrosshairOverlay } from "./components/CrosshairOverlay";
 import { ChatPanel } from "./components/Chat/ChatPanel";
+import { usePanelStore } from "./stores/panelStore";
 import { useGameStore } from "./stores/gameStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useGameLoop } from "./hooks/useGameLoop";
@@ -129,6 +130,7 @@ function ChangelogCard({
 
 function App() {
   const { gameState, status, pendingReconnect } = useGameStore();
+  const expansionSide = usePanelStore((s) => s.expansionSide);
   const { windowStyle, hotkey, changelogPreviewTick } = useSettingsStore();
   const { t, locale } = useI18n();
   const [showWelcomeTip, setShowWelcomeTip] = useState(false);
@@ -279,7 +281,7 @@ function App() {
   };
 
   return (
-    <div className={`relative h-full flex bg-dark/95 backdrop-blur-md overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
+    <div className={`relative h-full flex ${expansionSide === "left" ? "flex-row-reverse" : ""} bg-dark/95 backdrop-blur-md overflow-hidden border border-white/[0.06] ${windowStyle === "docked" ? "rounded-r-2xl" : "rounded-2xl"}`}>
       {/* Main content - Fixed width to prevent jumping during resize */}
       <div className="relative w-[380px] flex-none flex flex-col p-4 pl-5">
         <Header />
