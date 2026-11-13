@@ -3294,9 +3294,13 @@ pub async fn get_frequent_teammates(
             api.get_player_names(&missing).await
         };
 
+        let groups = crate::party::frequent_party_groups(
+            &puuid, &rosters, &tallied.iter().map(|(id, _, _)| id.clone()).collect::<Vec<_>>(),
+        );
         let teammates: Vec<FrequentTeammate> = tallied
             .into_iter()
             .map(|(id, name, games)| FrequentTeammate {
+                party_group: groups.get(&id).copied(),
                 top_agents: tally_top_agents(&id, &rosters, MAX_AGENTS)
                     .into_iter()
                     .map(|(agent, n)| FrequentAgentPick { agent, games: n })

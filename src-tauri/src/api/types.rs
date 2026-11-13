@@ -662,6 +662,8 @@ pub struct FrequentAgentPick {
 /// One player who shared this subject's party in recent matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrequentTeammate {
+    #[serde(default)]
+    pub party_group: Option<u32>,
     pub puuid: String,
     pub name: String,
     pub games_together: u32,

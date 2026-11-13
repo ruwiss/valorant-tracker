@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { invokeCommand } from "../utils/ipc";
+import { useChatStore } from "../stores/chatStore";
 import { useGameStore } from "../stores/gameStore";
 import { usePanelStore } from "../stores/panelStore";
 import { useAssetsStore } from "../stores/assetsStore";
 import { useI18n, SKIN_API_LOCALES, getLocalizedRank } from "../lib/i18n";
 import type { FrequentAgentPick, FrequentTeammate, FrequentTeammatesResponse } from "../lib/types";
-import { WEAPON_NAMES, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID, AUTHOR_NAME_CLASS } from "../lib/constants";
+import { WEAPON_NAMES, PARTY_COLORS, AGENT_COLORS, RANK_TIERS, AUTHOR_PUUID, AUTHOR_NAME_CLASS } from "../lib/constants";
 import { CachedImage } from "./CachedImage";
 import { AuthorCrown } from "./AuthorCrown";
 import { EncounterCount } from "./EncounterCount";
@@ -16,7 +17,7 @@ import {
 	useOverlayUsersStore,
 	useViewerIsAuthor,
 } from "../stores/overlayUsersStore";
-import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Languages, LoaderCircle, Users, UserPlus, Check, Clock } from "lucide-react";
 import { noteFor, usePlayerNotesStore } from "../stores/playerNotesStore";
 
 const regularsCache = new Map<string, FrequentTeammatesResponse>();
@@ -169,6 +170,15 @@ const expressionMetaCache = new Map<string, Map<string, ExpressionInfo>>();
 export function PlayerPanel() {
 	const { selectedPlayer, setHoveredWeapon, playerSubView, setPlayerSubView, playerSource, noteFocusToken, noteFocusPuuid } =
 		usePanelStore();
+	const friends = useChatStore((s) => s.friends);
+	const outgoingRequests = useChatStore((s) => s.outgoingRequests);
+	const sendFriendRequest = useChatStore((s) => s.sendFriendRequest);
+	const [addingPuuid, setAddingPuuid] = useState<string | null>(null);
+	useEffect(() => {
+		if (!selectedPlayer) return;
+		void useChatStore.getState().fetchFriends();
+		void useChatStore.getState().fetchOutgoingRequests();
+	}, [selectedPlayer?.puuid]);
 	const fromFriends = playerSource === "friends";
 	const { getAgentIcon } = useAssetsStore();
 	const gameState = useGameStore((state) => state.gameState);
@@ -906,7 +916,7 @@ export function PlayerPanel() {
 											type="button"
 											disabled={!canCopy}
 											onClick={() => copyRegular(mate.name)}
-											className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors ${
+											className={`relative overflow-hidden flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors ${
 												canCopy
 													? "hover:bg-card/60 cursor-pointer"
 													: "opacity-50 cursor-default"
@@ -919,6 +929,9 @@ export function PlayerPanel() {
 														: t("player.hiddenProfile")
 											}
 										>
+											{mate.party_group != null && (
+                                                <span className="absolute left-0 top-1 bottom-1 w-[3px] rounded-r-full" style={{ backgroundColor: PARTY_COLORS[(mate.party_group - 1) % PARTY_COLORS.length] }} />
+                                            )}
 											{(mate.top_agents || []).slice(0, 3).map((pick) => {
 												const icon = getAgentIcon(pick.agent);
 												const agentLabel =
@@ -1018,6 +1031,19 @@ export function PlayerPanel() {
 
 	if (!selectedPlayer) return null;
 
+	const hash = selectedPlayer.name.lastIndexOf("#");
+	const gameName = hash > 0 ? selectedPlayer.name.slice(0, hash).trim() : "";
+	const gameTag = hash > 0 ? selectedPlayer.name.slice(hash + 1).trim() : "";
+	const isFriend = friends.some((f) => f.puuid === selectedPlayer.puuid);
+	const isPending = outgoingRequests.some((r) => r.puuid === selectedPlayer.puuid);
+	const adding = addingPuuid === selectedPlayer.puuid;
+	const friendLabel = t(isFriend ? "lastMatch.alreadyFriend" : isPending ? "lastMatch.alreadyPending" : "lastMatch.addFriend");
+	const addFriend = async () => {
+		if (!gameName || !gameTag || isFriend || isPending || addingPuuid) return;
+		setAddingPuuid(selectedPlayer.puuid);
+		try { await sendFriendRequest(gameName, gameTag, selectedPlayer.puuid); }
+		finally { setAddingPuuid(null); }
+	};
 	const agentIcon = selectedPlayer.agent
 		? getAgentIcon(selectedPlayer.agent)
 		: null;
@@ -1529,6 +1555,13 @@ export function PlayerPanel() {
 				</div>
 			</div>
 
+			{!selectedPlayer.is_me && gameName && gameTag && (
+                <button type="button" onClick={() => void addFriend()} disabled={isFriend || isPending || addingPuuid !== null}
+                    className="mx-3 my-2 flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-accent-cyan/20 px-2 py-1.5 text-[10px] text-accent-cyan hover:bg-accent-cyan/10 disabled:opacity-50 disabled:cursor-default">
+                    {adding ? <LoaderCircle className="h-3 w-3 animate-spin" /> : isFriend ? <Check className="h-3 w-3" /> : isPending ? <Clock className="h-3 w-3" /> : <UserPlus className="h-3 w-3" />}
+                    {friendLabel}
+                </button>
+            )}
 			{/* Skins / regulars content */}
 			<div
 				className="min-h-0 flex-1 overflow-y-auto"

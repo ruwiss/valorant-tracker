@@ -48,6 +48,7 @@ export interface FrequentAgentPick {
 }
 
 export interface FrequentTeammate {
+  party_group?: number | null;
   puuid: string;
   name: string;
   games_together: number;

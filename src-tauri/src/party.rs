@@ -221,6 +221,29 @@ pub fn tally_frequent_party_mates(
     out
 }
 
+/// Assign disjoint groups from actual shared parties, newest matches first.
+/// Never join separate historical stacks through a mutual player.
+pub fn frequent_party_groups(
+    target: &str,
+    matches: &[FrequentMatchRoster],
+    visible: &[String],
+) -> HashMap<String, u32> {
+    let mut groups = HashMap::new();
+    let mut next = 1;
+    for roster in matches {
+        let Some(subject) = roster.iter().find(|p| p.puuid == target) else { continue };
+        if subject.party_id.is_empty() { continue; }
+        let members: Vec<_> = roster.iter().filter(|p|
+            p.puuid != target && p.party_id == subject.party_id
+                && visible.contains(&p.puuid) && !groups.contains_key(&p.puuid)
+        ).collect();
+        if members.len() < 2 { continue; }
+        for member in members { groups.insert(member.puuid.clone(), next); }
+        next += 1;
+    }
+    groups
+}
+
 /// Most-played agents for `puuid` across the given matches. Empty agent ids skipped.
 pub fn tally_top_agents(
     puuid: &str,
@@ -440,6 +463,23 @@ mod tests {
             name: name.into(),
             agent: agent.into(),
         }
+    }
+
+    #[test]
+    fn frequent_groups_keep_historical_stacks_separate() {
+        let matches = vec![
+            vec![rp("me", "new", "", ""), rp("a", "new", "", ""), rp("b", "new", "", ""), rp("x", "other", "", "")],
+            vec![rp("me", "old", "", ""), rp("b", "old", "", ""), rp("c", "old", "", ""), rp("d", "old", "", "")],
+            vec![rp("me", "", "", ""), rp("x", "", "", "")],
+        ];
+        let visible = ["a", "b", "c", "d", "x"].map(String::from);
+        let groups = frequent_party_groups("me", &matches, &visible);
+        assert_eq!(groups["a"], groups["b"]);
+        assert_eq!(groups["c"], groups["d"]);
+        assert_ne!(groups["b"], groups["c"]);
+        assert!(!groups.contains_key("x"));
+        assert!(frequent_party_groups("absent", &matches, &visible).is_empty());
+        assert!(frequent_party_groups("me", &matches, &["a".into()]).is_empty());
     }
 
     #[test]
