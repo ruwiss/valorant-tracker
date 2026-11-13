@@ -2117,16 +2117,21 @@ fn get_agent_name(agent_id: &str) -> String {
 
 const SPRAY_ITEM_TYPE_ID: &str = "d5f120f8-ff8c-4aac-92ea-f2b5acbe9475";
 const CHROMA_ITEM_TYPE_ID: &str = "3ad1b2b2-acdb-4524-852f-954a76ddae0a";
+const SKIN_LEVEL_ITEM_TYPE_ID: &str = "e7c63390-eda7-46e0-bb7a-a6abdacd2433";
 const BUDDY_ITEM_TYPE_ID: &str = "dd3bf334-87f3-40bd-b043-682a57a8dc3a";
 
 fn parse_weapon_skins(items: std::collections::HashMap<String, LoadoutItem>) -> Vec<WeaponSkin> {
     let mut skins = Vec::new();
     for (weapon_id, item) in items {
         let mut chroma_id = None;
+        let mut skin_level_id = None;
         let mut buddy_id = None;
 
         if let Some(sockets) = &item.sockets {
             for (_socket_id, socket_item) in sockets {
+                if socket_item.item.type_id == SKIN_LEVEL_ITEM_TYPE_ID {
+                    skin_level_id = Some(socket_item.item.id.clone());
+                }
                 if socket_item.item.type_id == CHROMA_ITEM_TYPE_ID {
                     chroma_id = Some(socket_item.item.id.clone());
                 }
@@ -2139,6 +2144,7 @@ fn parse_weapon_skins(items: std::collections::HashMap<String, LoadoutItem>) -> 
         skins.push(WeaponSkin {
             weapon_id,
             skin_id: item.id,
+            skin_level_id,
             chroma_id,
             buddy_id,
         });

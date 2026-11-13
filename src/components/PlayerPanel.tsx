@@ -46,6 +46,7 @@ const langDisplayName = (code: string, uiLocale: string): string => {
 interface WeaponSkin {
 	weapon_id: string;
 	skin_id: string;
+	skin_level_id?: string | null;
 	chroma_id: string | null;
 	buddy_id: string | null;
 }
@@ -62,6 +63,7 @@ interface PlayerSkinData {
 interface SkinInfo {
 	name: string;
 	icon: string;
+	upgradeLevel?: { current: number; total: number };
 }
 interface BuddyInfo {
 	name: string;
@@ -359,15 +361,17 @@ export function PlayerPanel() {
 				skinMetaCache.set(apiLocale, new Map());
 			const localeCache = skinMetaCache.get(apiLocale)!;
 			const uncachedIds = data.skins
-				.map((s) => s.chroma_id || s.skin_id)
+				.flatMap((s) => [s.chroma_id || s.skin_id, s.skin_level_id || s.skin_id])
 				.filter((id) => !localeCache.has(id.toLowerCase()));
 			if (uncachedIds.length > 0)
 				await fetchSkinMeta(uncachedIds, apiLocale, localeCache);
 			const meta = new Map<string, SkinInfo>();
 			data.skins.forEach((s) => {
-				const id = (s.chroma_id || s.skin_id).toLowerCase();
-				const c = localeCache.get(id);
-				if (c) meta.set(id, c);
+				for (const rawId of [s.chroma_id || s.skin_id, s.skin_level_id || s.skin_id]) {
+					const id = rawId.toLowerCase();
+					const c = localeCache.get(id);
+					if (c) meta.set(id, c);
+				}
 			});
 			setSkinMeta(meta);
 
@@ -457,11 +461,14 @@ export function PlayerPanel() {
 							fallbackIcon,
 					});
 				}
-				for (const level of skin.levels || []) {
+				for (const [index, level] of (skin.levels || []).entries()) {
 					if (!level.uuid) continue;
 					cache.set(level.uuid.toLowerCase(), {
 						name: skin.displayName || "Unknown",
 						icon: level.displayIcon || fallbackIcon,
+						upgradeLevel: skin.levels.length > 1
+							? { current: index + 1, total: skin.levels.length }
+							: undefined,
 					});
 				}
 			}
@@ -1094,6 +1101,7 @@ export function PlayerPanel() {
 			icon,
 			weaponType,
 			buddy,
+			upgradeLevel: skinMeta.get((skin.skin_level_id || skin.skin_id).toLowerCase())?.upgradeLevel,
 		});
 	};
 

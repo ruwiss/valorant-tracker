@@ -165,6 +165,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "weapons.secondary": "SECONDARY",
     "weapons.other": "OTHER",
     "weapons.buddy": "Buddy",
+    "weapons.level": "Level",
     "weapons.spray": "Spray",
     "weapons.flex": "Flex",
 
@@ -624,6 +625,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "weapons.secondary": "YARDIMCI",
     "weapons.other": "DİĞER",
     "weapons.buddy": "Anahtarlık",
+    "weapons.level": "Seviye",
     "weapons.spray": "Sprey",
     "weapons.flex": "Donatı",
 

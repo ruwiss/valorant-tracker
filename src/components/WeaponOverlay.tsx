@@ -137,6 +137,17 @@ export function WeaponOverlay() {
           {hoveredWeapon.name}
         </h2>
 
+        {hoveredWeapon.upgradeLevel && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-medium text-dim/80">
+            <span>{t("weapons.level")} {hoveredWeapon.upgradeLevel.current}/{hoveredWeapon.upgradeLevel.total}</span>
+            <span className="flex gap-0.5" aria-hidden="true">
+              {Array.from({ length: hoveredWeapon.upgradeLevel.total }, (_, index) => (
+                <span key={index} className={`h-1 w-2 rounded-sm ${index < hoveredWeapon.upgradeLevel!.current ? "bg-accent-cyan/70" : "bg-white/15"}`} />
+              ))}
+            </span>
+          </div>
+        )}
+
         {hoveredWeapon.note && (
           <p className="mt-1.5 text-[10px] text-dim/80">
             {hoveredWeapon.note}

@@ -850,6 +850,8 @@ pub struct EquippedExpression {
 pub struct WeaponSkin {
     pub weapon_id: String,
     pub skin_id: String,
+    /// Equipped upgrade level, which can be lower than the highest owned level.
+    pub skin_level_id: Option<String>,
     pub chroma_id: Option<String>,
     pub buddy_id: Option<String>,
 }

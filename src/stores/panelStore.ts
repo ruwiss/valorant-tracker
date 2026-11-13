@@ -26,6 +26,7 @@ export interface HoveredWeapon {
     discountedVp?: number;
   };
   tierColor?: string;
+  upgradeLevel?: { current: number; total: number };
   note?: string;
 }
 
